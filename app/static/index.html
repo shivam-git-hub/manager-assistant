@@ -733,10 +733,10 @@
                 const fetchData = async () => {
                     try {
                         const [teamRes, projRes, taskRes, msgRes] = await Promise.all([
-                            fetch('/api/team'),
-                            fetch('/api/projects'),
-                            fetch('/api/tasks'),
-                            fetch('/api/messages')
+                            fetch('api/team'),
+                            fetch('api/projects'),
+                            fetch('api/tasks'),
+                            fetch('api/messages')
                         ]);
 
                         teamMembers.value = await teamRes.json();
@@ -765,7 +765,7 @@
                         timezone: "Asia/Kolkata"
                     };
 
-                    const response = await fetch('/api/team', {
+                    const response = await fetch('api/team', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -786,7 +786,7 @@
                         status: 'active'
                     };
 
-                    const response = await fetch('/api/projects', {
+                    const response = await fetch('api/projects', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -813,7 +813,7 @@
                         due_date: adminTask.value.due_date || null
                     };
 
-                    const response = await fetch('/api/tasks', {
+                    const response = await fetch('api/tasks', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -846,7 +846,7 @@
                         }
                     };
 
-                    const response = await fetch('/api/integrations/slack/webhook', {
+                    const response = await fetch('api/integrations/slack/webhook', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -879,7 +879,7 @@
                         receivedDateTime: new Date().toISOString()
                     };
 
-                    const response = await fetch('/api/integrations/outlook/mock-ingest', {
+                    const response = await fetch('api/integrations/outlook/mock-ingest', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -902,7 +902,7 @@
                         message: dashboardDraft.value
                     };
 
-                    const response = await fetch('/api/integrations/dashboard/message', {
+                    const response = await fetch('api/integrations/dashboard/message', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
@@ -918,7 +918,7 @@
                 // Reset all messages for demo purposes
                 const resetAll = async () => {
                     if (confirm("Are you sure you want to reset all message logs, projects, and tasks? Team roster will be kept intact.")) {
-                        const response = await fetch('/api/messages/reset', { method: 'POST' });
+                        const response = await fetch('api/messages/reset', { method: 'POST' });
                         if (response.ok) {
                             activeEmail.value = null;
                             await fetchData();
@@ -1006,7 +1006,7 @@
                             { id: "U_BOB", name: "Bob Product", role: "Product Designer", slack_handle: "U_BOB", outlook_email: "bob@company.com" }
                         ];
                         for (const member of samples) {
-                            await fetch('/api/team', {
+                            await fetch('api/team', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(member)
