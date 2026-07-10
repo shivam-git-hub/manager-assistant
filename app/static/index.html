@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manager Assistant Integration Portal</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts (Inter) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbars for high fidelity */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.3);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(156, 163, 175, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden">
+    <div id="app" class="flex flex-col h-full" v-cloak>
+        <!-- TOP PRESENTATION NAV (Pastel Theme) -->
+        <header class="bg-indigo-900 text-white px-6 py-3 flex items-center justify-between shadow-md shrink-0 border-b border-indigo-800">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-500/20 p-1.5 rounded-lg border border-indigo-400/30">
+                    <svg class="w-6 h-6 text-indigo-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-tight">Harry</h1>
+                    <p class="text-xs text-indigo-300">Project Manager Assistant • Integration Portal</p>
+                </div>
+            </div>
+
+            <!-- IMPERSONATION ACTIVE BANNER (Senior Management Focus) -->
+            <div class="flex items-center space-x-4">
+                <div class="flex items-center space-x-3 bg-indigo-950 px-4 py-1.5 rounded-xl border border-indigo-800/80">
+                    <div class="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                    <div class="text-sm">
+                        <span class="text-indigo-400 font-medium">Impersonating:</span>
+                        <span class="font-semibold text-emerald-300 ml-1" v-if="currentUser">{{ currentUser.name }}</span>
+                        <span class="text-slate-400 italic ml-1" v-else>Loading Profiles...</span>
+                        <span class="text-xs text-slate-400 ml-1.5" v-if="currentUser">({{ currentUser.role }})</span>
+                    </div>
+                </div>
+
+                <!-- PROFILE SELECT DROP-DOWN -->
+                <div class="relative">
+                    <select 
+                        v-model="selectedUserId" 
+                        @change="switchUser"
+                        class="bg-indigo-800 hover:bg-indigo-750 text-white text-xs px-3 py-1.5 rounded-xl border border-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer pr-8 appearance-none"
+                    >
+                        <option v-for="user in teamMembers" :key="user.id" :value="user.id">
+                            Act as: {{ user.name }}
+                        </option>
+                    </select>
+                    <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-indigo-300">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
+                </div>
+
+                <!-- CLEAR & RESET DB -->
+                <button 
+                    @click="resetAll" 
+                    class="bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white text-xs px-3 py-1.5 rounded-xl border border-rose-500/40 font-medium transition duration-150"
+                    title="Delete all messages, projects, and tasks for a fresh demo."
+                >
+                    Reset DB
+                </button>
+            </div>
+        </header>
+
+        <!-- PORTAL MAIN WRAPPER -->
+        <div class="flex flex-1 overflow-hidden">
+            <!-- LEFT NAVIGATION TAB PANEL -->
+            <nav class="w-64 bg-slate-900 text-slate-400 flex flex-col justify-between shrink-0 border-r border-slate-800">
+                <div class="p-4 space-y-6">
+                    <div>
+                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Simulator Workspace</p>
+                        <div class="mt-3 space-y-1">
+                            <!-- TAB ITEM: Slack -->
+                            <button 
+                                @click="activeTab = 'slack'"
+                                :class="[activeTab === 'slack' ? 'bg-slate-800 text-white font-medium border-l-4 border-emerald-500' : 'hover:bg-slate-800/50 hover:text-slate-200']"
+                                class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
+                            >
+                                <span class="text-emerald-400 font-bold">#</span>
+                                <span>Slack Workspace</span>
+                            </button>
+                            <!-- TAB ITEM: Outlook -->
+                            <button 
+                                @click="activeTab = 'outlook'"
+                                :class="[activeTab === 'outlook' ? 'bg-slate-800 text-white font-medium border-l-4 border-blue-500' : 'hover:bg-slate-800/50 hover:text-slate-200']"
+                                class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
+                            >
+                                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                                <span>Outlook Email</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Management Desk</p>
+                        <div class="mt-3 space-y-1">
+                            <!-- TAB ITEM: Admin Desk -->
+                            <button 
+                                @click="activeTab = 'admin'"
+                                :class="[activeTab === 'admin' ? 'bg-slate-800 text-white font-medium border-l-4 border-indigo-500' : 'hover:bg-slate-800/50 hover:text-slate-200']"
+                                class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
+                            >
+                                <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+                                <span>Admin Desk</span>
+                            </button>
+                            <!-- TAB ITEM: Direct Chat -->
+                            <button 
+                                @click="activeTab = 'chat'"
+                                :class="[activeTab === 'chat' ? 'bg-slate-800 text-white font-medium border-l-4 border-purple-500' : 'hover:bg-slate-800/50 hover:text-slate-200']"
+                                class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
+                            >
+                                <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                                <span>Direct Chat API</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-slate-800 pt-4">
+                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Database Statistics</p>
+                        <div class="mt-3 px-3 space-y-2 text-xs">
+                            <div class="flex justify-between"><span>Team Members:</span><span class="text-slate-300 font-semibold">{{ teamMembers.length }}</span></div>
+                            <div class="flex justify-between"><span>Projects:</span><span class="text-slate-300 font-semibold">{{ projects.length }}</span></div>
+                            <div class="flex justify-between"><span>Tasks:</span><span class="text-slate-300 font-semibold">{{ tasks.length }}</span></div>
+                            <div class="flex justify-between"><span>Unified Messages:</span><span class="text-slate-300 font-semibold">{{ unifiedMessages.length }}</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer (Who created it) -->
+                <div class="p-4 border-t border-slate-800 text-xs flex flex-col space-y-1">
+                    <div class="flex justify-between text-slate-500">
+                        <span>Database:</span><span class="text-emerald-400">SQLite Connected</span>
+                    </div>
+                    <div class="flex justify-between text-slate-500">
+                        <span>Timezone:</span><span class="text-amber-400 font-medium">Asia/Kolkata (IST)</span>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- SIMULATOR SCREEN CONTENT (Changes dynamically based on activeTab) -->
+            <main class="flex-1 flex flex-col bg-slate-50 overflow-hidden">
+                
+                <!-- ────────────────────────────────────────────────────────
+                     A. SLACK WORKSPACE SIMULATOR (High Fidelity Aubergine Theme)
+                     ──────────────────────────────────────────────────────── -->
+                <div v-if="activeTab === 'slack'" class="flex h-full w-full overflow-hidden">
+                    <!-- Slack sidebar (High fidelity Aubergine) -->
+                    <div class="w-60 bg-[#3F0E40] text-slate-300 flex flex-col shrink-0">
+                        <div class="p-4 border-b border-[#522653] flex justify-between items-center">
+                            <div>
+                                <h3 class="text-white font-bold text-sm tracking-tight">Nous Research Org</h3>
+                                <div class="flex items-center space-x-1.5 mt-0.5">
+                                    <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                                    <span class="text-xs text-slate-300 italic" v-if="currentUser">{{ currentUser.name }}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="p-3 space-y-4 flex-1 overflow-y-auto">
+                            <!-- Slack Channels List -->
+                            <div class="space-y-1">
+                                <span class="text-xs text-indigo-200/60 font-semibold tracking-wider uppercase px-2">Channels</span>
+                                <button 
+                                    @click="activeSlackChannel = 'C_GENERAL'"
+                                    :class="[activeSlackChannel === 'C_GENERAL' ? 'bg-[#1164A3] text-white' : 'hover:bg-[#350d36]/60']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2"
+                                >
+                                    <span>#</span><span>general</span>
+                                </button>
+                                <button 
+                                    @click="activeSlackChannel = 'C_PROJECT_UPDATES'"
+                                    :class="[activeSlackChannel === 'C_PROJECT_UPDATES' ? 'bg-[#1164A3] text-white' : 'hover:bg-[#350d36]/60']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2"
+                                >
+                                    <span>#</span><span>project-updates</span>
+                                </button>
+                                <button 
+                                    @click="activeSlackChannel = 'C_ALERTS'"
+                                    :class="[activeSlackChannel === 'C_ALERTS' ? 'bg-[#1164A3] text-white' : 'hover:bg-[#350d36]/60']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2"
+                                >
+                                    <span>#</span><span>alerts</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Slack chat workspace -->
+                    <div class="flex-1 flex flex-col bg-white h-full overflow-hidden">
+                        <!-- Slack channel header -->
+                        <div class="px-6 py-3 border-b border-slate-200 flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-slate-500 font-bold text-lg">#</span>
+                                <span class="font-bold text-slate-800">{{ activeSlackChannelName }}</span>
+                            </div>
+                            <div class="text-xs text-slate-400 font-medium">Channel ID: {{ activeSlackChannel }}</div>
+                        </div>
+
+                        <!-- Slack message stream -->
+                        <div class="flex-1 overflow-y-auto p-6 space-y-4" id="slack-chat-feed">
+                            <div v-for="msg in filteredSlackMessages" :key="msg.id" class="flex space-x-3 items-start hover:bg-slate-50/50 p-1.5 rounded-lg transition duration-150">
+                                <!-- Avatar -->
+                                <div class="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-white shrink-0 shadow-sm" :class="getUserAvatarClass(msg.sender_mapped_name || msg.sender_raw_id)">
+                                    {{ getInitials(msg.sender_mapped_name || msg.sender_raw_id) }}
+                                </div>
+                                <div class="flex-1">
+                                    <div class="flex items-baseline space-x-2">
+                                        <span class="font-bold text-slate-800 text-sm">{{ msg.sender_mapped_name || msg.sender_raw_id }}</span>
+                                        <span class="text-slate-400 text-[10px]">{{ formatTime(msg.timestamp) }}</span>
+                                    </div>
+                                    <div class="text-slate-700 text-sm mt-1 whitespace-pre-wrap leading-relaxed">{{ msg.content }}</div>
+                                </div>
+                            </div>
+                            <!-- Empty State -->
+                            <div v-if="filteredSlackMessages.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
+                                <svg class="w-12 h-12 text-slate-300 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                                <p class="text-sm">No messages in this channel yet.</p>
+                                <p class="text-xs text-slate-300">Type a status update below to test the ingestion.</p>
+                            </div>
+                        </div>
+
+                        <!-- Slack input zone -->
+                        <div class="p-4 border-t border-slate-200">
+                            <form @submit.prevent="sendSlackMessage" class="relative">
+                                <textarea 
+                                    v-model="slackDraft" 
+                                    :placeholder="'Message #' + activeSlackChannelName + ' as ' + (currentUser ? currentUser.name : 'Unknown')"
+                                    class="w-full border border-slate-300 rounded-xl px-4 py-3 pb-12 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm resize-none"
+                                    rows="3"
+                                    @keydown.enter.exact.prevent="sendSlackMessage"
+                                ></textarea>
+                                <div class="absolute bottom-3 right-3 flex items-center space-x-2">
+                                    <span class="text-[10px] text-slate-400">Press Enter to send</span>
+                                    <button 
+                                        type="submit" 
+                                        class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-semibold text-xs shadow-sm flex items-center space-x-1.5 transition"
+                                    >
+                                        <span>Send</span>
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ────────────────────────────────────────────────────────
+                     B. OUTLOOK EMAIL SIMULATOR (Three-Pane Layout)
+                     ──────────────────────────────────────────────────────── -->
+                <div v-if="activeTab === 'outlook'" class="flex h-full w-full overflow-hidden">
+                    <!-- Outlook sidebar (Pane 1) -->
+                    <div class="w-16 bg-slate-100 flex flex-col justify-between shrink-0 border-r border-slate-200 py-3 items-center">
+                        <div class="space-y-4">
+                            <!-- Outlook App Icon -->
+                            <div class="w-10 h-10 bg-[#106EBE] rounded-lg flex items-center justify-center text-white font-extrabold shadow-sm">O</div>
+                            <div class="w-10 h-10 hover:bg-slate-200/75 rounded-lg flex items-center justify-center text-slate-600 transition cursor-pointer">
+                                <svg class="w-5.5 h-5.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Left Folder pane & Email Cards list (Pane 2) -->
+                    <div class="w-80 bg-white flex flex-col border-r border-slate-200 shrink-0">
+                        <div class="p-4 border-b border-slate-200">
+                            <button 
+                                @click="outlookView = 'compose'" 
+                                class="w-full bg-[#106EBE] hover:bg-[#005A9E] text-white font-semibold py-2 px-4 rounded-lg text-sm shadow-sm flex items-center justify-center space-x-2 transition"
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                                <span>New Message</span>
+                            </button>
+                        </div>
+                        
+                        <!-- Folder navigation shortcuts -->
+                        <div class="px-3 py-1 bg-slate-50/50 flex space-x-2 text-[11px] font-bold tracking-wide text-slate-500 border-b border-slate-150">
+                            <button @click="outlookView = 'list'" class="px-2 py-1 rounded hover:bg-slate-200/50" :class="[outlookView === 'list' ? 'text-blue-600 border-b-2 border-blue-600' : '']">Inbox</button>
+                            <span class="py-1">|</span>
+                            <button class="px-2 py-1 rounded text-slate-400 cursor-not-allowed" disabled>Sent Items</button>
+                        </div>
+
+                        <!-- Email card loop -->
+                        <div class="flex-1 overflow-y-auto">
+                            <div 
+                                v-for="mail in filteredOutlookMessages" 
+                                :key="mail.id"
+                                @click="selectEmail(mail)"
+                                :class="[activeEmail && activeEmail.id === mail.id ? 'bg-blue-50/50 border-l-4 border-blue-500' : 'hover:bg-slate-50']"
+                                class="p-4 border-b border-slate-150 cursor-pointer transition flex flex-col space-y-1"
+                            >
+                                <div class="flex justify-between items-baseline">
+                                    <span class="font-semibold text-slate-800 text-sm truncate pr-2">{{ mail.sender_mapped_name || mail.sender_raw_id }}</span>
+                                    <span class="text-slate-400 text-[10px] shrink-0">{{ formatDate(mail.timestamp) }}</span>
+                                </div>
+                                <div class="font-medium text-slate-700 text-xs truncate">{{ mail.subject || '(No Subject)' }}</div>
+                                <div class="text-slate-400 text-xs truncate leading-relaxed">{{ mail.content }}</div>
+                            </div>
+
+                            <!-- Outlook empty state -->
+                            <div v-if="filteredOutlookMessages.length === 0" class="flex flex-col items-center justify-center p-6 text-slate-400 text-center mt-8">
+                                <svg class="w-10 h-10 text-slate-300 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
+                                <p class="text-xs">No emails received yet.</p>
+                                <p class="text-[10px] text-slate-300 mt-1">Compose a new message to test the email receiver.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Email Reading & Composing Pane (Pane 3) -->
+                    <div class="flex-1 bg-white flex flex-col h-full overflow-hidden">
+                        
+                        <!-- VIEW 1: COMPOSE EMAIL -->
+                        <div v-if="outlookView === 'compose'" class="flex-1 flex flex-col h-full overflow-hidden p-6">
+                            <div class="border-b border-slate-200 pb-4 mb-4 flex justify-between items-center">
+                                <h3 class="font-bold text-slate-800">Compose New Message</h3>
+                                <button @click="outlookView = 'list'" class="text-slate-400 hover:text-slate-600"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                            </div>
+
+                            <form @submit.prevent="sendOutlookEmail" class="flex-1 flex flex-col space-y-4 overflow-y-auto">
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">From</label>
+                                    <input 
+                                        type="text" 
+                                        :value="currentUser ? currentUser.outlook_email : 'shivam@company.com'" 
+                                        disabled 
+                                        class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed"
+                                    >
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">To</label>
+                                    <input 
+                                        type="text" 
+                                        value="harry.assistant@company.com (Project Assistant)" 
+                                        disabled 
+                                        class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed"
+                                    >
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Subject</label>
+                                    <input 
+                                        type="text" 
+                                        v-model="outlookSubject" 
+                                        placeholder="e.g., Minutes of Meeting: API Schema Review" 
+                                        required
+                                        class="w-full border border-slate-300 text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    >
+                                </div>
+                                <div class="flex-1 flex flex-col">
+                                    <div class="flex justify-between items-baseline mb-1">
+                                        <label class="block text-xs font-bold text-slate-500 uppercase">Body (Supports HTML)</label>
+                                        <span class="text-[10px] text-slate-400">Html parsing will extract clean text/markdown.</span>
+                                    </div>
+                                    <textarea 
+                                        v-model="outlookBody" 
+                                        placeholder="<h1>Status Report</h1><p>We finalized the database models.</p>..." 
+                                        required
+                                        class="w-full flex-1 border border-slate-300 text-sm rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono resize-none h-64"
+                                    ></textarea>
+                                </div>
+                                <div class="flex justify-end space-x-3 pt-3 shrink-0">
+                                    <button 
+                                        type="button" 
+                                        @click="outlookView = 'list'" 
+                                        class="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-xs font-semibold hover:bg-slate-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button 
+                                        type="submit" 
+                                        class="px-5 py-2 bg-[#106EBE] hover:bg-[#005A9E] text-white rounded-lg text-xs font-semibold shadow-sm flex items-center space-x-1.5 transition"
+                                    >
+                                        <span>Send Email</span>
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- VIEW 2: READ ACTIVE EMAIL -->
+                        <div v-else-if="activeEmail" class="flex-1 flex flex-col h-full overflow-hidden p-6">
+                            <div class="border-b border-slate-200 pb-4 mb-4">
+                                <h3 class="font-bold text-slate-800 text-base mb-1">{{ activeEmail.subject }}</h3>
+                                <div class="flex items-center space-x-2 text-xs">
+                                    <span class="font-semibold text-slate-600">{{ activeEmail.sender_mapped_name || activeEmail.sender_raw_id }}</span>
+                                    <span class="text-slate-400">&lt;{{ activeEmail.sender_raw_id }}&gt;</span>
+                                    <span class="text-slate-300">•</span>
+                                    <span class="text-slate-400">{{ formatFullDate(activeEmail.timestamp) }}</span>
+                                </div>
+                            </div>
+                            <!-- Email content (formatted as plain markdown/text) -->
+                            <div class="flex-1 overflow-y-auto whitespace-pre-wrap text-sm text-slate-700 leading-relaxed font-sans bg-slate-50/50 border border-slate-150 p-6 rounded-xl">
+                                {{ activeEmail.content }}
+                            </div>
+                        </div>
+
+                        <!-- VIEW 3: NO EMAIL ACTIVE -->
+                        <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400">
+                            <svg class="w-16 h-16 text-slate-200 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" /></svg>
+                            <p class="text-sm font-semibold">Select an item to read</p>
+                            <p class="text-xs text-slate-300 mt-1">Or click 'New Message' to compose a mock status update.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ────────────────────────────────────────────────────────
+                     C. ADMIN DESK (Team, Projects, and Tasks CRUD)
+                     ──────────────────────────────────────────────────────── -->
+                <div v-if="activeTab === 'admin'" class="flex-1 overflow-y-auto p-6 space-y-6">
+                    <div class="flex justify-between items-center border-b border-slate-200 pb-4">
+                        <h2 class="text-xl font-bold text-slate-800">Admin Desk</h2>
+                        <span class="bg-indigo-100 text-indigo-800 text-xs px-2.5 py-1 rounded-full font-bold">SQLITE CONTROL PANEL</span>
+                    </div>
+
+                    <!-- Row: Create Employee -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- Add Employee Form (Pastel card) -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col space-y-4">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2">Add Team Member</h3>
+                            <form @submit.prevent="createTeamMember" class="space-y-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-500 mb-1">Full Name</label>
+                                    <input type="text" v-model="adminMember.name" placeholder="e.g., Alice Smith" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-500 mb-1">Role / Designation</label>
+                                    <input type="text" v-model="adminMember.role" placeholder="e.g., Backend Developer" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-500 mb-1">Slack Handle / ID</label>
+                                    <input type="text" v-model="adminMember.slack_handle" placeholder="e.g., U054ALICE" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-500 mb-1">Outlook Email</label>
+                                    <input type="email" v-model="adminMember.outlook_email" placeholder="e.g., alice@company.com" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500">
+                                </div>
+                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs shadow-sm transition">
+                                    Register Employee
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Display Team List -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm lg:col-span-2 flex flex-col h-80">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 shrink-0">Registered Team Rosters</h3>
+                            <div class="flex-1 overflow-y-auto mt-2">
+                                <table class="w-full text-xs text-left text-slate-600">
+                                    <thead class="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
+                                        <tr>
+                                            <th class="px-4 py-2 font-bold">Name</th>
+                                            <th class="px-4 py-2 font-bold">Role</th>
+                                            <th class="px-4 py-2 font-bold">Slack ID</th>
+                                            <th class="px-4 py-2 font-bold">Email</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100">
+                                        <tr v-for="member in teamMembers" :key="member.id">
+                                            <td class="px-4 py-3 font-semibold text-slate-800">{{ member.name }}</td>
+                                            <td class="px-4 py-3 text-slate-500">{{ member.role }}</td>
+                                            <td class="px-4 py-3 font-mono text-[10px] bg-slate-50 rounded">{{ member.slack_handle }}</td>
+                                            <td class="px-4 py-3 text-slate-500">{{ member.outlook_email }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Row: Projects & Tasks (Knowledge Base Initialization) -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- Projects Card -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col h-96">
+                            <div class="flex justify-between items-baseline border-b border-slate-100 pb-2 shrink-0">
+                                <h3 class="font-bold text-slate-800">Projects Tracking (KB)</h3>
+                                <button @click="showProjectModal = true" class="text-xs text-indigo-600 hover:text-indigo-800 font-bold">+ Create Project</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto mt-3 space-y-3">
+                                <div v-for="proj in projects" :key="proj.id" class="p-3 bg-slate-50 rounded-xl border border-slate-150">
+                                    <div class="flex justify-between items-baseline">
+                                        <span class="font-bold text-slate-800 text-sm">{{ proj.name }}</span>
+                                        <span class="bg-emerald-100 text-emerald-800 font-bold text-[9px] px-2 py-0.5 rounded-full" v-if="proj.status === 'active'">Active</span>
+                                        <span class="bg-slate-200 text-slate-800 font-bold text-[9px] px-2 py-0.5 rounded-full" v-else>{{ proj.status }}</span>
+                                    </div>
+                                    <p class="text-xs text-slate-500 mt-1 leading-relaxed">{{ proj.description || 'No Description' }}</p>
+                                </div>
+                                <div v-if="projects.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
+                                    <p class="text-xs">No active projects registered in KB.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tasks Card -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col h-96">
+                            <div class="flex justify-between items-baseline border-b border-slate-100 pb-2 shrink-0">
+                                <h3 class="font-bold text-slate-800">Tasks Ledger (KB)</h3>
+                                <button @click="showTaskModal = true" class="text-xs text-indigo-600 hover:text-indigo-800 font-bold" :disabled="projects.length === 0" :class="[projects.length === 0 ? 'opacity-50 cursor-not-allowed' : '']">+ Create Task</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto mt-3 space-y-3">
+                                <div v-for="task in tasks" :key="task.id" class="p-3 bg-slate-50 rounded-xl border border-slate-150 flex flex-col">
+                                    <div class="flex justify-between items-baseline">
+                                        <span class="font-bold text-slate-800 text-xs">{{ task.title }}</span>
+                                        <span :class="getTaskStatusClass(task.status)" class="font-bold text-[8px] px-2 py-0.5 rounded-full">{{ task.status.toUpperCase() }}</span>
+                                    </div>
+                                    <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">{{ task.description }}</p>
+                                    <div class="flex justify-between items-center mt-3 pt-2 border-t border-slate-200/50 text-[10px] text-slate-400">
+                                        <span>Assignee ID: {{ task.assignee_id || 'Unassigned' }}</span>
+                                        <span v-if="task.due_date" class="font-medium">Due: {{ task.due_date }}</span>
+                                    </div>
+                                </div>
+                                <div v-if="tasks.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
+                                    <p class="text-xs">No tasks mapped in KB.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ────────────────────────────────────────────────────────
+                     D. DIRECT CHAT DASHBOARD (Peaceful Pastel Theme)
+                     ──────────────────────────────────────────────────────── -->
+                <div v-if="activeTab === 'chat'" class="flex-1 flex flex-col h-full overflow-hidden bg-[#F6F6FA]">
+                    <!-- Chat Header -->
+                    <div class="px-6 py-4 bg-white border-b border-slate-200 flex items-center justify-between shadow-sm">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm">H</div>
+                            <div>
+                                <h3 class="font-bold text-slate-800 text-sm">Harry (Manager Assistant)</h3>
+                                <p class="text-[10px] text-emerald-500 flex items-center space-x-1 font-medium mt-0.5">
+                                    <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span>
+                                    <span>Direct Chat API Hook Active</span>
+                                </p>
+                            </div>
+                        </div>
+                        <div class="text-[10px] text-slate-400">Channel ID: dashboard_chat</div>
+                    </div>
+
+                    <!-- Direct chat message feed -->
+                    <div class="flex-1 overflow-y-auto p-6 space-y-4" id="dashboard-chat-feed">
+                        <div v-for="msg in filteredDashboardMessages" :key="msg.id" class="flex space-x-3 items-start hover:bg-slate-50/50 p-1.5 rounded-lg transition duration-150">
+                            <!-- Avatar -->
+                            <div class="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-white shrink-0 shadow-sm" :class="getUserAvatarClass(msg.sender_mapped_name || msg.sender_raw_id)">
+                                {{ getInitials(msg.sender_mapped_name || msg.sender_raw_id) }}
+                            </div>
+                            <div class="flex-1">
+                                <div class="flex items-baseline space-x-2">
+                                    <span class="font-bold text-slate-800 text-sm">{{ msg.sender_mapped_name || msg.sender_raw_id }}</span>
+                                    <span class="text-slate-400 text-[10px]">{{ formatTime(msg.timestamp) }}</span>
+                                </div>
+                                <div class="text-slate-700 text-sm mt-1 whitespace-pre-wrap leading-relaxed bg-white/70 inline-block px-4 py-2.5 rounded-2xl border border-slate-100 shadow-sm">{{ msg.content }}</div>
+                            </div>
+                        </div>
+                        <!-- Empty State -->
+                        <div v-if="filteredDashboardMessages.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
+                            <div class="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center mb-3">
+                                <svg class="w-6 h-6 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                            </div>
+                            <p class="text-sm font-semibold text-slate-600">This is the dashboard chat simulator.</p>
+                            <p class="text-xs text-slate-300 mt-1">Chat directly with the Manager Assistant API from here.</p>
+                        </div>
+                    </div>
+
+                    <!-- Direct Chat Input -->
+                    <div class="p-4 bg-white border-t border-slate-200 shadow-inner">
+                        <form @submit.prevent="sendDashboardMessage" class="flex items-center space-x-3">
+                            <input 
+                                type="text" 
+                                v-model="dashboardDraft" 
+                                :placeholder="'Type a direct message to Harry as ' + (currentUser ? currentUser.name : 'Unknown') + '...'"
+                                class="flex-1 border border-slate-300 rounded-full px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                            <button 
+                                type="submit" 
+                                class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-3 font-semibold shadow-md flex items-center justify-center transition shrink-0"
+                            >
+                                <svg class="w-5 h-5 transform rotate-45" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+
+        <!-- MODAL 1: CREATE PROJECT -->
+        <div v-if="showProjectModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl w-96 flex flex-col space-y-4">
+                <div class="flex justify-between items-baseline border-b border-slate-100 pb-2">
+                    <h4 class="font-bold text-slate-800">Add New Project (KB)</h4>
+                    <button @click="showProjectModal = false" class="text-slate-400 hover:text-slate-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                </div>
+                <form @submit.prevent="createProject" class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Project Name</label>
+                        <input type="text" v-model="adminProject.name" placeholder="e.g., API Schema Overhaul" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Description</label>
+                        <textarea v-model="adminProject.description" placeholder="Short summary of objectives..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 resize-none" rows="3"></textarea>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs shadow-sm transition">
+                        Register Project
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- MODAL 2: CREATE TASK -->
+        <div v-if="showTaskModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl w-96 flex flex-col space-y-4">
+                <div class="flex justify-between items-baseline border-b border-slate-100 pb-2">
+                    <h4 class="font-bold text-slate-800">Add Action Item (KB)</h4>
+                    <button @click="showTaskModal = false" class="text-slate-400 hover:text-slate-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                </div>
+                <form @submit.prevent="createTask" class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Parent Project</label>
+                        <select v-model="adminTask.project_id" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white">
+                            <option v-for="proj in projects" :key="proj.id" :value="proj.id">{{ proj.name }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Task Title</label>
+                        <input type="text" v-model="adminTask.title" placeholder="e.g., Define Unified Payload schema" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Description</label>
+                        <textarea v-model="adminTask.description" placeholder="Steps or details..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 resize-none" rows="3"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Assignee</label>
+                        <select v-model="adminTask.assignee_id" class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white">
+                            <option value="">Unassigned</option>
+                            <option v-for="user in teamMembers" :key="user.id" :value="user.id">{{ user.name }} ({{ user.role }})</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 mb-1">Due Date</label>
+                        <input type="date" v-model="adminTask.due_date" class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white">
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs shadow-sm transition">
+                        Map Task
+                    </button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Vue 3 CDN (Composition Style) -->
+    <script v-if="true">
+        const { createApp, ref, onMounted, computed, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const activeTab = ref('slack');
+                const selectedUserId = ref('');
+                const teamMembers = ref([]);
+                const projects = ref([]);
+                const tasks = ref([]);
+                const unifiedMessages = ref([]);
+
+                // Slack Simulator State
+                const activeSlackChannel = ref('C_GENERAL');
+                const slackDraft = ref('');
+
+                // Outlook Simulator State
+                const outlookView = ref('list'); // 'list', 'compose'
+                const activeEmail = ref(null);
+                const outlookSubject = ref('');
+                const outlookBody = ref('');
+
+                // Dashboard State
+                const dashboardDraft = ref('');
+
+                // Modals
+                const showProjectModal = ref(false);
+                const showTaskModal = ref(false);
+
+                // Forms
+                const adminMember = ref({ name: '', role: '', slack_handle: '', outlook_email: '' });
+                const adminProject = ref({ name: '', description: '', status: 'active' });
+                const adminTask = ref({ project_id: '', title: '', description: '', assignee_id: '', status: 'pending', due_date: '' });
+
+                // Computed active channel name for Slack
+                const activeSlackChannelName = computed(() => {
+                    const channels = {
+                        'C_GENERAL': 'general',
+                        'C_PROJECT_UPDATES': 'project-updates',
+                        'C_ALERTS': 'alerts'
+                    };
+                    return channels[activeSlackChannel.value] || 'general';
+                });
+
+                // Computed Active User
+                const currentUser = computed(() => {
+                    return teamMembers.value.find(m => m.id === selectedUserId.value) || null;
+                });
+
+                // Message Filtering by Platform Feed
+                const filteredSlackMessages = computed(() => {
+                    return unifiedMessages.value.filter(m => m.source === 'slack' && m.channel_raw_id === activeSlackChannel.value);
+                });
+
+                const filteredOutlookMessages = computed(() => {
+                    return unifiedMessages.value.filter(m => m.source === 'outlook');
+                });
+
+                const filteredDashboardMessages = computed(() => {
+                    return unifiedMessages.value.filter(m => m.source === 'dashboard');
+                });
+
+                // Fetch Database States
+                const fetchData = async () => {
+                    try {
+                        const [teamRes, projRes, taskRes, msgRes] = await Promise.all([
+                            fetch('/api/team'),
+                            fetch('/api/projects'),
+                            fetch('/api/tasks'),
+                            fetch('/api/messages')
+                        ]);
+
+                        teamMembers.value = await teamRes.json();
+                        projects.value = await projRes.json();
+                        tasks.value = await taskRes.json();
+                        unifiedMessages.value = await msgRes.json();
+
+                        // Set default active user if not set
+                        if (teamMembers.value.length > 0 && !selectedUserId.value) {
+                            selectedUserId.value = teamMembers.value[0].id;
+                        }
+                    } catch (e) {
+                        console.error("Error fetching data:", e);
+                    }
+                };
+
+                // Create Team Member
+                const createTeamMember = async () => {
+                    const handle = adminMember.value.slack_handle.toUpperCase();
+                    const payload = {
+                        id: handle,
+                        name: adminMember.value.name,
+                        role: adminMember.value.role,
+                        slack_handle: handle,
+                        outlook_email: adminMember.value.outlook_email,
+                        timezone: "Asia/Kolkata"
+                    };
+
+                    const response = await fetch('/api/team', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        adminMember.value = { name: '', role: '', slack_handle: '', outlook_email: '' };
+                        await fetchData();
+                    }
+                };
+
+                // Create Project
+                const createProject = async () => {
+                    const payload = {
+                        name: adminProject.value.name,
+                        description: adminProject.value.description,
+                        manager_id: selectedUserId.value,
+                        status: 'active'
+                    };
+
+                    const response = await fetch('/api/projects', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        showProjectModal.value = false;
+                        adminProject.value = { name: '', description: '', status: 'active' };
+                        await fetchData();
+                    } else {
+                        const err = await response.json();
+                        alert(err.detail || "Error creating project");
+                    }
+                };
+
+                // Create Task
+                const createTask = async () => {
+                    const payload = {
+                        project_id: parseInt(adminTask.value.project_id),
+                        title: adminTask.value.title,
+                        description: adminTask.value.description,
+                        assignee_id: adminTask.value.assignee_id || null,
+                        status: 'pending',
+                        due_date: adminTask.value.due_date || null
+                    };
+
+                    const response = await fetch('/api/tasks', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        showTaskModal.value = false;
+                        adminTask.value = { project_id: '', title: '', description: '', assignee_id: '', status: 'pending', due_date: '' };
+                        await fetchData();
+                    } else {
+                        const err = await response.json();
+                        alert(err.detail || "Error creating task");
+                    }
+                };
+
+                // Ingest Slack Webhook (Push Simulator)
+                const sendSlackMessage = async () => {
+                    if (!slackDraft.value.trim() || !currentUser.value) return;
+
+                    const payload = {
+                        type: "event_callback",
+                        api_app_id: "A054SIM",
+                        event: {
+                            type: "message",
+                            client_msg_id: "sim_" + Math.random().toString(36).substring(2, 15),
+                            user: currentUser.value.slack_handle,
+                            channel: activeSlackChannel.value,
+                            text: slackDraft.value,
+                            ts: (Date.now() / 1000).toString()
+                        }
+                    };
+
+                    const response = await fetch('/api/integrations/slack/webhook', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        slackDraft.value = '';
+                        await fetchData();
+                        scrollFeedToBottom('slack-chat-feed');
+                    }
+                };
+
+                // Ingest Outlook Email (Pull Simulator)
+                const sendOutlookEmail = async () => {
+                    if (!outlookSubject.value.trim() || !outlookBody.value.trim() || !currentUser.value) return;
+
+                    const payload = {
+                        id: "mail_sim_" + Math.random().toString(36).substring(2, 15),
+                        sender: {
+                            emailAddress: {
+                                address: currentUser.value.outlook_email,
+                                name: currentUser.value.name
+                            }
+                        },
+                        subject: outlookSubject.value,
+                        body: {
+                            contentType: "html",
+                            content: outlookBody.value
+                        },
+                        receivedDateTime: new Date().toISOString()
+                    };
+
+                    const response = await fetch('/api/integrations/outlook/mock-ingest', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        outlookSubject.value = '';
+                        outlookBody.value = '';
+                        outlookView.value = 'list';
+                        await fetchData();
+                    }
+                };
+
+                // Ingest Dashboard Message
+                const sendDashboardMessage = async () => {
+                    if (!dashboardDraft.value.trim() || !currentUser.value) return;
+
+                    const payload = {
+                        user_name: currentUser.value.name,
+                        message: dashboardDraft.value
+                    };
+
+                    const response = await fetch('/api/integrations/dashboard/message', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        dashboardDraft.value = '';
+                        await fetchData();
+                        scrollFeedToBottom('dashboard-chat-feed');
+                    }
+                };
+
+                // Reset all messages for demo purposes
+                const resetAll = async () => {
+                    if (confirm("Are you sure you want to reset all message logs, projects, and tasks? Team roster will be kept intact.")) {
+                        const response = await fetch('/api/messages/reset', { method: 'POST' });
+                        if (response.ok) {
+                            activeEmail.value = null;
+                            await fetchData();
+                        }
+                    }
+                };
+
+                // Read specific Outlook Email
+                const selectEmail = (mail) => {
+                    activeEmail.value = mail;
+                    outlookView.value = 'read';
+                };
+
+                // Helper utilities
+                const getInitials = (name) => {
+                    if (!name) return "U";
+                    const parts = name.split(" ");
+                    if (parts.length > 1) return (parts[0][0] + parts[1][0]).toUpperCase();
+                    return name.substring(0, 2).toUpperCase();
+                };
+
+                const getUserAvatarClass = (name) => {
+                    const colors = [
+                        'bg-blue-500', 'bg-emerald-500', 'bg-purple-500', 
+                        'bg-amber-500', 'bg-rose-500', 'bg-indigo-500', 'bg-pink-500'
+                    ];
+                    let hash = 0;
+                    for (let i = 0; i < name.length; i++) {
+                        hash = name.charCodeAt(i) + ((hash << 5) - hash);
+                    }
+                    const index = Math.abs(hash) % colors.length;
+                    return colors[index];
+                };
+
+                const getTaskStatusClass = (status) => {
+                    const statuses = {
+                        'pending': 'bg-amber-100 text-amber-800 border border-amber-200',
+                        'in_progress': 'bg-blue-100 text-blue-800 border border-blue-200',
+                        'completed': 'bg-emerald-100 text-emerald-800 border border-emerald-200',
+                        'blocked': 'bg-rose-100 text-rose-800 border border-rose-200'
+                    };
+                    return statuses[status] || 'bg-slate-100 text-slate-800';
+                };
+
+                const formatTime = (isoString) => {
+                    try {
+                        const d = new Date(isoString);
+                        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    } catch (e) {
+                        return "";
+                    }
+                };
+
+                const formatDate = (isoString) => {
+                    try {
+                        const d = new Date(isoString);
+                        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                    } catch (e) {
+                        return "";
+                    }
+                };
+
+                const formatFullDate = (isoString) => {
+                    try {
+                        const d = new Date(isoString);
+                        return d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+                    } catch (e) {
+                        return "";
+                    }
+                };
+
+                const scrollFeedToBottom = (id) => {
+                    nextTick(() => {
+                        const el = document.getElementById(id);
+                        if (el) el.scrollTop = el.scrollHeight;
+                    });
+                };
+
+                // Add pre-populated sample users/projects if empty for testing
+                const populateSamples = async () => {
+                    if (teamMembers.value.length === 0) {
+                        const samples = [
+                            { id: "U_SHIVAM", name: "Shivam", role: "Manager", slack_handle: "U_SHIVAM", outlook_email: "shivam@company.com" },
+                            { id: "U_ALICE", name: "Alice Developer", role: "Backend Engineer", slack_handle: "U_ALICE", outlook_email: "alice@company.com" },
+                            { id: "U_BOB", name: "Bob Product", role: "Product Designer", slack_handle: "U_BOB", outlook_email: "bob@company.com" }
+                        ];
+                        for (const member of samples) {
+                            await fetch('/api/team', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(member)
+                            });
+                        }
+                        await fetchData();
+                    }
+                };
+
+                onMounted(async () => {
+                    await fetchData();
+                    await populateSamples();
+                    lucide.createIcons();
+                });
+
+                return {
+                    activeTab,
+                    selectedUserId,
+                    teamMembers,
+                    projects,
+                    tasks,
+                    unifiedMessages,
+                    activeSlackChannel,
+                    activeSlackChannelName,
+                    slackDraft,
+                    outlookView,
+                    activeEmail,
+                    outlookSubject,
+                    outlookBody,
+                    dashboardDraft,
+                    showProjectModal,
+                    showTaskModal,
+                    adminMember,
+                    adminProject,
+                    adminTask,
+                    currentUser,
+                    filteredSlackMessages,
+                    filteredOutlookMessages,
+                    filteredDashboardMessages,
+                    createTeamMember,
+                    createProject,
+                    createTask,
+                    sendSlackMessage,
+                    sendOutlookEmail,
+                    sendDashboardMessage,
+                    resetAll,
+                    selectEmail,
+                    getInitials,
+                    getUserAvatarClass,
+                    getTaskStatusClass,
+                    formatTime,
+                    formatDate,
+                    formatFullDate
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
