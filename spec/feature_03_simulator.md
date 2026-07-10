@@ -17,10 +17,21 @@ This specification defines the design and behavior of the **Simulator Service**,
 
 The Simulator is a lightweight Single Page Application (SPA) served directly by FastAPI (e.g., mounting a static folder `/simulator` or returning HTML files).
 
-### Theme & Style (Pastel Theme)
-Following Shivam's preference, the UI will use a clean, peaceful pastel theme:
-*   **Colors:** Soft mint green, lavender, pastel blue backgrounds (`bg-slate-50`, `bg-indigo-50/30`), with clean rounded borders (`rounded-2xl`) and soft drop shadows.
-*   **Typography:** Soft, clean sans-serif (Inter or system UI).
+### High-Fidelity UI Styling (Slack & Outlook Realism)
+Since this PoC will be presented to **senior management**, the user interface must be highly polished, instantly recognizable, and visually impressive while remaining simple under the hood. We will combine our clean, peaceful pastel aesthetic with the authentic layouts of the actual platforms:
+
+1.  **Slack View Mimicry:**
+    *   **Sidebar:** Classic dark aubergine/purple-gray (`#3F0E40` or a softer pastel variant like `#4A154B`) containing channels, direct messages, and workspace branding.
+    *   **Chat Workspace:** Crisp white/gray background with message headers showing user avatars (simple pastel colored initials), timestamps, and realistic slack-style message groupings.
+2.  **Outlook View Mimicry:**
+    *   **Classic Three-Pane Layout:**
+        *   *Left Pane:* Navigation folder list (Inbox, Sent Items, Drafts) in soft gray.
+        *   *Middle Pane:* Live email thread card feed (showing sender, subject preview, and timestamp).
+        *   *Right Pane:* Fully-featured reading & compose window showing clean headers, formatted email bodies, and high-fidelity "Compose Email" controls.
+3.  **Global Presentation Wrapper:**
+    *   A clean top navigation bar allowing seamless switching between the **Admin Desk**, **Slack Client**, and **Outlook Inbox**.
+    *   A persistent banner displaying: **"Impersonation Context: Acting as [User Name] ([User Role])"** with a quick switch button.
+    *   **Colors & Theme:** A hybrid of authentic UI geometry with a fresh, soft, peaceful pastel color palette (rounded borders, generous padding, gentle shadow depths) that looks modern, clean, and professional.
 
 ---
 
