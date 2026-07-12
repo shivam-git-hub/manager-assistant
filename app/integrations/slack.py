@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import json
 import pytz
+import uuid
 
 from app.database import get_db, UnifiedMessage, TeamMember
 from app.config import IST
@@ -43,7 +45,11 @@ async def slack_webhook(request: Request, db: Session = Depends(get_db)):
             
         # Unique platform ID to ensure idempotency
         # Slack messages have a unique 'client_msg_id' or 'ts'
-        msg_id = event.get("client_msg_id") or f"slack_{event.get('ts')}"
+        ts_val = event.get("ts")
+        if not ts_val:
+            msg_id = event.get("client_msg_id") or f"slack_missing_ts_{uuid.uuid4()}"
+        else:
+            msg_id = event.get("client_msg_id") or f"slack_{ts_val}"
         
         # Check if already exists to prevent duplicate processing
         existing = db.scalars(select(UnifiedMessage).where(UnifiedMessage.platform_msg_id == msg_id)).first()
@@ -78,7 +84,11 @@ async def slack_webhook(request: Request, db: Session = Depends(get_db)):
         )
         
         db.add(new_msg)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return {"status": "ignored", "detail": "duplicate message (race condition)"}
         return {"status": "ok", "message_id": msg_id, "sender_mapped": sender_name}
         
     return {"status": "ignored", "detail": "unsupported event type"}

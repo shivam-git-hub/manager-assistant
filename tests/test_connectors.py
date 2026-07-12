@@ -150,6 +150,16 @@ def test_outlook_ingestion(client):
 
 
 def test_dashboard_message(client):
+    # Create matching team member first
+    member_payload = {
+        "id": "U_SHIVAM",
+        "name": "Shivam",
+        "role": "Manager",
+        "slack_handle": "U_SHIVAM",
+        "outlook_email": "shivam@company.com"
+    }
+    client.post("/api/team", json=member_payload)
+
     payload = {
         "user_name": "Shivam",
         "message": "Direct query: How many tasks are blocked?"

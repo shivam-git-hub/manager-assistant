@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from html.parser import HTMLParser
 import re
@@ -19,8 +20,18 @@ class HTMLToMarkdown(HTMLParser):
         super().__init__()
         self.reset()
         self.fed = []
+        self.skip_tags = {"style", "script", "head"}
+        self.active_skips = set()
 
     def handle_starttag(self, tag, attrs):
+        lower_tag = tag.lower()
+        if lower_tag in self.skip_tags:
+            self.active_skips.add(lower_tag)
+            return
+            
+        if self.active_skips:
+            return
+
         if tag in ["p", "div", "tr"]:
             self.fed.append("\n")
         elif tag == "br":
@@ -33,12 +44,22 @@ class HTMLToMarkdown(HTMLParser):
             self.fed.append(" | ")
 
     def handle_endtag(self, tag):
+        lower_tag = tag.lower()
+        if lower_tag in self.skip_tags:
+            self.active_skips.discard(lower_tag)
+            return
+            
+        if self.active_skips:
+            return
+
         if tag in ["p", "div", "tr"]:
             self.fed.append("\n")
         elif tag in ["h1", "h2", "h3", "h4"]:
             self.fed.append("\n")
 
     def handle_data(self, data):
+        if self.active_skips:
+            return
         self.fed.append(data)
 
     def get_text(self) -> str:
@@ -117,7 +138,7 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
         dt_utc = datetime.fromisoformat(payload.receivedDateTime.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST).replace(tzinfo=None) # Store naive datetime for SQLite
     except Exception:
-        dt_ist = datetime.now()
+        dt_ist = datetime.now(IST).replace(tzinfo=None)
         
     # Create unified message
     new_msg = UnifiedMessage(
@@ -135,6 +156,11 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
     )
     
     db.add(new_msg)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        response.status_code = status.HTTP_200_OK
+        return {"status": "ignored", "detail": "duplicate email ID (race condition)", "message_id": payload.id}
     
     return {"status": "ok", "message_id": payload.id, "sender_mapped": sender_name}

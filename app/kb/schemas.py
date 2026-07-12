@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 from datetime import datetime, date
 from typing import Optional, List
 
@@ -49,6 +49,24 @@ class TaskResponse(TaskBase):
     completed_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    assignee_id: Optional[str] = None
+    status: Optional[str] = None
+    blockage_reason: Optional[str] = None
+    due_date: Optional[date] = None
+
+    @field_validator('status')
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        allowed = {"pending", "in_progress", "completed", "blocked"}
+        if v not in allowed:
+            raise ValueError(f"Status must be one of {allowed}")
+        return v
 
 class UnifiedMessageBase(BaseModel):
     platform_msg_id: str

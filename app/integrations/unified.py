@@ -8,7 +8,7 @@ from typing import List, Optional
 from app.database import get_db, UnifiedMessage, TeamMember, Project, Task
 from app.kb.schemas import (
     UnifiedMessageResponse, ProjectCreate, ProjectResponse,
-    TaskCreate, TaskResponse
+    TaskCreate, TaskResponse, TaskUpdate
 )
 from app.config import IST
 
@@ -44,7 +44,7 @@ def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
     sender_raw = f"dashboard_{user_name.lower().replace(' ', '_')}"
     
     # Try to map user_name or sender_raw
-    sender_name = user_name
+    sender_name = None
     member = db.scalars(select(TeamMember).where(
         (TeamMember.name == user_name) | (TeamMember.id == sender_raw)
     )).first()
@@ -163,32 +163,35 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     return new_task
 
 @router.patch("/api/tasks/{task_id}", response_model=TaskResponse)
-def update_task(task_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)):
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
         
-    if "status" in payload:
-        new_status = payload["status"]
-        if new_status == "completed" and task.status != "completed":
-            task.completed_at = datetime.now(IST).replace(tzinfo=None)
-        elif new_status != "completed":
-            task.completed_at = None
-        task.status = new_status
-        
-    if "title" in payload:
-        task.title = payload["title"]
-    if "description" in payload:
-        task.description = payload["description"]
-    if "assignee_id" in payload:
-        task.assignee_id = payload["assignee_id"]
-    if "blockage_reason" in payload:
-        task.blockage_reason = payload["blockage_reason"]
-    if "due_date" in payload:
-        if payload["due_date"]:
-            task.due_date = datetime.strptime(payload["due_date"], "%Y-%m-%d").date()
+    if payload.assignee_id is not None:
+        if payload.assignee_id != "":
+            member = db.get(TeamMember, payload.assignee_id)
+            if not member:
+                raise HTTPException(status_code=404, detail="Assignee team member not found")
+            task.assignee_id = payload.assignee_id
         else:
-            task.due_date = None
+            task.assignee_id = None
+
+    if payload.status is not None:
+        if payload.status == "completed" and task.status != "completed":
+            task.completed_at = datetime.now(IST).replace(tzinfo=None)
+        elif payload.status != "completed":
+            task.completed_at = None
+        task.status = payload.status
+        
+    if payload.title is not None:
+        task.title = payload.title
+    if payload.description is not None:
+        task.description = payload.description
+    if payload.blockage_reason is not None:
+        task.blockage_reason = payload.blockage_reason
+    if payload.due_date is not None:
+        task.due_date = payload.due_date
             
     db.commit()
     db.refresh(task)
