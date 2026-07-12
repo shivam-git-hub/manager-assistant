@@ -67,9 +67,15 @@
                     </select>
                     <input 
                         v-if="useSimulatedTime" 
-                        type="datetime-local" 
-                        v-model="simulatedTime" 
-                        class="bg-indigo-900 text-amber-300 text-xs px-2.5 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400"
+                        type="date" 
+                        v-model="simulatedDate" 
+                        class="bg-indigo-900 text-amber-300 text-xs px-2 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
+                    >
+                    <input 
+                        v-if="useSimulatedTime" 
+                        type="time" 
+                        v-model="simulatedTimeOnly" 
+                        class="bg-indigo-900 text-amber-300 text-xs px-2 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
                     >
                     <span v-else class="text-xs text-emerald-400 font-bold font-mono">{{ liveClockStr }}</span>
                 </div>
@@ -488,7 +494,7 @@
                         <span class="bg-indigo-100 text-indigo-800 text-xs px-2.5 py-1 rounded-full font-bold">SQLITE DATABASE CONTROL</span>
                     </div>
 
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
                         <!-- Add Employee Form (Pastel card) -->
                         <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col space-y-4 h-fit">
                             <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 flex items-center space-x-2">
@@ -518,40 +524,31 @@
                             </form>
                         </div>
 
-                        <!-- Display Team List -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm lg:col-span-2 flex flex-col h-112">
-                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 shrink-0 flex items-center space-x-2">
+                        <!-- Compact Active Team List -->
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col h-fit">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 mb-3 flex items-center space-x-2">
                                 <svg class="w-4.5 h-4.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
                                 <span>Active Team Rosters</span>
                             </h3>
-                            <div class="flex-1 overflow-y-auto mt-2">
-                                <table class="w-full text-xs text-left text-slate-600">
-                                    <thead class="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
-                                        <tr>
-                                            <th class="px-4 py-2 font-bold">Name</th>
-                                            <th class="px-4 py-2 font-bold">Role</th>
-                                            <th class="px-4 py-2 font-bold">Slack ID</th>
-                                            <th class="px-4 py-2 font-bold">Email</th>
-                                            <th class="px-4 py-2 font-bold text-center">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-slate-100">
-                                        <tr v-for="member in teamMembers" :key="member.id" class="hover:bg-slate-50/50">
-                                            <td class="px-4 py-3 font-semibold text-slate-800">{{ member.name }}</td>
-                                            <td class="px-4 py-3 text-slate-500">{{ member.role }}</td>
-                                            <td class="px-4 py-3"><span class="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded">{{ member.slack_handle }}</span></td>
-                                            <td class="px-4 py-3 text-slate-500">{{ member.outlook_email }}</td>
-                                            <td class="px-4 py-3 text-center">
-                                                <button 
-                                                    @click="deleteMember(member.id)" 
-                                                    class="text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2.5 py-1 rounded transition text-xs font-semibold border border-transparent hover:border-rose-100"
-                                                >
-                                                    Delete
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
+                            <div class="space-y-2 overflow-y-auto max-h-96">
+                                <div v-for="member in teamMembers" :key="member.id" class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-150 text-xs hover:bg-slate-100/50 transition">
+                                    <div class="flex items-center space-x-2.5 min-w-0">
+                                        <div class="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white shrink-0 shadow-sm text-[10px]" :class="getUserAvatarClass(member.name)">
+                                            {{ getInitials(member.name) }}
+                                        </div>
+                                        <div class="min-w-0">
+                                            <p class="font-bold text-slate-800 truncate">{{ member.name }}</p>
+                                            <p class="text-[10px] text-slate-400 truncate">{{ member.role }}</p>
+                                            <p class="text-[9px] text-slate-400 font-mono truncate">{{ member.outlook_email }}</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        @click="deleteMember(member.id)" 
+                                        class="text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2.5 py-1 rounded transition text-[10px] font-semibold border border-transparent hover:border-rose-100 shrink-0"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -638,7 +635,11 @@
 
                 // Date Time Simulation State
                 const useSimulatedTime = ref(false);
-                const simulatedTime = ref('2026-05-29T10:30'); // Default demo timestamp
+                const simulatedDate = ref('2026-05-29');
+                const simulatedTimeOnly = ref('10:30');
+                const simulatedTime = computed(() => {
+                    return `${simulatedDate.value}T${simulatedTimeOnly.value}`;
+                });
                 const liveClockStr = ref('');
 
                 // Slack Simulator State
@@ -1036,6 +1037,8 @@
                     teamMembers,
                     unifiedMessages,
                     useSimulatedTime,
+                    simulatedDate,
+                    simulatedTimeOnly,
                     simulatedTime,
                     liveClockStr,
                     activeSlackChannel,
