@@ -16,7 +16,7 @@ To start the server:
 ```
 
 The server will initialize an SQLite database at `data/db.sqlite`, pre-populate it with sample employee profiles, and start serving on:
-👉 **`http://localhost:8001`** (or configured `PORT` env var)
+👉 **`http://localhost:3003`** (or configured `PORT` env var)
 
 If you are running this on a remote server behind our Nginx proxy, check the configured subpath gateway routes or simply access it via your allocated public address.
 
@@ -34,7 +34,7 @@ To run our automated unit and integration test suite (verifying user resolution 
 
 ## 🎨 Inside the High-Fidelity Simulator
 
-When you open **`http://localhost:8001`** in your browser, you will see a unified portal structured for professional demos:
+When you open **`http://localhost:3003`** in your browser, you will see a unified portal structured for professional demos:
 
 ### 1. Impersonation Context Switcher (Top Right)
 Senior management can watch you switch active users dynamically (e.g., from *Shivam (Manager)* to *Alice Developer (Backend Engineer)* to *Bob Product (Designer)*).

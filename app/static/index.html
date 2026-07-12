@@ -802,16 +802,25 @@
                         ts_str = (simDate.getTime() / 1000).toString();
                     }
 
+                    // Mirror the real Slack Events API envelope so the collector
+                    // can be pointed at real Slack later without payload changes.
                     const payload = {
-                        type: "event_callback",
+                        token: "sim_verification_token",
+                        team_id: "T054SIM",
                         api_app_id: "A054SIM",
+                        type: "event_callback",
+                        event_id: "Ev" + Math.random().toString(36).substring(2, 11).toUpperCase(),
+                        event_time: Math.floor(Number(ts_str)),
                         event: {
                             type: "message",
                             client_msg_id: "sim_" + Math.random().toString(36).substring(2, 15),
                             user: currentUser.value.slack_handle,
+                            team: "T054SIM",
                             channel: activeSlackChannel.value,
+                            channel_type: activeSlackChannel.value.startsWith('DM_') ? 'im' : 'channel',
                             text: slackDraft.value,
-                            ts: ts_str
+                            ts: ts_str,
+                            event_ts: ts_str
                         }
                     };
 
@@ -844,8 +853,18 @@
                         date_str = new Date(simulatedTime.value).toISOString();
                     }
 
+                    // Mirror the real Microsoft Graph message resource shape
+                    // (from + sender + conversationId) for collector realism.
                     const payload = {
                         id: "mail_sim_" + Math.random().toString(36).substring(2, 15),
+                        conversationId: "conv_sim_" + Math.random().toString(36).substring(2, 15),
+                        internetMessageId: "<sim." + Date.now() + "." + Math.random().toString(36).substring(2, 8) + "@company.com>",
+                        from: {
+                            emailAddress: {
+                                address: currentUser.value.outlook_email,
+                                name: currentUser.value.name
+                            }
+                        },
                         sender: {
                             emailAddress: {
                                 address: currentUser.value.outlook_email,
