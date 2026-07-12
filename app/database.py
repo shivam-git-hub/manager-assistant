@@ -3,6 +3,7 @@ from typing import Optional
 from sqlalchemy import create_engine, ForeignKey, String, Text, Boolean, DateTime, Date, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from app.config import DATABASE_URL, IST
+from app import timeservice
 
 # Create engine and session
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -29,8 +30,8 @@ class Project(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     manager_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")  # active, completed, on_hold
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(IST))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(IST), onupdate=lambda: datetime.now(IST))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist(), onupdate=lambda: timeservice.now_ist())
 
 class Task(Base):
     __tablename__ = "tasks"

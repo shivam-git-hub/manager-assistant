@@ -11,6 +11,7 @@ from app.kb.schemas import (
     TaskCreate, TaskResponse, TaskUpdate
 )
 from app.config import IST
+from app import timeservice
 
 router = APIRouter(tags=["Unified Core & Dashboard"])
 
@@ -58,9 +59,9 @@ def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
             dt_utc = datetime.fromisoformat(custom_ts.replace("Z", "+00:00"))
             timestamp_ist = dt_utc.astimezone(IST).replace(tzinfo=None)
         except Exception:
-            timestamp_ist = datetime.now(IST).replace(tzinfo=None)
+            timestamp_ist = timeservice.now_ist()
     else:
-        timestamp_ist = datetime.now(IST).replace(tzinfo=None)
+        timestamp_ist = timeservice.now_ist()
 
     new_msg = UnifiedMessage(
         platform_msg_id=msg_id,
@@ -155,7 +156,7 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     )
     
     if task.status == "completed":
-        new_task.completed_at = datetime.now(IST).replace(tzinfo=None)
+        new_task.completed_at = timeservice.now_ist()
         
     db.add(new_task)
     db.commit()
@@ -179,7 +180,7 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
 
     if payload.status is not None:
         if payload.status == "completed" and task.status != "completed":
-            task.completed_at = datetime.now(IST).replace(tzinfo=None)
+            task.completed_at = timeservice.now_ist()
         elif payload.status != "completed":
             task.completed_at = None
         task.status = payload.status

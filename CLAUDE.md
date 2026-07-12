@@ -69,7 +69,7 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
 
 ## Step plan (one prompt per step; update status as we go)
 
-1. [ ] Sim-time service + smart/flash model config (spec/feature_04)
+1. [x] Sim-time service + smart/flash model config (spec/feature_04) — done 2026-07-12
 2. [ ] Harry identity + outbound send path + quiet-hours queue + simulator render
 3. [ ] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
 4. [ ] Gemini client + flash claim extraction (4a); dream-cycle synthesis +

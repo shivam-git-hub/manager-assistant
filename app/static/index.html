@@ -60,24 +60,35 @@
                     </svg>
                     <span class="text-xs font-bold text-slate-300">Clock:</span>
                 </div>
-                <div class="flex items-center space-x-2">
-                    <select v-model="useSimulatedTime" class="bg-indigo-900 text-white text-xs px-2 py-1 rounded border border-indigo-700 font-semibold cursor-pointer">
-                        <option :value="false">Live System Time</option>
-                        <option :value="true">Simulated Time</option>
-                    </select>
+                <div class="flex items-center space-x-2 text-xs">
+                    <span class="text-emerald-400 font-bold font-mono mr-2">{{ liveClockStr }}</span>
                     <input 
-                        v-if="useSimulatedTime" 
                         type="date" 
                         v-model="simulatedDate" 
-                        class="bg-indigo-900 text-amber-300 text-xs px-2 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
+                        class="bg-indigo-900 text-amber-300 text-xs px-2 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer w-28"
                     >
                     <input 
-                        v-if="useSimulatedTime" 
                         type="time" 
                         v-model="simulatedTimeOnly" 
-                        class="bg-indigo-900 text-amber-300 text-xs px-2 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer"
+                        class="bg-indigo-900 text-amber-300 text-xs px-2 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer w-20"
                     >
-                    <span v-else class="text-xs text-emerald-400 font-bold font-mono">{{ liveClockStr }}</span>
+                    <button @click="setBackendTime" class="bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-800 text-white font-bold px-2 py-1 rounded text-[11px] border border-indigo-600 transition-colors">
+                        Set
+                    </button>
+                    <span class="text-indigo-500 font-bold">|</span>
+                    <button @click="advanceBackendTime(0, 1, 0)" class="bg-indigo-950 hover:bg-indigo-800 text-indigo-300 hover:text-white font-semibold px-1.5 py-1 rounded border border-indigo-800 transition-colors text-[11px]">
+                        +1h
+                    </button>
+                    <button @click="advanceBackendTime(1, 0, 0)" class="bg-indigo-950 hover:bg-indigo-800 text-indigo-300 hover:text-white font-semibold px-1.5 py-1 rounded border border-indigo-800 transition-colors text-[11px]">
+                        +1d
+                    </button>
+                    <button @click="advanceBackendTime(3, 0, 0)" class="bg-indigo-950 hover:bg-indigo-800 text-indigo-300 hover:text-white font-semibold px-1.5 py-1 rounded border border-indigo-800 transition-colors text-[11px]">
+                        +3d
+                    </button>
+                    <span class="text-indigo-500 font-bold">|</span>
+                    <button @click="resetBackendTime" class="bg-rose-950/60 hover:bg-rose-900/80 active:bg-rose-950 text-rose-300 hover:text-white font-bold px-2 py-1 rounded border border-rose-900/60 transition-colors text-[11px]">
+                        Reset
+                    </button>
                 </div>
             </div>
 
@@ -634,13 +645,19 @@
                 const unifiedMessages = ref([]);
 
                 // Date Time Simulation State
-                const useSimulatedTime = ref(false);
                 const simulatedDate = ref('2026-05-29');
                 const simulatedTimeOnly = ref('10:30');
-                const simulatedTime = computed(() => {
-                    return `${simulatedDate.value}T${simulatedTimeOnly.value}`;
-                });
                 const liveClockStr = ref('');
+
+                // Backend synchronization anchors
+                const clockFetchedEpoch = ref(0);
+                const clockLocalFetchedAt = ref(0);
+
+                const getCurrentSimEpoch = () => {
+                    if (clockFetchedEpoch.value === 0) return Date.now() / 1000;
+                    const elapsedMs = Date.now() - clockLocalFetchedAt.value;
+                    return clockFetchedEpoch.value + (elapsedMs / 1000);
+                };
 
                 // Slack Simulator State
                 const activeSlackChannel = ref('C_GENERAL');
@@ -727,10 +744,84 @@
                     return unifiedMessages.value.filter(m => m.source === 'dashboard');
                 });
 
+                const updateLocalClockState = (state) => {
+                    clockFetchedEpoch.value = state.epoch;
+                    clockLocalFetchedAt.value = Date.now();
+                    
+                    if (state.sim_time_ist) {
+                        const parts = state.sim_time_ist.split('T');
+                        simulatedDate.value = parts[0];
+                        simulatedTimeOnly.value = parts[1].substring(0, 5);
+                    }
+                };
+
+                const syncClockWithBackend = async () => {
+                    try {
+                        const res = await fetch('api/time');
+                        if (res.ok) {
+                            const state = await res.json();
+                            updateLocalClockState(state);
+                        }
+                    } catch (e) {
+                        console.error("Error syncing clock with backend:", e);
+                    }
+                };
+
                 // Live Clock Tick
                 const tickClock = () => {
-                    const now = new Date();
-                    liveClockStr.value = now.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ", " + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const simEpoch = getCurrentSimEpoch();
+                    const now = new Date(simEpoch * 1000);
+                    liveClockStr.value = now.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }) + ", " + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+                };
+
+                const setBackendTime = async () => {
+                    try {
+                        const dtStr = `${simulatedDate.value}T${simulatedTimeOnly.value}:00`;
+                        const res = await fetch('api/time/set', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ datetime: dtStr })
+                        });
+                        if (res.ok) {
+                            const state = await res.json();
+                            updateLocalClockState(state);
+                            tickClock();
+                        }
+                    } catch (e) {
+                        console.error("Error setting time:", e);
+                    }
+                };
+
+                const advanceBackendTime = async (days, hours, minutes) => {
+                    try {
+                        const res = await fetch('api/time/advance', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ days, hours, minutes })
+                        });
+                        if (res.ok) {
+                            const state = await res.json();
+                            updateLocalClockState(state);
+                            tickClock();
+                        }
+                    } catch (e) {
+                        console.error("Error advancing time:", e);
+                    }
+                };
+
+                const resetBackendTime = async () => {
+                    try {
+                        const res = await fetch('api/time/reset', {
+                            method: 'POST'
+                        });
+                        if (res.ok) {
+                            const state = await res.json();
+                            updateLocalClockState(state);
+                            tickClock();
+                        }
+                    } catch (e) {
+                        console.error("Error resetting time:", e);
+                    }
                 };
 
                 // Fetch Database States
@@ -797,11 +888,8 @@
                     if (!slackDraft.value.trim() || !currentUser.value) return;
 
                     // Figure out event timestamp
-                    let ts_str = (Date.now() / 1000).toString();
-                    if (useSimulatedTime.value && simulatedTime.value) {
-                        const simDate = new Date(simulatedTime.value);
-                        ts_str = (simDate.getTime() / 1000).toString();
-                    }
+                    const simEpoch = getCurrentSimEpoch();
+                    const ts_str = simEpoch.toString();
 
                     // Mirror the real Slack Events API envelope so the collector
                     // can be pointed at real Slack later without payload changes.
@@ -848,11 +936,8 @@
                         toEmail = customOutlookTo.value;
                     }
 
-                    // Received Time
-                    let date_str = new Date().toISOString();
-                    if (useSimulatedTime.value && simulatedTime.value) {
-                        date_str = new Date(simulatedTime.value).toISOString();
-                    }
+                    // Received Time — from the backend-synced simulated clock
+                    const date_str = new Date(getCurrentSimEpoch() * 1000).toISOString();
 
                     // Mirror the real Microsoft Graph message resource shape
                     // (from + sender + conversationId) for collector realism.
@@ -907,11 +992,8 @@
                 const sendDashboardMessage = async () => {
                     if (!dashboardDraft.value.trim() || !currentUser.value) return;
 
-                    // Custom Timestamp for direct dashboard chats
-                    let date_str = new Date().toISOString();
-                    if (useSimulatedTime.value && simulatedTime.value) {
-                        date_str = new Date(simulatedTime.value).toISOString();
-                    }
+                    // Timestamp from the backend-synced simulated clock
+                    const date_str = new Date(getCurrentSimEpoch() * 1000).toISOString();
 
                     const payload = {
                         user_name: currentUser.value.name,
@@ -1026,8 +1108,10 @@
                 onMounted(async () => {
                     await fetchData();
                     await populateSamples();
+                    await syncClockWithBackend();
                     tickClock();
                     setInterval(tickClock, 1000);
+                    setInterval(syncClockWithBackend, 15000);
                     lucide.createIcons();
                 });
 
@@ -1036,10 +1120,11 @@
                     selectedUserId,
                     teamMembers,
                     unifiedMessages,
-                    useSimulatedTime,
                     simulatedDate,
                     simulatedTimeOnly,
-                    simulatedTime,
+                    setBackendTime,
+                    advanceBackendTime,
+                    resetBackendTime,
                     liveClockStr,
                     activeSlackChannel,
                     activeSlackChannelName,

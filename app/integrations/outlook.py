@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from app.database import get_db, UnifiedMessage, TeamMember
 from app.config import IST
+from app import timeservice
 
 router = APIRouter(prefix="/api/integrations/outlook", tags=["Outlook Integration"])
 
@@ -138,7 +139,7 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
         dt_utc = datetime.fromisoformat(payload.receivedDateTime.replace("Z", "+00:00"))
         dt_ist = dt_utc.astimezone(IST).replace(tzinfo=None) # Store naive datetime for SQLite
     except Exception:
-        dt_ist = datetime.now(IST).replace(tzinfo=None)
+        dt_ist = timeservice.now_ist()
         
     # Create unified message
     new_msg = UnifiedMessage(

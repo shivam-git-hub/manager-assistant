@@ -10,6 +10,7 @@ import uuid
 
 from app.database import get_db, UnifiedMessage, TeamMember
 from app.config import IST
+from app import timeservice
 
 router = APIRouter(prefix="/api/integrations/slack", tags=["Slack Integration"])
 
@@ -65,7 +66,7 @@ async def slack_webhook(request: Request, db: Session = Depends(get_db)):
             sender_name = sender_member.name
             
         # Parse timestamp
-        ts_float = float(event.get("ts", datetime.now().timestamp()))
+        ts_float = float(event.get("ts", timeservice.now_epoch()))
         timestamp_utc = datetime.fromtimestamp(ts_float, tz=pytz.UTC)
         timestamp_ist = timestamp_utc.astimezone(IST).replace(tzinfo=None) # Store as naive datetime representing IST
         
