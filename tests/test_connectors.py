@@ -38,8 +38,11 @@ def test_team_crud(client):
     # Get team
     response = client.get("/api/team")
     assert response.status_code == 200
-    assert len(response.json()) == 1
-    assert response.json()[0]["id"] == "U12345"
+    members = response.json()
+    assert len(members) >= 1
+    shivam_members = [m for m in members if m["id"] == "U12345"]
+    assert len(shivam_members) == 1
+    assert shivam_members[0]["name"] == "Shivam"
 
 
 def test_slack_webhook_verification(client):

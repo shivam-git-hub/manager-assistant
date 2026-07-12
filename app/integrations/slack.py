@@ -7,6 +7,8 @@ from datetime import datetime
 import json
 import pytz
 import uuid
+from pydantic import BaseModel
+from typing import Optional
 
 from app.database import get_db, UnifiedMessage, TeamMember
 from app.config import IST
@@ -93,3 +95,65 @@ async def slack_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "ok", "message_id": msg_id, "sender_mapped": sender_name}
         
     return {"status": "ignored", "detail": "unsupported event type"}
+
+
+def send_slack_message_internal(channel: Optional[str], text: Optional[str], db: Session) -> dict:
+    if not channel or not text or not (channel.startswith("C_") or channel.startswith("DM_")):
+        return {"ok": False, "error": "invalid_arguments"}
+        
+    ts_epoch = timeservice.now_epoch()
+    platform_msg_id = f"slack_out_{ts_epoch}"
+    
+    # Check for collision
+    existing = db.scalars(select(UnifiedMessage).where(UnifiedMessage.platform_msg_id == platform_msg_id)).first()
+    if existing:
+        platform_msg_id = f"slack_out_{ts_epoch}_{uuid.uuid4().hex[:8]}"
+        
+    new_msg = UnifiedMessage(
+        platform_msg_id=platform_msg_id,
+        source="slack",
+        direction="outbound",
+        sender_raw_id="U_HARRY",
+        sender_mapped_name="Harry",
+        channel_raw_id=channel,
+        thread_id=None,
+        subject=None,
+        content=text,
+        timestamp=timeservice.now_ist(),
+        is_processed=False,
+        raw_metadata=json.dumps({"channel": channel, "text": text})
+    )
+    
+    db.add(new_msg)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Retry with uuid
+        platform_msg_id = f"slack_out_{ts_epoch}_{uuid.uuid4().hex[:8]}"
+        new_msg.platform_msg_id = platform_msg_id
+        db.add(new_msg)
+        db.commit()
+        
+    return {
+        "ok": True,
+        "channel": channel,
+        "ts": str(ts_epoch),
+        "message_id": platform_msg_id,
+        "message": {
+            "user": "U_HARRY",
+            "type": "message",
+            "text": text,
+            "ts": str(ts_epoch)
+        }
+    }
+
+
+class SlackSendPayload(BaseModel):
+    channel: Optional[str] = None
+    text: Optional[str] = None
+
+
+@router.post("/send")
+async def send_slack_message(payload: SlackSendPayload, db: Session = Depends(get_db)):
+    return send_slack_message_internal(payload.channel, payload.text, db)

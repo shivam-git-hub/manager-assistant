@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -6,6 +7,8 @@ from datetime import datetime
 from html.parser import HTMLParser
 import re
 import pytz
+import json
+import uuid
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -165,3 +168,118 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
         return {"status": "ignored", "detail": "duplicate email ID (race condition)", "message_id": payload.id}
     
     return {"status": "ok", "message_id": payload.id, "sender_mapped": sender_name}
+
+
+def send_outlook_message_internal(subject: str, body_html: str, to_recipients: List[str], db: Session) -> dict:
+    if not to_recipients or not body_html:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "invalidRequest",
+                    "message": "Missing toRecipients or body content."
+                }
+            }
+        )
+        
+    cleaned_body = clean_html(body_html)
+    full_content = f"Subject: {subject}\n\n{cleaned_body}" if subject else cleaned_body
+    
+    recipient_email = to_recipients[0]
+    platform_msg_id = f"mail_out_{uuid.uuid4().hex[:12]}"
+    
+    new_msg = UnifiedMessage(
+        platform_msg_id=platform_msg_id,
+        source="outlook",
+        direction="outbound",
+        sender_raw_id="harry.assistant@company.com",
+        sender_mapped_name="Harry",
+        channel_raw_id=f"email:{recipient_email}",
+        thread_id=None,
+        subject=subject,
+        content=full_content,
+        timestamp=timeservice.now_ist(),
+        is_processed=False,
+        raw_metadata=json.dumps({
+            "subject": subject,
+            "body": body_html,
+            "toRecipients": to_recipients
+        })
+    )
+    
+    db.add(new_msg)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Retry with a new uuid
+        platform_msg_id = f"mail_out_{uuid.uuid4().hex[:12]}"
+        new_msg.platform_msg_id = platform_msg_id
+        db.add(new_msg)
+        db.commit()
+        
+    return {"message_id": platform_msg_id}
+
+
+class OutlookSendBody(BaseModel):
+    contentType: str
+    content: str
+
+
+class OutlookSendRecipientAddress(BaseModel):
+    address: str
+
+
+class OutlookSendRecipient(BaseModel):
+    emailAddress: OutlookSendRecipientAddress
+
+
+class OutlookSendMessage(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[OutlookSendBody] = None
+    toRecipients: Optional[List[OutlookSendRecipient]] = None
+
+
+class OutlookSendPayload(BaseModel):
+    message: Optional[OutlookSendMessage] = None
+    saveToSentItems: Optional[bool] = True
+
+
+@router.post("/send", status_code=status.HTTP_202_ACCEPTED)
+async def send_outlook_message(payload: OutlookSendPayload, response: Response, db: Session = Depends(get_db)):
+    if not payload or not payload.message or not payload.message.body or not payload.message.toRecipients:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalidRequest",
+                    "message": "Missing toRecipients or body content."
+                }
+            }
+        )
+        
+    to_emails = [r.emailAddress.address for r in payload.message.toRecipients if r.emailAddress and r.emailAddress.address]
+    if not to_emails:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalidRequest",
+                    "message": "Missing toRecipients or body content."
+                }
+            }
+        )
+        
+    try:
+        send_outlook_message_internal(
+            subject=payload.message.subject or "",
+            body_html=payload.message.body.content or "",
+            to_recipients=to_emails,
+            db=db
+        )
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=e.status_code,
+            content=e.detail if isinstance(e.detail, dict) else {"error": {"code": "invalidRequest", "message": str(e.detail)}}
+        )
+    return Response(status_code=status.HTTP_202_ACCEPTED)

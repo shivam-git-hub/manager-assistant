@@ -12,7 +12,7 @@ To start the server:
 
 ```bash
 # 1. Run the FastAPI development server
-.venv/bin/python3 app/main.py
+.venv/bin/python3 -m app.main
 ```
 
 The server will initialize an SQLite database at `data/db.sqlite`, pre-populate it with sample employee profiles, and start serving on:

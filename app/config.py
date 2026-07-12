@@ -43,3 +43,7 @@ if CONFIG_JSON_PATH.exists():
 SMART_MODEL = os.getenv("SMART_MODEL", smart_model_val)
 FLASH_MODEL = os.getenv("FLASH_MODEL", flash_model_val)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", None)
+
+# Outbound Quiet Hours config (IST)
+WORK_HOURS_START = 9
+WORK_HOURS_END = 19

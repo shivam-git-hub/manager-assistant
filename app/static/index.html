@@ -110,7 +110,7 @@
                         v-model="selectedUserId" 
                         class="bg-indigo-800 hover:bg-indigo-750 text-white text-xs px-3 py-1.5 rounded-xl border border-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer pr-8 appearance-none font-semibold"
                     >
-                        <option v-for="user in teamMembers" :key="user.id" :value="user.id">
+                        <option v-for="user in teamMembers.filter(m => m.id !== 'U_HARRY')" :key="user.id" :value="user.id">
                             Switch to: {{ user.name }}
                         </option>
                     </select>
@@ -277,12 +277,15 @@
                         <div class="flex-1 overflow-y-auto p-6 space-y-4" id="slack-chat-feed">
                             <div v-for="msg in filteredSlackMessages" :key="msg.id" class="flex space-x-3 items-start hover:bg-slate-50/50 p-1.5 rounded-lg transition duration-150">
                                 <!-- Avatar -->
-                                <div class="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-white shrink-0 shadow-sm" :class="getUserAvatarClass(msg.sender_mapped_name || msg.sender_raw_id)">
-                                    {{ getInitials(msg.sender_mapped_name || msg.sender_raw_id) }}
+                                <div class="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-white shrink-0 shadow-sm" 
+                                     :class="msg.sender_raw_id === 'U_HARRY' ? 'bg-indigo-600 border border-indigo-400 shadow-indigo-100' : getUserAvatarClass(msg.sender_mapped_name || msg.sender_raw_id)">
+                                    <span v-if="msg.sender_raw_id === 'U_HARRY'">✨</span>
+                                    <span v-else>{{ getInitials(msg.sender_mapped_name || msg.sender_raw_id) }}</span>
                                 </div>
                                 <div class="flex-1">
                                     <div class="flex items-baseline space-x-2">
                                         <span class="font-bold text-slate-800 text-sm">{{ msg.sender_mapped_name || msg.sender_raw_id }}</span>
+                                        <span v-if="msg.sender_raw_id === 'U_HARRY'" class="bg-[#1164A3]/10 text-[#1164A3] text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ml-1 tracking-wider inline-flex items-center">APP</span>
                                         <span class="text-slate-400 text-[10px]">{{ formatTime(msg.timestamp) }}</span>
                                     </div>
                                     <div class="text-slate-700 text-sm mt-1 whitespace-pre-wrap leading-relaxed">{{ msg.content }}</div>
@@ -730,7 +733,10 @@
                         // Receive emails sent to current user OR sent to Harry (the project assistant)
                         return unifiedMessages.value.filter(m => 
                             m.source === 'outlook' && 
-                            (m.channel_raw_id === email || m.channel_raw_id === 'harry.assistant@company.com')
+                            (m.channel_raw_id === email || 
+                             m.channel_raw_id === `email:${email}` || 
+                             m.channel_raw_id === 'harry.assistant@company.com' ||
+                             m.channel_raw_id === 'email:harry.assistant@company.com')
                         );
                     } else {
                         // Sent emails
@@ -835,9 +841,10 @@
                         teamMembers.value = await teamRes.json();
                         unifiedMessages.value = await msgRes.json();
 
-                        // Set default active user if not set
-                        if (teamMembers.value.length > 0 && !selectedUserId.value) {
-                            selectedUserId.value = teamMembers.value[0].id;
+                        // Set default active user if not set (excluding Harry)
+                        const nonHarry = teamMembers.value.filter(m => m.id !== 'U_HARRY');
+                        if (nonHarry.length > 0 && !selectedUserId.value) {
+                            selectedUserId.value = nonHarry[0].id;
                         }
                     } catch (e) {
                         console.error("Error fetching data:", e);

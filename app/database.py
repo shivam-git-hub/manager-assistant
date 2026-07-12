@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import create_engine, ForeignKey, String, Text, Boolean, DateTime, Date, Integer
+from sqlalchemy import create_engine, ForeignKey, String, Text, Boolean, DateTime, Date, Integer, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from app.config import DATABASE_URL, IST
 from app import timeservice
@@ -52,6 +52,7 @@ class UnifiedMessage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     platform_msg_id: Mapped[str] = mapped_column(String(100), unique=True)
     source: Mapped[str] = mapped_column(String(20))  # slack, outlook, dashboard
+    direction: Mapped[str] = mapped_column(String(10), default="inbound")
     sender_raw_id: Mapped[str] = mapped_column(String(100))
     sender_mapped_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     channel_raw_id: Mapped[str] = mapped_column(String(100))
@@ -64,7 +65,31 @@ class UnifiedMessage(Base):
     raw_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 def init_db():
+    from app.outbound import OutboundQueue  # Register with Base metadata
     Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        # Check if 'direction' column exists in unified_messages
+        result = db.execute(text("PRAGMA table_info(unified_messages)")).fetchall()
+        columns = [row[1] for row in result]
+        if "direction" not in columns:
+            db.execute(text("ALTER TABLE unified_messages ADD COLUMN direction VARCHAR(10) DEFAULT 'inbound'"))
+            db.commit()
+            
+        harry = db.query(TeamMember).filter(TeamMember.id == "U_HARRY").first()
+        if not harry:
+            harry = TeamMember(
+                id="U_HARRY",
+                name="Harry",
+                role="AI Assistant",
+                slack_handle="U_HARRY",
+                outlook_email="harry.assistant@company.com",
+                timezone="Asia/Kolkata"
+            )
+            db.add(harry)
+            db.commit()
+    finally:
+        db.close()
 
 def get_db():
     db = SessionLocal()

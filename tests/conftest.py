@@ -26,6 +26,21 @@ def db_session():
     # Create the database tables
     Base.metadata.create_all(bind=engine)
     
+    # Seed Harry in the test database so all tests can find him
+    from app.database import TeamMember
+    db = TestingSessionLocal()
+    harry = TeamMember(
+        id="U_HARRY",
+        name="Harry",
+        role="AI Assistant",
+        slack_handle="U_HARRY",
+        outlook_email="harry.assistant@company.com",
+        timezone="Asia/Kolkata"
+    )
+    db.add(harry)
+    db.commit()
+    db.close()
+    
     db = TestingSessionLocal()
     try:
         yield db

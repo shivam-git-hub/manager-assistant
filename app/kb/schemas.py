@@ -71,6 +71,7 @@ class TaskUpdate(BaseModel):
 class UnifiedMessageBase(BaseModel):
     platform_msg_id: str
     source: str
+    direction: str = "inbound"
     sender_raw_id: str
     sender_mapped_name: Optional[str] = None
     channel_raw_id: str
