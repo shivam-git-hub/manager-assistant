@@ -26,6 +26,12 @@ Consequence: **files change between turns. Always check `git status` / recent
 commits / re-read files before editing or reviewing — never trust stale
 context.**
 
+- Step prompts are files: `prompts/step_XX_<name>.md` (never inline in chat).
+- **KEEP THIS FILE (CLAUDE.md) UPDATED** — after every step review: tick the
+  step checkbox with the date, and record any new conventions, endpoints,
+  tables, gotchas, or decisions that future turns need. Claude (reviewer)
+  owns CLAUDE.md updates; the coding agent must not edit it.
+
 ## Architecture (agreed 2026-07-12)
 
 ```
@@ -70,7 +76,8 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
 ## Step plan (one prompt per step; update status as we go)
 
 1. [x] Sim-time service + smart/flash model config (spec/feature_04) — done 2026-07-12
-2. [ ] Harry identity + outbound send path + quiet-hours queue + simulator render
+2. [ ] Harry identity + outbound send path + quiet-hours queue + simulator
+       render (prompt: `prompts/step_02_harry_outbound.md`)
 3. [ ] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
 4. [ ] Gemini client + flash claim extraction (4a); dream-cycle synthesis +
        contradiction probe (4b)
@@ -99,7 +106,14 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
 
 ## Repo facts
 
-- Run: `.venv/bin/python3 app/main.py` (port 3003). Tests: `.venv/bin/python3 -m pytest tests/`
+- Run: `.venv/bin/python3 -m app.main` (port 3003; the README's
+  `python3 app/main.py` form fails — fixed in Step 2). Tests:
+  `.venv/bin/python3 -m pytest tests/`
+- Sim clock: `app/timeservice.py`, state in `data/sim_clock.json`
+  (`SIM_CLOCK_PATH` env for tests); endpoints `GET/POST /api/time[...]`.
+  Wall-clock reads outside timeservice are forbidden (guard test).
+- LLM config: `SMART_MODEL`/`FLASH_MODEL`/`GEMINI_API_KEY` in `app/config.py`
+  (env → config.json → defaults); `config.json` is gitignored.
 - FastAPI + SQLAlchemy 2.0 + SQLite (`data/db.sqlite`); simulator is
   `app/static/index.html` (Vue 3 CDN single file).
 - `unified_messages`: platform_msg_id UNIQUE (idempotency), `is_processed`
