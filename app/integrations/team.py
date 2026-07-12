@@ -40,3 +40,12 @@ def create_or_update_team_member(member: TeamMemberCreate, db: Session = Depends
     db.commit()
     db.refresh(new_member)
     return new_member
+
+@router.delete("/{member_id}", status_code=status.HTTP_200_OK)
+def delete_team_member(member_id: str, db: Session = Depends(get_db)):
+    member = db.get(TeamMember, member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    db.delete(member)
+    db.commit()
+    return {"status": "ok", "detail": f"Team member {member_id} deleted successfully"}

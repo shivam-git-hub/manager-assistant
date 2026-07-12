@@ -51,6 +51,17 @@ def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
     if member:
         sender_name = member.name
         
+    # Parse custom timestamp if provided (for simulator date-time)
+    custom_ts = payload.get("timestamp")
+    if custom_ts:
+        try:
+            dt_utc = datetime.fromisoformat(custom_ts.replace("Z", "+00:00"))
+            timestamp_ist = dt_utc.astimezone(IST).replace(tzinfo=None)
+        except Exception:
+            timestamp_ist = datetime.now(IST).replace(tzinfo=None)
+    else:
+        timestamp_ist = datetime.now(IST).replace(tzinfo=None)
+
     new_msg = UnifiedMessage(
         platform_msg_id=msg_id,
         source="dashboard",
@@ -60,7 +71,7 @@ def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
         thread_id=None,
         subject=None,
         content=msg_text,
-        timestamp=datetime.now(IST).replace(tzinfo=None),
+        timestamp=timestamp_ist,
         is_processed=False,
         raw_metadata=None
     )

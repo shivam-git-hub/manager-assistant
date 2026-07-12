@@ -10,14 +10,12 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Vue 3 -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
-        [v-cloak] {
-            display: none !important;
-        }
         body {
             font-family: 'Inter', sans-serif;
+        }
+        [v-cloak] {
+            display: none !important;
         }
         /* Custom scrollbars for high fidelity */
         ::-webkit-scrollbar {
@@ -48,7 +46,30 @@
                 </div>
                 <div>
                     <h1 class="text-lg font-bold tracking-tight">Harry</h1>
-                    <p class="text-xs text-indigo-300">Project Manager Assistant • Integration Portal</p>
+                    <p class="text-xs text-indigo-300 font-medium">Project Manager Assistant • Live Integration Simulator</p>
+                </div>
+            </div>
+
+            <!-- GLOBAL SIMULATED DATE & TIME CONTROL -->
+            <div class="flex items-center space-x-3 bg-indigo-950 px-4 py-1.5 rounded-xl border border-indigo-800/80">
+                <div class="flex items-center space-x-2">
+                    <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span class="text-xs font-bold text-slate-300">Clock:</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <select v-model="useSimulatedTime" class="bg-indigo-900 text-white text-xs px-2 py-1 rounded border border-indigo-700 font-semibold cursor-pointer">
+                        <option :value="false">Live System Time</option>
+                        <option :value="true">Simulated Time</option>
+                    </select>
+                    <input 
+                        v-if="useSimulatedTime" 
+                        type="datetime-local" 
+                        v-model="simulatedTime" 
+                        class="bg-indigo-900 text-amber-300 text-xs px-2.5 py-1 rounded border border-indigo-700 font-semibold focus:outline-none focus:ring-1 focus:ring-amber-400"
+                    >
+                    <span v-else class="text-xs text-emerald-400 font-bold font-mono">{{ liveClockStr }}</span>
                 </div>
             </div>
 
@@ -57,9 +78,9 @@
                 <div class="flex items-center space-x-3 bg-indigo-950 px-4 py-1.5 rounded-xl border border-indigo-800/80">
                     <div class="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></div>
                     <div class="text-sm">
-                        <span class="text-indigo-400 font-medium">Impersonating:</span>
-                        <span class="font-semibold text-emerald-300 ml-1" v-if="currentUser">{{ currentUser.name }}</span>
-                        <span class="text-slate-400 italic ml-1" v-else>Loading Profiles...</span>
+                        <span class="text-indigo-400 font-medium">Acting as:</span>
+                        <span class="font-bold text-emerald-300 ml-1" v-if="currentUser">{{ currentUser.name }}</span>
+                        <span class="text-slate-400 italic ml-1" v-else>Loading...</span>
                         <span class="text-xs text-slate-400 ml-1.5" v-if="currentUser">({{ currentUser.role }})</span>
                     </div>
                 </div>
@@ -69,10 +90,10 @@
                     <select 
                         v-model="selectedUserId" 
                         @change="switchUser"
-                        class="bg-indigo-800 hover:bg-indigo-750 text-white text-xs px-3 py-1.5 rounded-xl border border-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer pr-8 appearance-none"
+                        class="bg-indigo-800 hover:bg-indigo-750 text-white text-xs px-3 py-1.5 rounded-xl border border-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer pr-8 appearance-none font-semibold"
                     >
                         <option v-for="user in teamMembers" :key="user.id" :value="user.id">
-                            Act as: {{ user.name }}
+                            Switch to: {{ user.name }}
                         </option>
                     </select>
                     <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-indigo-300">
@@ -83,10 +104,10 @@
                 <!-- CLEAR & RESET DB -->
                 <button 
                     @click="resetAll" 
-                    class="bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white text-xs px-3 py-1.5 rounded-xl border border-rose-500/40 font-medium transition duration-150"
-                    title="Delete all messages, projects, and tasks for a fresh demo."
+                    class="bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white text-xs px-3 py-1.5 rounded-xl border border-rose-500/40 font-semibold transition duration-150"
+                    title="Delete all messages for a fresh demo."
                 >
-                    Reset DB
+                    Reset Logs
                 </button>
             </div>
         </header>
@@ -97,7 +118,7 @@
             <nav class="w-64 bg-slate-900 text-slate-400 flex flex-col justify-between shrink-0 border-r border-slate-800">
                 <div class="p-4 space-y-6">
                     <div>
-                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Simulator Workspace</p>
+                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Simulation Feeds</p>
                         <div class="mt-3 space-y-1">
                             <!-- TAB ITEM: Slack -->
                             <button 
@@ -106,7 +127,7 @@
                                 class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
                             >
                                 <span class="text-emerald-400 font-bold">#</span>
-                                <span>Slack Workspace</span>
+                                <span>Slack Mock Client</span>
                             </button>
                             <!-- TAB ITEM: Outlook -->
                             <button 
@@ -115,13 +136,13 @@
                                 class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
                             >
                                 <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                                <span>Outlook Email</span>
+                                <span>Outlook Mock Email</span>
                             </button>
                         </div>
                     </div>
 
                     <div>
-                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Management Desk</p>
+                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Administration</p>
                         <div class="mt-3 space-y-1">
                             <!-- TAB ITEM: Admin Desk -->
                             <button 
@@ -130,7 +151,7 @@
                                 class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
                             >
                                 <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-                                <span>Admin Desk</span>
+                                <span>Manage Team Roster</span>
                             </button>
                             <!-- TAB ITEM: Direct Chat -->
                             <button 
@@ -139,26 +160,23 @@
                                 class="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg transition text-sm"
                             >
                                 <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                                <span>Direct Chat API</span>
+                                <span>Dashboard Direct Chat</span>
                             </button>
                         </div>
                     </div>
 
                     <div class="border-t border-slate-800 pt-4">
-                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Database Statistics</p>
+                        <p class="text-xs font-bold tracking-wider text-slate-500 uppercase px-3">Live Feed Status</p>
                         <div class="mt-3 px-3 space-y-2 text-xs">
-                            <div class="flex justify-between"><span>Team Members:</span><span class="text-slate-300 font-semibold">{{ teamMembers.length }}</span></div>
-                            <div class="flex justify-between"><span>Projects:</span><span class="text-slate-300 font-semibold">{{ projects.length }}</span></div>
-                            <div class="flex justify-between"><span>Tasks:</span><span class="text-slate-300 font-semibold">{{ tasks.length }}</span></div>
-                            <div class="flex justify-between"><span>Unified Messages:</span><span class="text-slate-300 font-semibold">{{ unifiedMessages.length }}</span></div>
+                            <div class="flex justify-between"><span>Employees:</span><span class="text-slate-300 font-semibold">{{ teamMembers.length }}</span></div>
+                            <div class="flex justify-between"><span>Ingested Messages:</span><span class="text-slate-300 font-semibold">{{ unifiedMessages.length }}</span></div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Footer (Who created it) -->
                 <div class="p-4 border-t border-slate-800 text-xs flex flex-col space-y-1">
                     <div class="flex justify-between text-slate-500">
-                        <span>Database:</span><span class="text-emerald-400">SQLite Connected</span>
+                        <span>Engine:</span><span class="text-emerald-400">SQLite Active</span>
                     </div>
                     <div class="flex justify-between text-slate-500">
                         <span>Timezone:</span><span class="text-amber-400 font-medium">Asia/Kolkata (IST)</span>
@@ -175,39 +193,52 @@
                 <div v-if="activeTab === 'slack'" class="flex h-full w-full overflow-hidden">
                     <!-- Slack sidebar (High fidelity Aubergine) -->
                     <div class="w-60 bg-[#3F0E40] text-slate-300 flex flex-col shrink-0">
-                        <div class="p-4 border-b border-[#522653] flex justify-between items-center">
-                            <div>
-                                <h3 class="text-white font-bold text-sm tracking-tight">Nous Research Org</h3>
-                                <div class="flex items-center space-x-1.5 mt-0.5">
-                                    <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
-                                    <span class="text-xs text-slate-300 italic" v-if="currentUser">{{ currentUser.name }}</span>
-                                </div>
+                        <div class="p-4 border-b border-[#522653]">
+                            <h3 class="text-white font-bold text-sm tracking-tight">Workspace Sandbox</h3>
+                            <div class="flex items-center space-x-1.5 mt-1">
+                                <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                                <span class="text-xs text-slate-300 italic" v-if="currentUser">{{ currentUser.name }}</span>
                             </div>
                         </div>
-                        <div class="p-3 space-y-4 flex-1 overflow-y-auto">
+                        <div class="p-3 flex-1 overflow-y-auto space-y-5">
                             <!-- Slack Channels List -->
                             <div class="space-y-1">
-                                <span class="text-xs text-indigo-200/60 font-semibold tracking-wider uppercase px-2">Channels</span>
+                                <span class="text-xs text-indigo-200/50 font-bold tracking-wider uppercase px-2">Channels</span>
                                 <button 
                                     @click="activeSlackChannel = 'C_GENERAL'"
-                                    :class="[activeSlackChannel === 'C_GENERAL' ? 'bg-[#1164A3] text-white' : 'hover:bg-[#350d36]/60']"
-                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2"
+                                    :class="[activeSlackChannel === 'C_GENERAL' ? 'bg-[#1164A3] text-white font-medium' : 'hover:bg-[#350d36]/60 text-slate-300']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2 transition"
                                 >
                                     <span>#</span><span>general</span>
                                 </button>
                                 <button 
                                     @click="activeSlackChannel = 'C_PROJECT_UPDATES'"
-                                    :class="[activeSlackChannel === 'C_PROJECT_UPDATES' ? 'bg-[#1164A3] text-white' : 'hover:bg-[#350d36]/60']"
-                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2"
+                                    :class="[activeSlackChannel === 'C_PROJECT_UPDATES' ? 'bg-[#1164A3] text-white font-medium' : 'hover:bg-[#350d36]/60 text-slate-300']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2 transition"
                                 >
                                     <span>#</span><span>project-updates</span>
                                 </button>
                                 <button 
                                     @click="activeSlackChannel = 'C_ALERTS'"
-                                    :class="[activeSlackChannel === 'C_ALERTS' ? 'bg-[#1164A3] text-white' : 'hover:bg-[#350d36]/60']"
-                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2"
+                                    :class="[activeSlackChannel === 'C_ALERTS' ? 'bg-[#1164A3] text-white font-medium' : 'hover:bg-[#350d36]/60 text-slate-300']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2 transition"
                                 >
                                     <span>#</span><span>alerts</span>
+                                </button>
+                            </div>
+
+                            <!-- Slack Direct Messages List -->
+                            <div class="space-y-1">
+                                <span class="text-xs text-indigo-200/50 font-bold tracking-wider uppercase px-2">Direct Messages</span>
+                                <button 
+                                    v-for="member in teamMembers.filter(m => m.id !== selectedUserId)"
+                                    :key="member.id"
+                                    @click="activeSlackChannel = 'DM_' + member.slack_handle"
+                                    :class="[activeSlackChannel === 'DM_' + member.slack_handle ? 'bg-[#1164A3] text-white font-medium' : 'hover:bg-[#350d36]/60 text-slate-300']"
+                                    class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2 transition"
+                                >
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                    <span class="truncate">{{ member.name }}</span>
                                 </button>
                             </div>
                         </div>
@@ -221,7 +252,7 @@
                                 <span class="text-slate-500 font-bold text-lg">#</span>
                                 <span class="font-bold text-slate-800">{{ activeSlackChannelName }}</span>
                             </div>
-                            <div class="text-xs text-slate-400 font-medium">Channel ID: {{ activeSlackChannel }}</div>
+                            <div class="text-xs text-slate-400 font-medium font-mono">Channel ID: {{ activeSlackChannel }}</div>
                         </div>
 
                         <!-- Slack message stream -->
@@ -242,8 +273,8 @@
                             <!-- Empty State -->
                             <div v-if="filteredSlackMessages.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
                                 <svg class="w-12 h-12 text-slate-300 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                                <p class="text-sm">No messages in this channel yet.</p>
-                                <p class="text-xs text-slate-300">Type a status update below to test the ingestion.</p>
+                                <p class="text-sm font-semibold">No messages in this chat stream yet.</p>
+                                <p class="text-xs text-slate-300">Type a message below using the active profile to test ingestion.</p>
                             </div>
                         </div>
 
@@ -252,7 +283,7 @@
                             <form @submit.prevent="sendSlackMessage" class="relative">
                                 <textarea 
                                     v-model="slackDraft" 
-                                    :placeholder="'Message #' + activeSlackChannelName + ' as ' + (currentUser ? currentUser.name : 'Unknown')"
+                                    :placeholder="'Message ' + activeSlackChannelName + ' as ' + (currentUser ? currentUser.name : 'Unknown')"
                                     class="w-full border border-slate-300 rounded-xl px-4 py-3 pb-12 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm resize-none"
                                     rows="3"
                                     @keydown.enter.exact.prevent="sendSlackMessage"
@@ -281,9 +312,6 @@
                         <div class="space-y-4">
                             <!-- Outlook App Icon -->
                             <div class="w-10 h-10 bg-[#106EBE] rounded-lg flex items-center justify-center text-white font-extrabold shadow-sm">O</div>
-                            <div class="w-10 h-10 hover:bg-slate-200/75 rounded-lg flex items-center justify-center text-slate-600 transition cursor-pointer">
-                                <svg class="w-5.5 h-5.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                            </div>
                         </div>
                     </div>
 
@@ -295,15 +323,13 @@
                                 class="w-full bg-[#106EBE] hover:bg-[#005A9E] text-white font-semibold py-2 px-4 rounded-lg text-sm shadow-sm flex items-center justify-center space-x-2 transition"
                             >
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
-                                <span>New Message</span>
+                                <span>Compose Mail</span>
                             </button>
                         </div>
                         
                         <!-- Folder navigation shortcuts -->
                         <div class="px-3 py-1 bg-slate-50/50 flex space-x-2 text-[11px] font-bold tracking-wide text-slate-500 border-b border-slate-150">
-                            <button @click="outlookView = 'list'" class="px-2 py-1 rounded hover:bg-slate-200/50" :class="[outlookView === 'list' ? 'text-blue-600 border-b-2 border-blue-600' : '']">Inbox</button>
-                            <span class="py-1">|</span>
-                            <button class="px-2 py-1 rounded text-slate-400 cursor-not-allowed" disabled>Sent Items</button>
+                            <button @click="outlookView = 'list'" class="px-2 py-1 rounded hover:bg-slate-200/50" :class="[outlookView === 'list' ? 'text-blue-600 border-b-2 border-blue-600' : '']">Inbox Logs</button>
                         </div>
 
                         <!-- Email card loop -->
@@ -338,52 +364,67 @@
                         <!-- VIEW 1: COMPOSE EMAIL -->
                         <div v-if="outlookView === 'compose'" class="flex-1 flex flex-col h-full overflow-hidden p-6">
                             <div class="border-b border-slate-200 pb-4 mb-4 flex justify-between items-center">
-                                <h3 class="font-bold text-slate-800">Compose New Message</h3>
+                                <h3 class="font-bold text-slate-800">New Message</h3>
                                 <button @click="outlookView = 'list'" class="text-slate-400 hover:text-slate-600"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
                             </div>
 
                             <form @submit.prevent="sendOutlookEmail" class="flex-1 flex flex-col space-y-4 overflow-y-auto">
-                                <div>
-                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">From</label>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">From</label>
+                                        <input 
+                                            type="text" 
+                                            :value="currentUser ? currentUser.outlook_email : ''" 
+                                            disabled 
+                                            class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed font-medium"
+                                        >
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">To</label>
+                                        <select v-model="outlookTo" class="w-full bg-white border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 cursor-pointer font-medium">
+                                            <option value="harry.assistant@company.com">Harry (Project Assistant) • harry.assistant@company.com</option>
+                                            <option v-for="user in teamMembers" :key="user.id" :value="user.outlook_email">
+                                                {{ user.name }} • {{ user.outlook_email }}
+                                            </option>
+                                            <option value="custom">-- Custom Email --</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                <div v-if="outlookTo === 'custom'">
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Custom Recipient Email</label>
                                     <input 
-                                        type="text" 
-                                        :value="currentUser ? currentUser.outlook_email : 'shivam@company.com'" 
-                                        disabled 
-                                        class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed"
+                                        type="email" 
+                                        v-model="customOutlookTo" 
+                                        placeholder="e.g., external.collaborator@partner.com" 
+                                        required
+                                        class="w-full border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500"
                                     >
                                 </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">To</label>
-                                    <input 
-                                        type="text" 
-                                        value="harry.assistant@company.com (Project Assistant)" 
-                                        disabled 
-                                        class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed"
-                                    >
-                                </div>
+
                                 <div>
                                     <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Subject</label>
                                     <input 
                                         type="text" 
                                         v-model="outlookSubject" 
-                                        placeholder="e.g., Minutes of Meeting: API Schema Review" 
+                                        placeholder="e.g., Weekly Project Deliverables & Roadmap Update" 
                                         required
-                                        class="w-full border border-slate-300 text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                        class="w-full border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 font-medium"
                                     >
                                 </div>
                                 <div class="flex-1 flex flex-col">
                                     <div class="flex justify-between items-baseline mb-1">
-                                        <label class="block text-xs font-bold text-slate-500 uppercase">Body (Supports HTML)</label>
-                                        <span class="text-[10px] text-slate-400">Html parsing will extract clean text/markdown.</span>
+                                        <label class="block text-xs font-bold text-slate-500 uppercase">Body (HTML Supported)</label>
+                                        <span class="text-[10px] text-slate-400">Our parser cleanses markup & converts text cleanly.</span>
                                     </div>
                                     <textarea 
                                         v-model="outlookBody" 
-                                        placeholder="<h1>Status Report</h1><p>We finalized the database models.</p>..." 
+                                        placeholder="<h1>Status Report</h1><p>Working on schemas.</p>" 
                                         required
-                                        class="w-full flex-1 border border-slate-300 text-sm rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono resize-none h-64"
+                                        class="w-full flex-1 border border-slate-300 text-xs rounded-lg px-4 py-3 focus:ring-1 focus:ring-blue-500 font-mono resize-none h-48"
                                     ></textarea>
                                 </div>
-                                <div class="flex justify-end space-x-3 pt-3 shrink-0">
+                                <div class="flex justify-end space-x-3 pt-3 shrink-0 border-t border-slate-100">
                                     <button 
                                         type="button" 
                                         @click="outlookView = 'list'" 
@@ -421,27 +462,29 @@
 
                         <!-- VIEW 3: NO EMAIL ACTIVE -->
                         <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400">
-                            <svg class="w-16 h-16 text-slate-200 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" /></svg>
-                            <p class="text-sm font-semibold">Select an item to read</p>
-                            <p class="text-xs text-slate-300 mt-1">Or click 'New Message' to compose a mock status update.</p>
+                            <svg class="w-16 h-16 text-slate-200 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.008 1.24l.885 1.77a2.25 2.25 0 002.007 1.24h1.98a2.25 2.25 0 002.007-1.24l.885-1.77a2.25 2.25 0 012.007-1.24h3.86m-18 0h18" /></svg>
+                            <p class="text-sm font-semibold text-slate-600">No Email Open</p>
+                            <p class="text-xs text-slate-300 mt-1">Select an email card on the left or compose a new mock update.</p>
                         </div>
                     </div>
                 </div>
 
                 <!-- ────────────────────────────────────────────────────────
-                     C. ADMIN DESK (Team, Projects, and Tasks CRUD)
+                     C. ADMIN DESK (Team Management & Roster CRUD Only)
                      ──────────────────────────────────────────────────────── -->
                 <div v-if="activeTab === 'admin'" class="flex-1 overflow-y-auto p-6 space-y-6">
                     <div class="flex justify-between items-center border-b border-slate-200 pb-4">
-                        <h2 class="text-xl font-bold text-slate-800">Admin Desk</h2>
-                        <span class="bg-indigo-100 text-indigo-800 text-xs px-2.5 py-1 rounded-full font-bold">SQLITE CONTROL PANEL</span>
+                        <h2 class="text-xl font-bold text-slate-800">Team Roster Console</h2>
+                        <span class="bg-indigo-100 text-indigo-800 text-xs px-2.5 py-1 rounded-full font-bold">SQLITE DATABASE CONTROL</span>
                     </div>
 
-                    <!-- Row: Create Employee -->
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <!-- Add Employee Form (Pastel card) -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col space-y-4">
-                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2">Add Team Member</h3>
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col space-y-4 h-fit">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 flex items-center space-x-2">
+                                <svg class="w-4.5 h-4.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+                                <span>Add New Employee</span>
+                            </h3>
                             <form @submit.prevent="createTeamMember" class="space-y-3">
                                 <div>
                                     <label class="block text-xs font-semibold text-slate-500 mb-1">Full Name</label>
@@ -460,14 +503,17 @@
                                     <input type="email" v-model="adminMember.outlook_email" placeholder="e.g., alice@company.com" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500">
                                 </div>
                                 <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs shadow-sm transition">
-                                    Register Employee
+                                    Register Profile
                                 </button>
                             </form>
                         </div>
 
                         <!-- Display Team List -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm lg:col-span-2 flex flex-col h-80">
-                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 shrink-0">Registered Team Rosters</h3>
+                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm lg:col-span-2 flex flex-col h-112">
+                            <h3 class="font-bold text-slate-800 border-b border-slate-100 pb-2 shrink-0 flex items-center space-x-2">
+                                <svg class="w-4.5 h-4.5 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                                <span>Active Team Rosters</span>
+                            </h3>
                             <div class="flex-1 overflow-y-auto mt-2">
                                 <table class="w-full text-xs text-left text-slate-600">
                                     <thead class="text-[10px] text-slate-400 uppercase bg-slate-50 border-b border-slate-100">
@@ -476,65 +522,26 @@
                                             <th class="px-4 py-2 font-bold">Role</th>
                                             <th class="px-4 py-2 font-bold">Slack ID</th>
                                             <th class="px-4 py-2 font-bold">Email</th>
+                                            <th class="px-4 py-2 font-bold text-center">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody class="divide-y divide-slate-100">
-                                        <tr v-for="member in teamMembers" :key="member.id">
+                                        <tr v-for="member in teamMembers" :key="member.id" class="hover:bg-slate-50/50">
                                             <td class="px-4 py-3 font-semibold text-slate-800">{{ member.name }}</td>
                                             <td class="px-4 py-3 text-slate-500">{{ member.role }}</td>
-                                            <td class="px-4 py-3 font-mono text-[10px] bg-slate-50 rounded">{{ member.slack_handle }}</td>
+                                            <td class="px-4 py-3"><span class="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded">{{ member.slack_handle }}</span></td>
                                             <td class="px-4 py-3 text-slate-500">{{ member.outlook_email }}</td>
+                                            <td class="px-4 py-3 text-center">
+                                                <button 
+                                                    @click="deleteMember(member.id)" 
+                                                    class="text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2.5 py-1 rounded transition text-xs font-semibold border border-transparent hover:border-rose-100"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </td>
                                         </tr>
                                     </tbody>
                                 </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Row: Projects & Tasks (Knowledge Base Initialization) -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <!-- Projects Card -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col h-96">
-                            <div class="flex justify-between items-baseline border-b border-slate-100 pb-2 shrink-0">
-                                <h3 class="font-bold text-slate-800">Projects Tracking (KB)</h3>
-                                <button @click="showProjectModal = true" class="text-xs text-indigo-600 hover:text-indigo-800 font-bold">+ Create Project</button>
-                            </div>
-                            <div class="flex-1 overflow-y-auto mt-3 space-y-3">
-                                <div v-for="proj in projects" :key="proj.id" class="p-3 bg-slate-50 rounded-xl border border-slate-150">
-                                    <div class="flex justify-between items-baseline">
-                                        <span class="font-bold text-slate-800 text-sm">{{ proj.name }}</span>
-                                        <span class="bg-emerald-100 text-emerald-800 font-bold text-[9px] px-2 py-0.5 rounded-full" v-if="proj.status === 'active'">Active</span>
-                                        <span class="bg-slate-200 text-slate-800 font-bold text-[9px] px-2 py-0.5 rounded-full" v-else>{{ proj.status }}</span>
-                                    </div>
-                                    <p class="text-xs text-slate-500 mt-1 leading-relaxed">{{ proj.description || 'No Description' }}</p>
-                                </div>
-                                <div v-if="projects.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
-                                    <p class="text-xs">No active projects registered in KB.</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Tasks Card -->
-                        <div class="bg-white p-5 rounded-2xl border border-slate-150 shadow-sm flex flex-col h-96">
-                            <div class="flex justify-between items-baseline border-b border-slate-100 pb-2 shrink-0">
-                                <h3 class="font-bold text-slate-800">Tasks Ledger (KB)</h3>
-                                <button @click="showTaskModal = true" class="text-xs text-indigo-600 hover:text-indigo-800 font-bold" :disabled="projects.length === 0" :class="[projects.length === 0 ? 'opacity-50 cursor-not-allowed' : '']">+ Create Task</button>
-                            </div>
-                            <div class="flex-1 overflow-y-auto mt-3 space-y-3">
-                                <div v-for="task in tasks" :key="task.id" class="p-3 bg-slate-50 rounded-xl border border-slate-150 flex flex-col">
-                                    <div class="flex justify-between items-baseline">
-                                        <span class="font-bold text-slate-800 text-xs">{{ task.title }}</span>
-                                        <span :class="getTaskStatusClass(task.status)" class="font-bold text-[8px] px-2 py-0.5 rounded-full">{{ task.status.toUpperCase() }}</span>
-                                    </div>
-                                    <p class="text-[11px] text-slate-500 mt-1 leading-relaxed">{{ task.description }}</p>
-                                    <div class="flex justify-between items-center mt-3 pt-2 border-t border-slate-200/50 text-[10px] text-slate-400">
-                                        <span>Assignee ID: {{ task.assignee_id || 'Unassigned' }}</span>
-                                        <span v-if="task.due_date" class="font-medium">Due: {{ task.due_date }}</span>
-                                    </div>
-                                </div>
-                                <div v-if="tasks.length === 0" class="flex flex-col items-center justify-center h-full text-slate-400">
-                                    <p class="text-xs">No tasks mapped in KB.</p>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -551,12 +558,12 @@
                             <div>
                                 <h3 class="font-bold text-slate-800 text-sm">Harry (Manager Assistant)</h3>
                                 <p class="text-[10px] text-emerald-500 flex items-center space-x-1 font-medium mt-0.5">
-                                    <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span>
-                                    <span>Direct Chat API Hook Active</span>
+                                    <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block animate-pulse"></span>
+                                    <span>Direct Chat API Hook Online</span>
                                 </p>
                             </div>
                         </div>
-                        <div class="text-[10px] text-slate-400">Channel ID: dashboard_chat</div>
+                        <div class="text-[10px] text-slate-400 font-mono">Channel ID: dashboard_chat</div>
                     </div>
 
                     <!-- Direct chat message feed -->
@@ -571,7 +578,7 @@
                                     <span class="font-bold text-slate-800 text-sm">{{ msg.sender_mapped_name || msg.sender_raw_id }}</span>
                                     <span class="text-slate-400 text-[10px]">{{ formatTime(msg.timestamp) }}</span>
                                 </div>
-                                <div class="text-slate-700 text-sm mt-1 whitespace-pre-wrap leading-relaxed bg-white/70 inline-block px-4 py-2.5 rounded-2xl border border-slate-100 shadow-sm">{{ msg.content }}</div>
+                                <div class="text-slate-700 text-sm mt-1 whitespace-pre-wrap leading-relaxed bg-white inline-block px-4 py-2.5 rounded-2xl border border-slate-100 shadow-sm">{{ msg.content }}</div>
                             </div>
                         </div>
                         <!-- Empty State -->
@@ -580,18 +587,18 @@
                                 <svg class="w-6 h-6 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                             </div>
                             <p class="text-sm font-semibold text-slate-600">This is the dashboard chat simulator.</p>
-                            <p class="text-xs text-slate-300 mt-1">Chat directly with the Manager Assistant API from here.</p>
+                            <p class="text-xs text-slate-300 mt-1">Send a direct message to Harry from this screen.</p>
                         </div>
                     </div>
 
                     <!-- Direct Chat Input -->
-                    <div class="p-4 bg-white border-t border-slate-200 shadow-inner">
+                    <div class="p-4 bg-white border-t border-slate-200">
                         <form @submit.prevent="sendDashboardMessage" class="flex items-center space-x-3">
                             <input 
                                 type="text" 
                                 v-model="dashboardDraft" 
-                                :placeholder="'Type a direct message to Harry as ' + (currentUser ? currentUser.name : 'Unknown') + '...'"
-                                class="flex-1 border border-slate-300 rounded-full px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                :placeholder="'Type a direct message as ' + (currentUser ? currentUser.name : 'Unknown') + '...'"
+                                class="flex-1 border border-slate-300 rounded-full px-5 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 focus:bg-white"
                             >
                             <button 
                                 type="submit" 
@@ -606,73 +613,10 @@
             </main>
         </div>
 
-        <!-- MODAL 1: CREATE PROJECT -->
-        <div v-if="showProjectModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl w-96 flex flex-col space-y-4">
-                <div class="flex justify-between items-baseline border-b border-slate-100 pb-2">
-                    <h4 class="font-bold text-slate-800">Add New Project (KB)</h4>
-                    <button @click="showProjectModal = false" class="text-slate-400 hover:text-slate-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
-                </div>
-                <form @submit.prevent="createProject" class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Project Name</label>
-                        <input type="text" v-model="adminProject.name" placeholder="e.g., API Schema Overhaul" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Description</label>
-                        <textarea v-model="adminProject.description" placeholder="Short summary of objectives..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 resize-none" rows="3"></textarea>
-                    </div>
-                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs shadow-sm transition">
-                        Register Project
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        <!-- MODAL 2: CREATE TASK -->
-        <div v-if="showTaskModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50">
-            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl w-96 flex flex-col space-y-4">
-                <div class="flex justify-between items-baseline border-b border-slate-100 pb-2">
-                    <h4 class="font-bold text-slate-800">Add Action Item (KB)</h4>
-                    <button @click="showTaskModal = false" class="text-slate-400 hover:text-slate-600"><svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button>
-                </div>
-                <form @submit.prevent="createTask" class="space-y-3">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Parent Project</label>
-                        <select v-model="adminTask.project_id" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white">
-                            <option v-for="proj in projects" :key="proj.id" :value="proj.id">{{ proj.name }}</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Task Title</label>
-                        <input type="text" v-model="adminTask.title" placeholder="e.g., Define Unified Payload schema" required class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Description</label>
-                        <textarea v-model="adminTask.description" placeholder="Steps or details..." class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 resize-none" rows="3"></textarea>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Assignee</label>
-                        <select v-model="adminTask.assignee_id" class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white">
-                            <option value="">Unassigned</option>
-                            <option v-for="user in teamMembers" :key="user.id" :value="user.id">{{ user.name }} ({{ user.role }})</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-500 mb-1">Due Date</label>
-                        <input type="date" v-model="adminTask.due_date" class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white">
-                    </div>
-                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg text-xs shadow-sm transition">
-                        Map Task
-                    </button>
-                </form>
-            </div>
-        </div>
-
     </div>
 
     <!-- Vue 3 CDN (Composition Style) -->
-    <script v-if="true">
+    <script>
         const { createApp, ref, onMounted, computed, nextTick } = Vue;
 
         createApp({
@@ -684,6 +628,11 @@
                 const tasks = ref([]);
                 const unifiedMessages = ref([]);
 
+                // Date Time Simulation State
+                const useSimulatedTime = ref(false);
+                const simulatedTime = ref('2026-05-29T10:30'); // Default demo timestamp
+                const liveClockStr = ref('');
+
                 // Slack Simulator State
                 const activeSlackChannel = ref('C_GENERAL');
                 const slackDraft = ref('');
@@ -691,23 +640,24 @@
                 // Outlook Simulator State
                 const outlookView = ref('list'); // 'list', 'compose'
                 const activeEmail = ref(null);
+                const outlookTo = ref('harry.assistant@company.com');
+                const customOutlookTo = ref('');
                 const outlookSubject = ref('');
                 const outlookBody = ref('');
 
                 // Dashboard State
                 const dashboardDraft = ref('');
 
-                // Modals
-                const showProjectModal = ref(false);
-                const showTaskModal = ref(false);
-
                 // Forms
                 const adminMember = ref({ name: '', role: '', slack_handle: '', outlook_email: '' });
-                const adminProject = ref({ name: '', description: '', status: 'active' });
-                const adminTask = ref({ project_id: '', title: '', description: '', assignee_id: '', status: 'pending', due_date: '' });
 
                 // Computed active channel name for Slack
                 const activeSlackChannelName = computed(() => {
+                    if (activeSlackChannel.value.startsWith('DM_')) {
+                        const handle = activeSlackChannel.value.substring(3);
+                        const member = teamMembers.value.find(m => m.slack_handle === handle);
+                        return member ? `Direct Message: ${member.name}` : `Direct Message: ${handle}`;
+                    }
                     const channels = {
                         'C_GENERAL': 'general',
                         'C_PROJECT_UPDATES': 'project-updates',
@@ -733,6 +683,12 @@
                 const filteredDashboardMessages = computed(() => {
                     return unifiedMessages.value.filter(m => m.source === 'dashboard');
                 });
+
+                // Live Clock Tick
+                const tickClock = () => {
+                    const now = new Date();
+                    liveClockStr.value = now.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ", " + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                };
 
                 // Fetch Database States
                 const fetchData = async () => {
@@ -782,61 +738,31 @@
                     }
                 };
 
-                // Create Project
-                const createProject = async () => {
-                    const payload = {
-                        name: adminProject.value.name,
-                        description: adminProject.value.description,
-                        manager_id: selectedUserId.value,
-                        status: 'active'
-                    };
-
-                    const response = await fetch('api/projects', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (response.ok) {
-                        showProjectModal.value = false;
-                        adminProject.value = { name: '', description: '', status: 'active' };
-                        await fetchData();
-                    } else {
-                        const err = await response.json();
-                        alert(err.detail || "Error creating project");
-                    }
-                };
-
-                // Create Task
-                const createTask = async () => {
-                    const payload = {
-                        project_id: parseInt(adminTask.value.project_id),
-                        title: adminTask.value.title,
-                        description: adminTask.value.description,
-                        assignee_id: adminTask.value.assignee_id || null,
-                        status: 'pending',
-                        due_date: adminTask.value.due_date || null
-                    };
-
-                    const response = await fetch('api/tasks', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (response.ok) {
-                        showTaskModal.value = false;
-                        adminTask.value = { project_id: '', title: '', description: '', assignee_id: '', status: 'pending', due_date: '' };
-                        await fetchData();
-                    } else {
-                        const err = await response.json();
-                        alert(err.detail || "Error creating task");
+                // Delete Team Member
+                const deleteMember = async (id) => {
+                    if (confirm(`Are you sure you want to delete team member ${id}?`)) {
+                        const response = await fetch(`api/team/${id}`, {
+                            method: 'DELETE'
+                        });
+                        if (response.ok) {
+                            if (selectedUserId.value === id) {
+                                selectedUserId.value = '';
+                            }
+                            await fetchData();
+                        }
                     }
                 };
 
                 // Ingest Slack Webhook (Push Simulator)
                 const sendSlackMessage = async () => {
                     if (!slackDraft.value.trim() || !currentUser.value) return;
+
+                    // Figure out event timestamp
+                    let ts_str = (Date.now() / 1000).toString();
+                    if (useSimulatedTime.value && simulatedTime.value) {
+                        const simDate = new Date(simulatedTime.value);
+                        ts_str = (simDate.getTime() / 1000).toString();
+                    }
 
                     const payload = {
                         type: "event_callback",
@@ -847,7 +773,7 @@
                             user: currentUser.value.slack_handle,
                             channel: activeSlackChannel.value,
                             text: slackDraft.value,
-                            ts: (Date.now() / 1000).toString()
+                            ts: ts_str
                         }
                     };
 
@@ -868,6 +794,18 @@
                 const sendOutlookEmail = async () => {
                     if (!outlookSubject.value.trim() || !outlookBody.value.trim() || !currentUser.value) return;
 
+                    // Recipient Address
+                    let toEmail = outlookTo.value;
+                    if (toEmail === 'custom') {
+                        toEmail = customOutlookTo.value;
+                    }
+
+                    // Received Time
+                    let date_str = new Date().toISOString();
+                    if (useSimulatedTime.value && simulatedTime.value) {
+                        date_str = new Date(simulatedTime.value).toISOString();
+                    }
+
                     const payload = {
                         id: "mail_sim_" + Math.random().toString(36).substring(2, 15),
                         sender: {
@@ -881,7 +819,7 @@
                             contentType: "html",
                             content: outlookBody.value
                         },
-                        receivedDateTime: new Date().toISOString()
+                        receivedDateTime: date_str
                     };
 
                     const response = await fetch('api/integrations/outlook/mock-ingest', {
@@ -893,6 +831,8 @@
                     if (response.ok) {
                         outlookSubject.value = '';
                         outlookBody.value = '';
+                        outlookTo.value = 'harry.assistant@company.com';
+                        customOutlookTo.value = '';
                         outlookView.value = 'list';
                         await fetchData();
                     }
@@ -902,9 +842,16 @@
                 const sendDashboardMessage = async () => {
                     if (!dashboardDraft.value.trim() || !currentUser.value) return;
 
+                    // Custom Timestamp for direct dashboard chats
+                    let date_str = new Date().toISOString();
+                    if (useSimulatedTime.value && simulatedTime.value) {
+                        date_str = new Date(simulatedTime.value).toISOString();
+                    }
+
                     const payload = {
                         user_name: currentUser.value.name,
-                        message: dashboardDraft.value
+                        message: dashboardDraft.value,
+                        timestamp: date_str
                     };
 
                     const response = await fetch('api/integrations/dashboard/message', {
@@ -922,7 +869,7 @@
 
                 // Reset all messages for demo purposes
                 const resetAll = async () => {
-                    if (confirm("Are you sure you want to reset all message logs, projects, and tasks? Team roster will be kept intact.")) {
+                    if (confirm("Are you sure you want to reset all message logs? Team roster will be kept intact.")) {
                         const response = await fetch('api/messages/reset', { method: 'POST' });
                         if (response.ok) {
                             activeEmail.value = null;
@@ -956,16 +903,6 @@
                     }
                     const index = Math.abs(hash) % colors.length;
                     return colors[index];
-                };
-
-                const getTaskStatusClass = (status) => {
-                    const statuses = {
-                        'pending': 'bg-amber-100 text-amber-800 border border-amber-200',
-                        'in_progress': 'bg-blue-100 text-blue-800 border border-blue-200',
-                        'completed': 'bg-emerald-100 text-emerald-800 border border-emerald-200',
-                        'blocked': 'bg-rose-100 text-rose-800 border border-rose-200'
-                    };
-                    return statuses[status] || 'bg-slate-100 text-slate-800';
                 };
 
                 const formatTime = (isoString) => {
@@ -1002,7 +939,7 @@
                     });
                 };
 
-                // Add pre-populated sample users/projects if empty for testing
+                // Add pre-populated sample users if empty for testing
                 const populateSamples = async () => {
                     if (teamMembers.value.length === 0) {
                         const samples = [
@@ -1024,6 +961,8 @@
                 onMounted(async () => {
                     await fetchData();
                     await populateSamples();
+                    tickClock();
+                    setInterval(tickClock, 1000);
                     lucide.createIcons();
                 });
 
@@ -1034,26 +973,26 @@
                     projects,
                     tasks,
                     unifiedMessages,
+                    useSimulatedTime,
+                    simulatedTime,
+                    liveClockStr,
                     activeSlackChannel,
                     activeSlackChannelName,
                     slackDraft,
                     outlookView,
                     activeEmail,
+                    outlookTo,
+                    customOutlookTo,
                     outlookSubject,
                     outlookBody,
                     dashboardDraft,
-                    showProjectModal,
-                    showTaskModal,
                     adminMember,
-                    adminProject,
-                    adminTask,
                     currentUser,
                     filteredSlackMessages,
                     filteredOutlookMessages,
                     filteredDashboardMessages,
                     createTeamMember,
-                    createProject,
-                    createTask,
+                    deleteMember,
                     sendSlackMessage,
                     sendOutlookEmail,
                     sendDashboardMessage,
@@ -1061,7 +1000,6 @@
                     selectEmail,
                     getInitials,
                     getUserAvatarClass,
-                    getTaskStatusClass,
                     formatTime,
                     formatDate,
                     formatFullDate
