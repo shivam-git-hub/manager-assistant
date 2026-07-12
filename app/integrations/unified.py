@@ -91,7 +91,22 @@ def reset_database(db: Session = Depends(get_db)):
     db.execute(delete(UnifiedMessage))
     db.execute(delete(Task))
     db.execute(delete(Project))
+    
+    # Reset KB tables
+    from app.kb.models import TimelineEntry, AttributedClaim, Conflict, Entity
+    db.execute(delete(TimelineEntry))
+    db.execute(delete(AttributedClaim))
+    db.execute(delete(Conflict))
+    db.execute(delete(Entity))
     db.commit()
+    
+    # Re-backfill team member entities (including Harry)
+    from app.database import TeamMember
+    members = db.scalars(select(TeamMember)).all()
+    for m in members:
+        from app.kb.models import get_or_create_entity
+        get_or_create_entity(db, slug=f"person:{m.id}", type="person", name=m.name, ref_id=m.id)
+        
     return {"status": "ok", "detail": "Messages, projects, and tasks have been reset successfully."}
 
 
@@ -118,6 +133,17 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
     db.add(new_project)
     db.commit()
     db.refresh(new_project)
+    
+    # Auto-create KB entity
+    from app.kb.models import get_or_create_entity, slugify
+    get_or_create_entity(
+        db=db,
+        slug=f"project:{slugify(new_project.name)}",
+        type="project",
+        name=new_project.name,
+        ref_id=str(new_project.id)
+    )
+    
     return new_project
 
 

@@ -87,3 +87,141 @@ class UnifiedMessageResponse(UnifiedMessageBase):
     id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class EntityCreate(BaseModel):
+    slug: str
+    type: str
+    name: str
+    ref_id: Optional[str] = None
+
+
+class EntityResponse(BaseModel):
+    id: int
+    slug: str
+    type: str
+    name: str
+    ref_id: Optional[str] = None
+    truth_updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TimelineEntryCreate(BaseModel):
+    happened_at: Optional[datetime] = None
+    summary: str
+    detail: Optional[str] = None
+    source_message_id: Optional[int] = None
+
+
+class TimelineEntryResponse(BaseModel):
+    id: int
+    entity_id: int
+    happened_at: datetime
+    summary: str
+    detail: Optional[str] = None
+    source_message_id: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AttributedClaimCreate(BaseModel):
+    claim: str
+    kind: str
+    holder: str
+    weight: float
+    source_message_id: Optional[int] = None
+    claimed_at: Optional[datetime] = None
+
+
+class AttributedClaimResponse(BaseModel):
+    id: int
+    entity_id: int
+    claim: str
+    kind: str
+    holder: str
+    weight: float
+    source_message_id: Optional[int] = None
+    claimed_at: datetime
+    superseded_by: Optional[int] = None
+    active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConflictCreate(BaseModel):
+    entity_slug: str
+    claim_a_id: int
+    claim_b_id: int
+    severity: str
+    description: str
+
+
+class ConflictResponse(BaseModel):
+    id: int
+    entity_id: int
+    claim_a_id: int
+    claim_b_id: int
+    severity: str
+    description: str
+    status: str
+    detected_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolution_note: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConflictUpdate(BaseModel):
+    status: str
+    resolution_note: Optional[str] = None
+
+
+class EntityPageEntityResponse(BaseModel):
+    id: int
+    slug: str
+    type: str
+    name: str
+    ref_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EntityPageResponse(BaseModel):
+    entity: EntityPageEntityResponse
+    compiled_truth: Optional[str] = None
+    truth_updated_at: Optional[datetime] = None
+    timeline: List[TimelineEntryResponse]
+    claims: List[AttributedClaimResponse]
+    conflicts: List[ConflictResponse]
+
+
+class SearchEntityHit(BaseModel):
+    slug: str
+    type: str
+    name: str
+    compiled_truth: Optional[str] = None
+
+
+class SearchClaimHit(BaseModel):
+    id: int
+    entity_slug: str
+    claim: str
+    holder: str
+
+
+class SearchTimelineHit(BaseModel):
+    id: int
+    entity_slug: str
+    summary: str
+    detail: Optional[str] = None
+
+
+class SearchGroupedResponse(BaseModel):
+    entities: List[SearchEntityHit]
+    claims: List[SearchClaimHit]
+    timeline: List[SearchTimelineHit]

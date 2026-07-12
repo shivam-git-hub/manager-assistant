@@ -9,6 +9,7 @@ from app.database import init_db
 from app.config import PORT, HOST
 from app.integrations import team, slack, outlook, unified
 from app import timeservice, outbound
+from app.kb import api as kb_api
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,6 +40,7 @@ app.include_router(slack.router)
 app.include_router(outlook.router)
 app.include_router(unified.router)
 app.include_router(outbound.router)
+app.include_router(kb_api.router)
 
 # Ensure static files directory exists
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

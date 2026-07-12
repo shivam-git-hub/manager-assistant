@@ -66,6 +66,7 @@ class UnifiedMessage(Base):
 
 def init_db():
     from app.outbound import OutboundQueue  # Register with Base metadata
+    from app.kb import models as kb_models # Register with Base metadata
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -88,6 +89,18 @@ def init_db():
             )
             db.add(harry)
             db.commit()
+            
+        # Backfill entities for existing projects
+        projects = db.query(Project).all()
+        for p in projects:
+            from app.kb.models import get_or_create_entity, slugify
+            get_or_create_entity(db, slug=f"project:{slugify(p.name)}", type="project", name=p.name, ref_id=str(p.id))
+            
+        # Backfill entities for existing team members
+        members = db.query(TeamMember).all()
+        for m in members:
+            from app.kb.models import get_or_create_entity
+            get_or_create_entity(db, slug=f"person:{m.id}", type="person", name=m.name, ref_id=m.id)
     finally:
         db.close()
 

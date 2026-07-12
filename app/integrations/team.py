@@ -25,6 +25,11 @@ def create_or_update_team_member(member: TeamMemberCreate, db: Session = Depends
         existing.timezone = member.timezone
         db.commit()
         db.refresh(existing)
+        
+        # Ensure KB entity exists/updates
+        from app.kb.models import get_or_create_entity
+        get_or_create_entity(db, slug=f"person:{existing.id}", type="person", name=existing.name, ref_id=existing.id)
+        
         return existing
     
     # Create new
@@ -39,6 +44,11 @@ def create_or_update_team_member(member: TeamMemberCreate, db: Session = Depends
     db.add(new_member)
     db.commit()
     db.refresh(new_member)
+    
+    # Auto-create KB entity
+    from app.kb.models import get_or_create_entity
+    get_or_create_entity(db, slug=f"person:{new_member.id}", type="person", name=new_member.name, ref_id=new_member.id)
+    
     return new_member
 
 @router.delete("/{member_id}", status_code=status.HTTP_200_OK)
