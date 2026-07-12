@@ -76,8 +76,9 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
        contradiction probe (4b)
 5. [ ] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
        morning brief, quiet-hours release
-6. [ ] Agent harness (explore + index Hermes repo FIRST, like gbrain) + tools
-       + real-time dashboard chat
+6. [ ] Agent harness + tools + real-time dashboard chat (Hermes indexed:
+       `spec/research/hermes_index.md` — vendor its Gemini adapter, copy
+       IterationBudget verbatim, follow its tool-registry pattern)
 7. [ ] Project Tracker Dashboard — Vue 3 CDN, code split across plain JS/CSS
        files, hand-built design system (must NOT look AI-generated). Views:
        portfolio health, project detail (truth + hover citations, milestones,
