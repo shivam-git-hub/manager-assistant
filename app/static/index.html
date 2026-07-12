@@ -10,8 +10,6 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Vue 3 JS -->
-    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -91,7 +89,6 @@
                 <div class="relative">
                     <select 
                         v-model="selectedUserId" 
-                        @change="switchUser"
                         class="bg-indigo-800 hover:bg-indigo-750 text-white text-xs px-3 py-1.5 rounded-xl border border-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer pr-8 appearance-none font-semibold"
                     >
                         <option v-for="user in teamMembers" :key="user.id" :value="user.id">
@@ -229,17 +226,17 @@
                                 </button>
                             </div>
 
-                            <!-- Slack Direct Messages List -->
+                            <!-- Slack Symmetrical Direct Messages List -->
                             <div class="space-y-1">
                                 <span class="text-xs text-indigo-200/50 font-bold tracking-wider uppercase px-2">Direct Messages</span>
                                 <button 
                                     v-for="member in teamMembers.filter(m => m.id !== selectedUserId)"
                                     :key="member.id"
-                                    @click="activeSlackChannel = 'DM_' + member.slack_handle"
-                                    :class="[activeSlackChannel === 'DM_' + member.slack_handle ? 'bg-[#1164A3] text-white font-medium' : 'hover:bg-[#350d36]/60 text-slate-300']"
+                                    @click="activeSlackChannel = getDmChannelId(currentUser.slack_handle, member.slack_handle)"
+                                    :class="[activeSlackChannel === getDmChannelId(currentUser.slack_handle, member.slack_handle) ? 'bg-[#1164A3] text-white font-medium' : 'hover:bg-[#350d36]/60 text-slate-300']"
                                     class="w-full text-left px-2 py-1.5 rounded-md text-sm flex items-center space-x-2 transition"
                                 >
-                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                                     <span class="truncate">{{ member.name }}</span>
                                 </button>
                             </div>
@@ -329,22 +326,26 @@
                             </button>
                         </div>
                         
-                        <!-- Folder navigation shortcuts -->
+                        <!-- Folder navigation shortcuts (Inbox vs Sent Items) -->
                         <div class="px-3 py-1 bg-slate-50/50 flex space-x-2 text-[11px] font-bold tracking-wide text-slate-500 border-b border-slate-150">
-                            <button @click="outlookView = 'list'" class="px-2 py-1 rounded hover:bg-slate-200/50" :class="[outlookView === 'list' ? 'text-blue-600 border-b-2 border-blue-600' : '']">Inbox Logs</button>
+                            <button @click="outlookFolder = 'inbox'; outlookView = 'list'" class="px-2 py-1 rounded hover:bg-slate-200/50" :class="[outlookFolder === 'inbox' && outlookView === 'list' ? 'text-blue-600 border-b-2 border-blue-600' : '']">Inbox</button>
+                            <span class="py-1 text-slate-200">|</span>
+                            <button @click="outlookFolder = 'sent'; outlookView = 'list'" class="px-2 py-1 rounded hover:bg-slate-200/50" :class="[outlookFolder === 'sent' && outlookView === 'list' ? 'text-blue-600 border-b-2 border-blue-600' : '']">Sent Items</button>
                         </div>
 
                         <!-- Email card loop -->
-                        <div class="flex-1 overflow-y-auto">
+                        <div class="flex-1 overflow-y-auto bg-slate-50/10">
                             <div 
                                 v-for="mail in filteredOutlookMessages" 
                                 :key="mail.id"
                                 @click="selectEmail(mail)"
-                                :class="[activeEmail && activeEmail.id === mail.id ? 'bg-blue-50/50 border-l-4 border-blue-500' : 'hover:bg-slate-50']"
+                                :class="[activeEmail && activeEmail.id === mail.id ? 'bg-blue-50/50 border-l-4 border-blue-500' : 'hover:bg-slate-50 bg-white']"
                                 class="p-4 border-b border-slate-150 cursor-pointer transition flex flex-col space-y-1"
                             >
                                 <div class="flex justify-between items-baseline">
-                                    <span class="font-semibold text-slate-800 text-sm truncate pr-2">{{ mail.sender_mapped_name || mail.sender_raw_id }}</span>
+                                    <span class="font-semibold text-slate-800 text-sm truncate pr-2">
+                                        {{ outlookFolder === 'inbox' ? (mail.sender_mapped_name || mail.sender_raw_id) : ('To: ' + mail.channel_raw_id) }}
+                                    </span>
                                     <span class="text-slate-400 text-[10px] shrink-0">{{ formatDate(mail.timestamp) }}</span>
                                 </div>
                                 <div class="font-medium text-slate-700 text-xs truncate">{{ mail.subject || '(No Subject)' }}</div>
@@ -354,8 +355,8 @@
                             <!-- Outlook empty state -->
                             <div v-if="filteredOutlookMessages.length === 0" class="flex flex-col items-center justify-center p-6 text-slate-400 text-center mt-8">
                                 <svg class="w-10 h-10 text-slate-300 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" /></svg>
-                                <p class="text-xs">No emails received yet.</p>
-                                <p class="text-[10px] text-slate-300 mt-1">Compose a new message to test the email receiver.</p>
+                                <p class="text-xs">No emails in {{ outlookFolder }} folder.</p>
+                                <p class="text-[10px] text-slate-300 mt-1">Compose a new mail to send updates between employees.</p>
                             </div>
                         </div>
                     </div>
@@ -378,14 +379,14 @@
                                             type="text" 
                                             :value="currentUser ? currentUser.outlook_email : ''" 
                                             disabled 
-                                            class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed font-medium"
+                                            class="w-full bg-slate-50 border border-slate-200 text-slate-500 text-xs rounded-lg px-3 py-2 cursor-not-allowed font-semibold"
                                         >
                                     </div>
                                     <div>
                                         <label class="block text-xs font-bold text-slate-500 uppercase mb-1">To</label>
-                                        <select v-model="outlookTo" class="w-full bg-white border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 cursor-pointer font-medium">
+                                        <select v-model="outlookTo" class="w-full bg-white border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 cursor-pointer font-semibold">
                                             <option value="harry.assistant@company.com">Harry (Project Assistant) • harry.assistant@company.com</option>
-                                            <option v-for="user in teamMembers" :key="user.id" :value="user.outlook_email">
+                                            <option v-for="user in teamMembers.filter(m => m.id !== selectedUserId)" :key="user.id" :value="user.outlook_email">
                                                 {{ user.name }} • {{ user.outlook_email }}
                                             </option>
                                             <option value="custom">-- Custom Email --</option>
@@ -398,7 +399,7 @@
                                     <input 
                                         type="email" 
                                         v-model="customOutlookTo" 
-                                        placeholder="e.g., external.collaborator@partner.com" 
+                                        placeholder="e.g., external.partner@nousresearch.com" 
                                         required
                                         class="w-full border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500"
                                     >
@@ -409,9 +410,9 @@
                                     <input 
                                         type="text" 
                                         v-model="outlookSubject" 
-                                        placeholder="e.g., Weekly Project Deliverables & Roadmap Update" 
+                                        placeholder="e.g., Status Report: Implemented Unified Connectors & Simulator" 
                                         required
-                                        class="w-full border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 font-medium"
+                                        class="w-full border border-slate-300 text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-blue-500 font-semibold"
                                     >
                                 </div>
                                 <div class="flex-1 flex flex-col">
@@ -421,7 +422,7 @@
                                     </div>
                                     <textarea 
                                         v-model="outlookBody" 
-                                        placeholder="<h1>Status Report</h1><p>Working on schemas.</p>" 
+                                        placeholder="<h1>Progress Update</h1><p>We implemented symmetrical channels!</p>" 
                                         required
                                         class="w-full flex-1 border border-slate-300 text-xs rounded-lg px-4 py-3 focus:ring-1 focus:ring-blue-500 font-mono resize-none h-48"
                                     ></textarea>
@@ -446,12 +447,17 @@
                         </div>
 
                         <!-- VIEW 2: READ ACTIVE EMAIL -->
-                        <div v-else-if="activeEmail" class="flex-1 flex flex-col h-full overflow-hidden p-6">
+                        <div v-else-if="outlookView === 'read' && activeEmail" class="flex-1 flex flex-col h-full overflow-hidden p-6">
                             <div class="border-b border-slate-200 pb-4 mb-4">
-                                <h3 class="font-bold text-slate-800 text-base mb-1">{{ activeEmail.subject }}</h3>
+                                <div class="flex justify-between items-baseline mb-1">
+                                    <h3 class="font-bold text-slate-800 text-base">{{ activeEmail.subject }}</h3>
+                                    <span class="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase">{{ outlookFolder }} Item</span>
+                                </div>
                                 <div class="flex items-center space-x-2 text-xs">
                                     <span class="font-semibold text-slate-600">{{ activeEmail.sender_mapped_name || activeEmail.sender_raw_id }}</span>
                                     <span class="text-slate-400">&lt;{{ activeEmail.sender_raw_id }}&gt;</span>
+                                    <span class="text-slate-300">•</span>
+                                    <span class="text-slate-400 font-semibold text-indigo-600">To: {{ activeEmail.channel_raw_id }}</span>
                                     <span class="text-slate-300">•</span>
                                     <span class="text-slate-400">{{ formatFullDate(activeEmail.timestamp) }}</span>
                                 </div>
@@ -465,7 +471,7 @@
                         <!-- VIEW 3: NO EMAIL ACTIVE -->
                         <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400">
                             <svg class="w-16 h-16 text-slate-200 mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 13.5h3.86a2.25 2.25 0 012.008 1.24l.885 1.77a2.25 2.25 0 002.007 1.24h1.98a2.25 2.25 0 002.007-1.24l.885-1.77a2.25 2.25 0 012.007-1.24h3.86m-18 0h18" /></svg>
-                            <p class="text-sm font-semibold text-slate-600">No Email Open</p>
+                            <p class="text-sm font-semibold text-slate-600">No Email Opened</p>
                             <p class="text-xs text-slate-300 mt-1">Select an email card on the left or compose a new mock update.</p>
                         </div>
                     </div>
@@ -619,15 +625,13 @@
 
     <!-- Vue 3 CDN (Composition Style) -->
     <script>
-        const { createApp, ref, onMounted, computed, nextTick } = Vue;
+        const { createApp, ref, onMounted, computed, nextTick, watch } = Vue;
 
         createApp({
             setup() {
                 const activeTab = ref('slack');
                 const selectedUserId = ref('');
                 const teamMembers = ref([]);
-                const projects = ref([]);
-                const tasks = ref([]);
                 const unifiedMessages = ref([]);
 
                 // Date Time Simulation State
@@ -640,7 +644,8 @@
                 const slackDraft = ref('');
 
                 // Outlook Simulator State
-                const outlookView = ref('list'); // 'list', 'compose'
+                const outlookView = ref('list'); // 'list', 'compose', 'read'
+                const outlookFolder = ref('inbox'); // 'inbox', 'sent'
                 const activeEmail = ref(null);
                 const outlookTo = ref('harry.assistant@company.com');
                 const customOutlookTo = ref('');
@@ -653,12 +658,20 @@
                 // Forms
                 const adminMember = ref({ name: '', role: '', slack_handle: '', outlook_email: '' });
 
-                // Computed active channel name for Slack
+                // Symmetrical DM Channel generation helper
+                const getDmChannelId = (userA, userB) => {
+                    const sorted = [userA || '', userB || ''].sort();
+                    return `DM_${sorted[0]}_${sorted[1]}`;
+                };
+
+                // Computed active channel name for Slack (Handles symmetrical DM Names)
                 const activeSlackChannelName = computed(() => {
                     if (activeSlackChannel.value.startsWith('DM_')) {
-                        const handle = activeSlackChannel.value.substring(3);
-                        const member = teamMembers.value.find(m => m.slack_handle === handle);
-                        return member ? `Direct Message: ${member.name}` : `Direct Message: ${handle}`;
+                        // Channel is DM_U_ALICE_U_BOB. Show the other person's name
+                        const parts = activeSlackChannel.value.substring(3).split('_');
+                        const otherHandle = parts.find(p => p !== currentUser.value?.slack_handle);
+                        const member = teamMembers.value.find(m => m.slack_handle === otherHandle);
+                        return member ? `Direct Message: ${member.name}` : `Direct Message: ${otherHandle}`;
                     }
                     const channels = {
                         'C_GENERAL': 'general',
@@ -673,13 +686,38 @@
                     return teamMembers.value.find(m => m.id === selectedUserId.value) || null;
                 });
 
+                // Watch active user switches to dynamically update feeds instantly
+                watch(selectedUserId, async (newVal) => {
+                    if (newVal) {
+                        activeEmail.value = null;
+                        activeSlackChannel.value = 'C_GENERAL'; // Reset to #general
+                        outlookView.value = 'list';
+                        outlookFolder.value = 'inbox';
+                        await fetchData();
+                    }
+                });
+
                 // Message Filtering by Platform Feed
                 const filteredSlackMessages = computed(() => {
                     return unifiedMessages.value.filter(m => m.source === 'slack' && m.channel_raw_id === activeSlackChannel.value);
                 });
 
+                // Outlook Inbox vs Sent Items Filter
                 const filteredOutlookMessages = computed(() => {
-                    return unifiedMessages.value.filter(m => m.source === 'outlook');
+                    if (!currentUser.value) return [];
+                    const email = currentUser.value.outlook_email;
+                    if (outlookFolder.value === 'inbox') {
+                        // Receive emails sent to current user OR sent to Harry (the project assistant)
+                        return unifiedMessages.value.filter(m => 
+                            m.source === 'outlook' && 
+                            (m.channel_raw_id === email || m.channel_raw_id === 'harry.assistant@company.com')
+                        );
+                    } else {
+                        // Sent emails
+                        return unifiedMessages.value.filter(m => 
+                            m.source === 'outlook' && m.sender_raw_id === email
+                        );
+                    }
                 });
 
                 const filteredDashboardMessages = computed(() => {
@@ -695,16 +733,12 @@
                 // Fetch Database States
                 const fetchData = async () => {
                     try {
-                        const [teamRes, projRes, taskRes, msgRes] = await Promise.all([
+                        const [teamRes, msgRes] = await Promise.all([
                             fetch('api/team'),
-                            fetch('api/projects'),
-                            fetch('api/tasks'),
                             fetch('api/messages')
                         ]);
 
                         teamMembers.value = await teamRes.json();
-                        projects.value = await projRes.json();
-                        tasks.value = await taskRes.json();
                         unifiedMessages.value = await msgRes.json();
 
                         // Set default active user if not set
@@ -816,6 +850,13 @@
                                 name: currentUser.value.name
                             }
                         },
+                        toRecipients: [
+                            {
+                                emailAddress: {
+                                    address: toEmail
+                                }
+                            }
+                        ],
                         subject: outlookSubject.value,
                         body: {
                             contentType: "html",
@@ -972,8 +1013,6 @@
                     activeTab,
                     selectedUserId,
                     teamMembers,
-                    projects,
-                    tasks,
                     unifiedMessages,
                     useSimulatedTime,
                     simulatedTime,
@@ -982,6 +1021,7 @@
                     activeSlackChannelName,
                     slackDraft,
                     outlookView,
+                    outlookFolder,
                     activeEmail,
                     outlookTo,
                     customOutlookTo,
@@ -989,6 +1029,7 @@
                     outlookBody,
                     dashboardDraft,
                     adminMember,
+                    getDmChannelId,
                     currentUser,
                     filteredSlackMessages,
                     filteredOutlookMessages,

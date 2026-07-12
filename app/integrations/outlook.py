@@ -5,7 +5,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 import re
 import pytz
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel
 
 from app.database import get_db, UnifiedMessage, TeamMember
@@ -69,9 +69,17 @@ class OutlookEmailSenderAddress(BaseModel):
 class OutlookEmailSender(BaseModel):
     emailAddress: OutlookEmailSenderAddress
 
+class OutlookEmailRecipientAddress(BaseModel):
+    address: str
+    name: Optional[str] = None
+
+class OutlookEmailRecipient(BaseModel):
+    emailAddress: OutlookEmailRecipientAddress
+
 class OutlookEmailPayload(BaseModel):
     id: str  # Unique Outlook ID
     sender: OutlookEmailSender
+    toRecipients: Optional[List[OutlookEmailRecipient]] = None
     subject: str
     body: OutlookEmailBody
     receivedDateTime: str  # ISO 8601 UTC string (e.g., "2026-05-29T10:00:00Z")
@@ -85,6 +93,11 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
         return {"status": "ignored", "detail": "duplicate email ID", "message_id": payload.id}
         
     sender_email = payload.sender.emailAddress.address
+    
+    # Extract recipient email address
+    recipient_email = "harry.assistant@company.com"
+    if payload.toRecipients and len(payload.toRecipients) > 0:
+        recipient_email = payload.toRecipients[0].emailAddress.address
     
     # Resolve sender name from db
     sender_name = None
@@ -102,7 +115,6 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
     # Parse receivedDateTime (usually ISO format like 2026-05-29T10:00:00Z)
     try:
         dt_utc = datetime.fromisoformat(payload.receivedDateTime.replace("Z", "+00:00"))
-        # Convert to IST timezone
         dt_ist = dt_utc.astimezone(IST).replace(tzinfo=None) # Store naive datetime for SQLite
     except Exception:
         dt_ist = datetime.now()
@@ -113,8 +125,8 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
         source="outlook",
         sender_raw_id=sender_email,
         sender_mapped_name=sender_name,
-        channel_raw_id="outlook_inbox",
-        thread_id=None,  # Standard Outlook can track via conversationId if needed
+        channel_raw_id=recipient_email,  # Symmetrical recipient inbox
+        thread_id=None,
         subject=payload.subject,
         content=cleaned_content,
         timestamp=dt_ist,
