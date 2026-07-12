@@ -79,6 +79,7 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
 2. [x] Harry identity + outbound send path + quiet-hours queue + simulator
        render (prompt: `prompts/step_02_harry_outbound.md`) — done 2026-07-12
 3. [ ] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
+       (prompt: `prompts/step_03_kb_schema.md`)
 4. [ ] Gemini client + flash claim extraction (4a); dream-cycle synthesis +
        contradiction probe (4b)
 5. [ ] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
