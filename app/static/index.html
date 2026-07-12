@@ -731,12 +731,9 @@
                     const email = currentUser.value.outlook_email;
                     if (outlookFolder.value === 'inbox') {
                         // Receive emails sent to current user OR sent to Harry (the project assistant)
-                        return unifiedMessages.value.filter(m => 
-                            m.source === 'outlook' && 
-                            (m.channel_raw_id === email || 
-                             m.channel_raw_id === `email:${email}` || 
-                             m.channel_raw_id === 'harry.assistant@company.com' ||
-                             m.channel_raw_id === 'email:harry.assistant@company.com')
+                        return unifiedMessages.value.filter(m =>
+                            m.source === 'outlook' &&
+                            (m.channel_raw_id === email || m.channel_raw_id === 'harry.assistant@company.com')
                         );
                     } else {
                         // Sent emails

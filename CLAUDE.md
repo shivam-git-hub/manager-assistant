@@ -117,6 +117,20 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
 - FastAPI + SQLAlchemy 2.0 + SQLite (`data/db.sqlite`); simulator is
   `app/static/index.html` (Vue 3 CDN single file).
 - `unified_messages`: platform_msg_id UNIQUE (idempotency), `is_processed`
-  flag = future agent queue, sender resolved at ingest via `team_members`.
+  flag = future agent queue, sender resolved at ingest via `team_members`,
+  `direction` inbound/outbound (Step 2; ALTER TABLE migration in init_db).
+- Harry identity: `U_HARRY` / harry.assistant@company.com, seeded
+  insert-if-missing in `init_db()`; excluded from the impersonation dropdown.
+- Outbound (Step 2): `POST /api/integrations/slack/send` (chat.postMessage
+  shape, in-band errors HTTP 200) and `POST /api/integrations/outlook/send`
+  (Graph sendMail shape, 202 empty). These are UNGATED transports; the
+  quiet-hours gate is ONLY `send_or_hold()` in `app/outbound.py`
+  (9:00–19:00 IST, weekends quiet; `outbound_queue` table;
+  `POST /api/outbound/release`, `GET /api/outbound/queue?status=held`).
+- Outlook storage conventions (ingest AND outbound must match): channel =
+  plain recipient address (no prefix), subject in `subject` column, content =
+  cleaned body only (no "Subject:" prefix).
 - Simulator payloads MUST mirror real service shapes (Slack Events API,
   MS Graph). No processing logic in the simulator — collectors/KB only.
+- Tests: `tests/conftest.py` seeds Harry; `client` fixture's lifespan still
+  runs `init_db()` against the real `data/db.sqlite` (known wart, demo-OK).

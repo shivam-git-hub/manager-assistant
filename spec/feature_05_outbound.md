@@ -144,8 +144,8 @@ Sends an email as Harry. This endpoint is a raw transport and does **not** gate 
     *   `direction`: `"outbound"`
     *   `sender`: `"harry.assistant@company.com"`
     *   `sender_mapped_name`: `"Harry"`
-    *   `channel`: `"email:<recipient_address>"` (matching the first recipient in the array)
-    *   `content`: `"Subject: <subject>\n\n<cleaned_markdown_content>"`
+    *   `channel`: `"<recipient_address>"` (first recipient — plain address, same convention as ingest)
+    *   `content`: `"<cleaned_markdown_content>"` (body only; subject lives in the `subject` column, same as ingest)
     *   `timestamp`: `timeservice.now_ist()`
     *   `platform_msg_id`: `"mail_out_<uuid4_hex_12>"`
 

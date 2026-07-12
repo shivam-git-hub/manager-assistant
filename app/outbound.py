@@ -50,6 +50,30 @@ def next_work_morning(dt: datetime) -> datetime:
         if current.weekday() < 5:
             return datetime(current.year, current.month, current.day, WORK_HOURS_START, 0, 0)
 
+def _dispatch(channel_type: str, payload: dict, db: Session) -> Optional[str]:
+    """
+    Sends a queued/immediate payload through the matching transport.
+    Returns the resulting platform_msg_id, or None if the send failed.
+    """
+    if channel_type == "slack":
+        res = send_slack_message_internal(payload.get("channel"), payload.get("text"), db)
+        return res.get("message_id") if res.get("ok") else None
+    elif channel_type == "outlook":
+        # Extract from the Graph sendMail schema
+        msg_payload = payload.get("message", {})
+        subject = msg_payload.get("subject", "")
+        body_payload = msg_payload.get("body", {})
+        body_html = body_payload.get("content", "")
+        recipients_list = msg_payload.get("toRecipients", [])
+        to_emails = [r.get("emailAddress", {}).get("address") for r in recipients_list if r.get("emailAddress", {}).get("address")]
+
+        try:
+            res = send_outlook_message_internal(subject, body_html, to_emails, db)
+        except HTTPException:
+            return None
+        return res.get("message_id")
+    return None
+
 def send_or_hold(channel_type: str, payload: dict, db: Session) -> dict:
     """
     Determines if the message should be sent immediately or held based on quiet hours.
@@ -68,24 +92,7 @@ def send_or_hold(channel_type: str, payload: dict, db: Session) -> dict:
         db.commit()
         return {"status": "held", "release_at": release_at}
     else:
-        # Dispatch immediately
-        msg_id = None
-        if channel_type == "slack":
-            res = send_slack_message_internal(payload.get("channel"), payload.get("text"), db)
-            if res.get("ok"):
-                msg_id = res.get("message_id")
-        elif channel_type == "outlook":
-            # For outlook send, we need to extract from Graph schema
-            msg_payload = payload.get("message", {})
-            subject = msg_payload.get("subject", "")
-            body_payload = msg_payload.get("body", {})
-            body_html = body_payload.get("content", "")
-            recipients_list = msg_payload.get("toRecipients", [])
-            to_emails = [r.get("emailAddress", {}).get("address") for r in recipients_list if r.get("emailAddress", {}).get("address")]
-            
-            res = send_outlook_message_internal(subject, body_html, to_emails, db)
-            msg_id = res.get("message_id")
-            
+        msg_id = _dispatch(channel_type, payload, db)
         return {"status": "sent", "message_id": msg_id}
 
 @router.post("/release")
@@ -104,31 +111,20 @@ async def release_queued_messages(db: Session = Depends(get_db)):
     for row in queued_rows:
         try:
             payload_dict = json.loads(row.payload)
+            msg_id = _dispatch(row.channel_type, payload_dict, db)
         except json.JSONDecodeError:
-            continue
-            
-        msg_id = None
-        if row.channel_type == "slack":
-            res = send_slack_message_internal(payload_dict.get("channel"), payload_dict.get("text"), db)
-            if res.get("ok"):
-                msg_id = res.get("message_id")
-        elif row.channel_type == "outlook":
-            msg_payload = payload_dict.get("message", {})
-            subject = msg_payload.get("subject", "")
-            body_payload = msg_payload.get("body", {})
-            body_html = body_payload.get("content", "")
-            recipients_list = msg_payload.get("toRecipients", [])
-            to_emails = [r.get("emailAddress", {}).get("address") for r in recipients_list if r.get("emailAddress", {}).get("address")]
-            
-            res = send_outlook_message_internal(subject, body_html, to_emails, db)
-            msg_id = res.get("message_id")
-            
-        # Update row
-        row.status = "sent"
-        row.sent_at = timeservice.now_ist()
-        row.result_message_id = msg_id
-        count += 1
-        
+            msg_id = None
+
+        if msg_id is None:
+            # Bad payload or transport rejection: don't retry forever, and
+            # don't claim it was sent.
+            row.status = "cancelled"
+        else:
+            row.status = "sent"
+            row.sent_at = timeservice.now_ist()
+            row.result_message_id = msg_id
+            count += 1
+
     db.commit()
     
     # Get total remaining held

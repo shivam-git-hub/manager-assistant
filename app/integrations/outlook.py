@@ -182,22 +182,24 @@ def send_outlook_message_internal(subject: str, body_html: str, to_recipients: L
             }
         )
         
+    # Match the ingest convention exactly: subject lives in the `subject`
+    # column, content is the cleaned body only, channel is the plain
+    # recipient address (see outlook_mock_ingest above).
     cleaned_body = clean_html(body_html)
-    full_content = f"Subject: {subject}\n\n{cleaned_body}" if subject else cleaned_body
-    
+
     recipient_email = to_recipients[0]
     platform_msg_id = f"mail_out_{uuid.uuid4().hex[:12]}"
-    
+
     new_msg = UnifiedMessage(
         platform_msg_id=platform_msg_id,
         source="outlook",
         direction="outbound",
         sender_raw_id="harry.assistant@company.com",
         sender_mapped_name="Harry",
-        channel_raw_id=f"email:{recipient_email}",
+        channel_raw_id=recipient_email,
         thread_id=None,
         subject=subject,
-        content=full_content,
+        content=cleaned_body,
         timestamp=timeservice.now_ist(),
         is_processed=False,
         raw_metadata=json.dumps({

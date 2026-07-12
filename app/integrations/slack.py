@@ -156,4 +156,8 @@ class SlackSendPayload(BaseModel):
 
 @router.post("/send")
 async def send_slack_message(payload: SlackSendPayload, db: Session = Depends(get_db)):
-    return send_slack_message_internal(payload.channel, payload.text, db)
+    result = send_slack_message_internal(payload.channel, payload.text, db)
+    # message_id is internal (used by the outbound queue); real chat.postMessage
+    # responses don't carry it, so keep the wire shape faithful.
+    result.pop("message_id", None)
+    return result

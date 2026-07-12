@@ -144,15 +144,14 @@ def test_04_outlook_send_success(client, db_session):
     assert msg.direction == "outbound"
     assert msg.sender_raw_id == "harry.assistant@company.com"
     assert msg.sender_mapped_name == "Harry"
-    assert msg.channel_raw_id == "email:alice@company.com"
+    # Conventions must match ingest exactly: plain recipient address as the
+    # channel, subject in its own column, content = cleaned body only.
+    assert msg.channel_raw_id == "alice@company.com"
     assert msg.subject == "Weekly Update"
     assert "Done" in msg.content
     assert "style" not in msg.content
     assert "color:red" not in msg.content
-    
-    # Check subject stored per convention (verify how subject prefix is done on content)
-    # Let's check how ingest convention formats email content. We'll implement it consistently.
-    assert msg.content.startswith("Subject: Weekly Update")
+    assert "Subject:" not in msg.content
 
 def test_04b_outlook_send_invalid(client):
     """
