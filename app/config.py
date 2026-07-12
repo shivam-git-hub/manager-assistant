@@ -14,4 +14,4 @@ IST = pytz.timezone("Asia/Kolkata")
 
 # Server Config
 HOST = "0.0.0.0"
-PORT = int(os.getenv("PORT", "8003"))
+PORT = int(os.getenv("PORT", "3003"))
