@@ -340,7 +340,22 @@ def ingest_mom(id: int, payload: MomRequest, db: Session = Depends(get_db)):
     
     # 4. FLASH_MODEL Ingest & Extraction
     client = get_client()
-    
+
+    # Deterministic context: give the model the REAL team roster and project
+    # slugs so it maps names -> IDs instead of guessing (e.g. "Alice" vs
+    # "U_ALICE"). Without this the owner/slug resolution below silently drops
+    # every action item.
+    roster_members = db.scalars(select(TeamMember)).all()
+    roster_str = "\n".join(
+        f"- {m.id} | {m.name} | {m.role}" for m in roster_members
+    ) or "None"
+    project_entities = db.scalars(
+        select(Entity).where(Entity.type == "project")
+    ).all()
+    projects_str = "\n".join(
+        f"- {e.slug} | {e.name}" for e in project_entities
+    ) or "None"
+
     prompt = f"""You are analyzing the Minutes of Meeting (MoM) for the meeting '{meeting.title}'.
 Extract structured information in strict JSON format.
 
@@ -349,7 +364,18 @@ MoM Text:
 {payload.text}
 \"\"\"
 
-Examine the roster of team members and active project codes. Output in JSON matching the exact schema:
+### TEAM ROSTER (owner_member_id MUST be one of these exact IDs):
+{roster_str}
+
+### ACTIVE PROJECTS (project_slug MUST be one of these exact slugs, or null):
+{projects_str}
+
+Rules:
+- owner_member_id MUST be copied exactly from the TEAM ROSTER ID column. Match
+  people by name; never invent an ID. If no roster member matches, skip the item.
+- project_slug / project_slugs MUST come from the ACTIVE PROJECTS list, or null.
+
+Output in JSON matching the exact schema:
 {{
   "summary": "one sentence meeting summary",
   "decisions": [
@@ -358,13 +384,13 @@ Examine the roster of team members and active project codes. Output in JSON matc
   "action_items": [
     {{
       "description": "action item task details",
-      "owner_member_id": "ID of assignee (must match team roster)",
+      "owner_member_id": "exact ID from the roster",
       "due_date": "YYYY-MM-DD or null",
-      "project_slug": "project:project-code or null"
+      "project_slug": "exact slug from the projects list or null"
     }}
   ],
   "project_slugs": [
-    "project:project-code of any projects affected"
+    "exact slug from the projects list of any projects affected"
   ]
 }}
 """
@@ -392,11 +418,20 @@ Examine the roster of team members and active project codes. Output in JSON matc
     for item in extracted.get("action_items", []):
         owner_id = item.get("owner_member_id")
         desc = item.get("description")
-        
-        # Verify real assignee
+
+        # Verify real assignee. Prefer exact ID, but fall back to name /
+        # slack_handle so a stray "Alice" still resolves to "U_ALICE".
         assignee = db.get(TeamMember, owner_id) if owner_id else None
+        if not assignee and owner_id:
+            assignee = db.scalars(
+                select(TeamMember).where(
+                    (func.lower(TeamMember.name) == owner_id.lower()) |
+                    (TeamMember.slack_handle == owner_id)
+                )
+            ).first()
         if not assignee or not desc:
             continue
+        owner_id = assignee.id
             
         # Parse due date
         due_val = None
