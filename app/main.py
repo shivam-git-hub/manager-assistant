@@ -12,6 +12,7 @@ from app.config import PORT, HOST
 from app.integrations import team, slack, outlook, unified
 from app import timeservice, outbound, scheduler, followups, brief
 from app.kb import api as kb_api
+from app.kb import meetings as meetings_api
 from app.agent import api as agent_api
 
 async def background_tick_loop():
@@ -90,6 +91,7 @@ app.include_router(scheduler.router)
 app.include_router(followups.router)
 app.include_router(brief.router)
 app.include_router(agent_api.router)
+app.include_router(meetings_api.router)
 
 # Ensure static files directory exists
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

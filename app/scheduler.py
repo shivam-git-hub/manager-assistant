@@ -108,9 +108,10 @@ def tick(db: Session) -> dict:
         policy = job.catchup_policy
         interval = job.interval_seconds
         
-        handler = JOB_HANDLERS.get(job_type)
+        base_job_type = job_type.split(":")[0] if ":" in job_type else job_type
+        handler = JOB_HANDLERS.get(base_job_type)
         if not handler:
-            logger.warning(f"No handler registered for job type: {job_type}")
+            logger.warning(f"No handler registered for job type: {job_type} (base: {base_job_type})")
             job.enabled = False
             db.commit()
             continue
@@ -119,7 +120,12 @@ def tick(db: Session) -> dict:
         try:
             if interval is None:
                 # One-shot
-                handler(db)
+                import inspect
+                sig = inspect.signature(handler)
+                if "job_type" in sig.parameters:
+                    handler(db, job_type=job_type)
+                else:
+                    handler(db)
                 job.enabled = False
                 job.last_run_at = now
                 job.next_due_at = now
@@ -191,3 +197,10 @@ register_handler("quiet_release", lambda db, vt=None: release_queued_messages_sy
 register_handler("followup_check", lambda db, vt=None: run_followup_check(db))
 register_handler("health_eval", lambda db, vt=None: run_health_eval(db))
 register_handler("morning_brief", lambda db, vt=None: run_morning_brief(db, vt))
+
+# Meetings handlers
+def lazy_pre_meeting_brief(db, job_type=None):
+    from app.kb.meetings import pre_meeting_brief_handler
+    return pre_meeting_brief_handler(db, job_type)
+
+register_handler("pre_meeting_brief", lazy_pre_meeting_brief)

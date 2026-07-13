@@ -57,6 +57,11 @@
                         <span class="text-sm">📰</span>
                         <span>Morning Briefs</span>
                     </a>
+                    
+                    <a href="#/meetings" class="nav-link" :class="{ 'active': currentRoute.view === 'meetings' || currentRoute.view === 'meeting_detail' }">
+                        <span class="text-sm">📅</span>
+                        <span>Calendar agenda</span>
+                    </a>
                 </nav>
             </div>
             
@@ -111,6 +116,18 @@
                 <briefs-view 
                     v-if="currentRoute.view === 'briefs'"
                 ></briefs-view>
+                
+                <!-- Meetings Calendar View -->
+                <meetings-view 
+                    v-if="currentRoute.view === 'meetings'"
+                    :clock-state="clockState"
+                ></meetings-view>
+                
+                <!-- Meeting Detail View -->
+                <meeting-detail-view 
+                    v-if="currentRoute.view === 'meeting_detail'"
+                    :id="currentRoute.id"
+                ></meeting-detail-view>
             </div>
         </main>
         

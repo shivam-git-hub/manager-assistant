@@ -76,6 +76,31 @@ class ChatMessage(Base):
     tool_trace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON-serialized trace list
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
 
+class Meeting(Base):
+    __tablename__ = "meetings"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(255))
+    starts_at: Mapped[datetime] = mapped_column(DateTime)
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    attendees: Mapped[str] = mapped_column(Text)  # JSON-serialized list of team member IDs
+    project_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("projects.id"), nullable=True)
+    mom_raw: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mom_message_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("unified_messages.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="scheduled")  # "scheduled" | "completed" | "cancelled"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
+class ActionItem(Base):
+    __tablename__ = "action_items"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[int] = mapped_column(Integer, ForeignKey("meetings.id"))
+    task_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("tasks.id"), nullable=True)
+    description: Mapped[str] = mapped_column(Text)
+    owner_member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
+    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
 def init_db():
     from app.outbound import OutboundQueue  # Register with Base metadata
     from app.kb import models as kb_models # Register with Base metadata

@@ -6,6 +6,8 @@ import ProjectView from './views/project.js';
 import ConflictsView from './views/conflicts.js';
 import WorkloadView from './views/workload.js';
 import BriefsView from './views/briefs.js';
+import MeetingsView from './views/meetings.js';
+import MeetingDetailView from './views/meeting_detail.js';
 import ChatDock from './components/chat_dock.js';
 
 const { createApp, ref, computed, onMounted } = Vue;
@@ -17,6 +19,8 @@ createApp({
         ConflictsView,
         WorkloadView,
         BriefsView,
+        MeetingsView,
+        MeetingDetailView,
         ChatDock
     },
     setup() {
