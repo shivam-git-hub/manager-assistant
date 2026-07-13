@@ -15,3 +15,7 @@ build/
 *.egg-info/
 config.json
 
+
+# editor swap files
+*.swp
+*.swo

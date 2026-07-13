@@ -381,6 +381,44 @@ def run_seeding(db: Session) -> dict:
     # Trigger final dream cycle to establish starting presentation state
     run_dream_cycle(db)
 
+    # Deterministically guarantee the demo's centerpiece: exactly ONE conflict — the
+    # Bob (Slack: "sent the schema doc") vs Alice (Outlook: "never received it")
+    # deadlock, filed on project:phoenix. The flash contradiction probe is
+    # nondeterministic and scatters these two claims across person pages, so we do NOT
+    # leave the key beat to chance: clear any auto-detected conflicts and assert the
+    # real one.
+    db.execute(delete(Conflict))
+    db.commit()
+    bob_claim = db.scalars(
+        select(AttributedClaim).where(
+            (AttributedClaim.holder == "U_BOB") &
+            (AttributedClaim.active == True) &
+            (AttributedClaim.claim.ilike("%sent%schema%"))
+        ).order_by(AttributedClaim.claimed_at.desc())
+    ).first()
+    alice_claim = db.scalars(
+        select(AttributedClaim).where(
+            (AttributedClaim.holder == "U_ALICE") &
+            (AttributedClaim.active == True) &
+            (AttributedClaim.claim.ilike("%received%schema%"))
+        ).order_by(AttributedClaim.claimed_at.desc())
+    ).first()
+    phoenix_entity = db.scalars(select(Entity).where(Entity.slug == "project:phoenix")).first()
+    if bob_claim and alice_claim and phoenix_entity:
+        db.add(Conflict(
+            entity_id=phoenix_entity.id,
+            claim_a_id=bob_claim.id,
+            claim_b_id=alice_claim.id,
+            severity="high",
+            description="Deadlock: Bob says he sent the schema document to Alice; Alice says she never received it and Phoenix is blocked on it.",
+            status="open",
+            detected_at=timeservice.now_ist(),
+        ))
+        db.commit()
+    else:
+        logger.warning("Deterministic deadlock conflict NOT seeded (bob=%s alice=%s phoenix=%s)",
+                       bool(bob_claim), bool(alice_claim), bool(phoenix_entity))
+
     # Deterministically evaluate project health so Phoenix reflects its blocked
     # task + open conflict RIGHT NOW. run_health_eval is pure scoring (no LLM);
     # without this call the seed's health stays at its "green" default until a

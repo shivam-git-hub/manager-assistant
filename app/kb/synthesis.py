@@ -219,120 +219,198 @@ def synthesize_entity(db: Session, entity: Entity, client: GeminiClient) -> Opti
     return entity.compiled_truth
 
 
-def run_contradiction_probe(db: Session, entity: Entity, client: GeminiClient) -> List[Conflict]:
+# Shared judge prompt. Hardened against the false positives we saw in review
+# (a question/inquiry treated as contradicting its own answer, benign
+# co-occurring facts flagged, etc.). The model must be CONSERVATIVE.
+CONTRADICTION_JUDGE_SYSTEM = (
+    "You are a precise contradiction detector for a project knowledge base. You evaluate "
+    "pairs of claims made by DIFFERENT team members and decide whether they genuinely "
+    "CONTRADICT — i.e. both statements are assertions of fact/status that CANNOT be true "
+    "at the same time.\n\n"
+    "Set contradicts=false (be conservative — false is the default) when:\n"
+    "- Either statement is a QUESTION, inquiry, or request (e.g. 'asked whether the spec is "
+    "final'). A question never contradicts anything, including its own answer.\n"
+    "- The two statements are simply about different things, or one elaborates/supports the other.\n"
+    "- They describe different points in time and could both have been true when stated "
+    "(normal progress), unless one explicitly negates the other's current state.\n"
+    "- You are unsure. Only flag a clear, mutually-exclusive contradiction.\n\n"
+    "Set contradicts=true only for real conflicts, e.g. one person asserts an action happened "
+    "and another asserts it did NOT ('I sent the schema doc' vs 'I never received the schema doc'), "
+    "or two incompatible states of the same thing.\n\n"
+    "Severity: low = minor wording/detail/percentage discrepancy; medium = timeline or "
+    "stale-vs-fresh status disagreement; high = a direct deadlock or critical blocker "
+    "(e.g. delivered vs not-received, done vs blocked).\n\n"
+    "Return JSON: {\"results\":[{\"pair_index\":0,\"contradicts\":true,\"severity\":\"high\",\"description\":\"...\"}]}"
+)
+
+_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "will", "have", "has", "was", "are",
+    "his", "her", "their", "our", "into", "from", "about", "been", "being", "does",
+    "not", "but", "they", "there", "which", "when", "what", "who", "your", "you",
+}
+
+# Non-assertive lead-ins: a "claim" the extractor built out of a question/request is
+# not something that can contradict a fact. Filtering them at the source removes most
+# false-positive pairs before we ever spend an LLM call.
+_NON_ASSERTIVE_MARKERS = (
+    "inquir", "requested", "is asking", "asked ", "asking", "wondering",
+    "wants to know", "is being discussed", "is being inquired", "would like to know",
+)
+
+
+def _is_assertive_claim(text: str) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    if "?" in low:
+        return False
+    return not any(m in low for m in _NON_ASSERTIVE_MARKERS)
+
+
+def _significant_tokens(text: str) -> set:
+    toks = re.findall(r"[a-zA-Z]{4,}", (text or "").lower())
+    return {t for t in toks if t not in _STOPWORDS}
+
+
+def _judge_and_create_conflicts(db: Session, pairs: list, client: GeminiClient, pick_entity_id) -> List[Conflict]:
     """
-    Examines pairs of active claims from different holders for logical contradictions,
-    flagging them as Conflicts in the DB.
+    Shared judge+create: sends candidate (claim_a, claim_b) pairs to the flash model
+    with the hardened prompt and materialises Conflict rows for the true ones.
+    `pick_entity_id(c1, c2)` decides which entity the conflict is filed under.
     """
-    # Fetch all active claims for this entity of specific kinds
-    claims = list(db.scalars(
-        select(AttributedClaim)
-        .where(
-            (AttributedClaim.entity_id == entity.id) &
-            (AttributedClaim.active == True) &
-            (AttributedClaim.kind.in_({"fact", "status", "commitment", "blocker"}))
-        )
-    ).all())
-    
-    # Find candidate pairs across different holders with no existing conflict log
-    pairs = []
-    for i in range(len(claims)):
-        for j in range(i + 1, len(claims)):
-            c1 = claims[i]
-            c2 = claims[j]
-            if c1.holder != c2.holder:
-                # Check existing conflict logs in any status (open, resolved, dismissed)
-                stmt_conf = select(Conflict).where(
-                    or_(
-                        and_(Conflict.claim_a_id == c1.id, Conflict.claim_b_id == c2.id),
-                        and_(Conflict.claim_a_id == c2.id, Conflict.claim_b_id == c1.id)
-                    )
-                )
-                existing = db.scalars(stmt_conf).first()
-                if not existing:
-                    pairs.append((c1, c2))
-                    if len(pairs) >= 15:
-                        break
-        if len(pairs) >= 15:
-            break
-            
     if not pairs:
         return []
-        
-    judge_pairs = []
-    for idx, (c1, c2) in enumerate(pairs):
-        judge_pairs.append({
-            "pair_index": idx,
-            "claim_a": f"[{c1.holder}]: {c1.claim}",
-            "claim_b": f"[{c2.holder}]: {c2.claim}"
-        })
-        
-    system_instruction = (
-        "You are a precise contradiction detector. Your task is to evaluate pairs of claims made by different team members about a project aspect. "
-        "Determine if there is a logical, factual, or status contradiction, conflict, or deadlock between the statements. "
-        "A contradiction is true only if both cannot be simultaneously true. "
-        "Classify conflict severity as low, medium, or high:\n"
-        "- low: Minor discrepancy in wording, progress percentages, or details.\n"
-        "- medium: Timeline discrepancies, or stale status versus newer status disagreements.\n"
-        "- high: Direct logical deadlocks, or critical blockers (e.g. 'I delivered the schema' vs 'I did not receive the schema').\n\n"
-        "Return a JSON object in this format:\n"
-        "{\n"
-        "  \"results\": [\n"
-        "    {\n"
-        "      \"pair_index\": 0,\n"
-        "      \"contradicts\": true,\n"
-        "      \"severity\": \"high\",\n"
-        "      \"description\": \"...\"\n"
-        "    }\n"
-        "  ]\n"
-        "}"
-    )
-    
-    prompt = f"### Candidate Claims Pairs:\n{json.dumps({'pairs': judge_pairs}, indent=2)}\n\nEvaluate each pair for contradictions and return JSON."
-    
-    messages = [
-        {"role": "system", "content": system_instruction},
-        {"role": "user", "content": prompt}
+
+    judge_pairs = [
+        {"pair_index": idx, "claim_a": f"[{c1.holder}]: {c1.claim}", "claim_b": f"[{c2.holder}]: {c2.claim}"}
+        for idx, (c1, c2) in enumerate(pairs)
     ]
-    
+    prompt = f"### Candidate Claim Pairs:\n{json.dumps({'pairs': judge_pairs}, indent=2)}\n\nEvaluate each pair and return JSON."
+    messages = [
+        {"role": "system", "content": CONTRADICTION_JUDGE_SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+
     try:
         res = client.chat(model=FLASH_MODEL, messages=messages, json_mode=True)
-        content_str = res.get("content") or "{}"
-        result_data = json.loads(content_str)
+        result_data = json.loads(res.get("content") or "{}")
         results = result_data.get("results", [])
     except Exception as e:
         logger.error(f"Error during contradiction probe LLM call: {e}")
         return []
-        
-    new_conflicts = []
+
     results_map = {item["pair_index"]: item for item in results if "pair_index" in item}
-    
+    new_conflicts = []
     for idx, (c1, c2) in enumerate(pairs):
         res_item = results_map.get(idx)
         if res_item and res_item.get("contradicts", False):
             sev = res_item.get("severity", "medium").lower()
             if sev not in ("low", "medium", "high"):
                 sev = "medium"
-                
             conflict = Conflict(
-                entity_id=entity.id,
+                entity_id=pick_entity_id(c1, c2),
                 claim_a_id=c1.id,
                 claim_b_id=c2.id,
                 severity=sev,
                 description=res_item.get("description", "Logical contradiction detected between claims."),
                 status="open",
-                detected_at=timeservice.now_ist()
+                detected_at=timeservice.now_ist(),
             )
             db.add(conflict)
             new_conflicts.append(conflict)
-            
+
     if new_conflicts:
         db.commit()
-        # Refresh to populate IDs
         for cf in new_conflicts:
             db.refresh(cf)
-            
     return new_conflicts
+
+
+def _pair_has_conflict(db: Session, c1: AttributedClaim, c2: AttributedClaim) -> bool:
+    """True if a Conflict (any status) already logs this claim pair, either ordering."""
+    stmt = select(Conflict).where(
+        or_(
+            and_(Conflict.claim_a_id == c1.id, Conflict.claim_b_id == c2.id),
+            and_(Conflict.claim_a_id == c2.id, Conflict.claim_b_id == c1.id),
+        )
+    )
+    return db.scalars(stmt).first() is not None
+
+
+def run_contradiction_probe(db: Session, entity: Entity, client: GeminiClient) -> List[Conflict]:
+    """
+    Examines pairs of active, ASSERTIVE claims from different holders WITHIN one entity
+    for logical contradictions, flagging them as Conflicts in the DB.
+    """
+    claims = [
+        c for c in db.scalars(
+            select(AttributedClaim).where(
+                (AttributedClaim.entity_id == entity.id) &
+                (AttributedClaim.active == True) &
+                (AttributedClaim.kind.in_({"fact", "status", "commitment", "blocker"}))
+            )
+        ).all()
+        if _is_assertive_claim(c.claim)
+    ]
+
+    pairs = []
+    for i in range(len(claims)):
+        for j in range(i + 1, len(claims)):
+            c1, c2 = claims[i], claims[j]
+            if c1.holder != c2.holder and not _pair_has_conflict(db, c1, c2):
+                pairs.append((c1, c2))
+                if len(pairs) >= 15:
+                    break
+        if len(pairs) >= 15:
+            break
+
+    return _judge_and_create_conflicts(db, pairs, client, lambda c1, c2: entity.id)
+
+
+def run_global_contradiction_probe(db: Session, client: GeminiClient, max_pairs: int = 20) -> List[Conflict]:
+    """
+    Catches CROSS-entity contradictions the per-entity probe structurally cannot see —
+    e.g. "Bob sent the schema" filed under person:U_ALICE vs "Alice never received it"
+    filed under person:U_BOB. Considers only assertive, cross-holder, cross-entity pairs
+    that share significant keywords (so it stays cheap and relevant), judged newest-first.
+    When a pair contradicts, the conflict is filed on a project entity if either claim
+    belongs to one, else on the first claim's entity.
+    """
+    ent_type = {e.id: e.type for e in db.scalars(select(Entity)).all()}
+
+    claims = [
+        c for c in db.scalars(
+            select(AttributedClaim).where(
+                (AttributedClaim.active == True) &
+                (AttributedClaim.kind.in_({"fact", "status", "blocker"}))
+            ).order_by(AttributedClaim.claimed_at.desc())
+        ).all()
+        if _is_assertive_claim(c.claim)
+    ]
+
+    scored = []
+    for i in range(len(claims)):
+        toks_i = _significant_tokens(claims[i].claim)
+        for j in range(i + 1, len(claims)):
+            c1, c2 = claims[i], claims[j]
+            if c1.holder == c2.holder or c1.entity_id == c2.entity_id:
+                continue  # same-entity pairs are the per-entity probe's job
+            overlap = toks_i & _significant_tokens(c2.claim)
+            if not overlap or _pair_has_conflict(db, c1, c2):
+                continue
+            scored.append((len(overlap), c1, c2))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    pairs = [(c1, c2) for _, c1, c2 in scored[:max_pairs]]
+
+    def pick(c1, c2):
+        if ent_type.get(c1.entity_id) == "project":
+            return c1.entity_id
+        if ent_type.get(c2.entity_id) == "project":
+            return c2.entity_id
+        return c1.entity_id
+
+    return _judge_and_create_conflicts(db, pairs, client, pick)
 
 
 def run_dream_cycle(db: Session, client: Optional[GeminiClient] = None) -> dict:
@@ -372,10 +450,13 @@ def run_dream_cycle(db: Session, client: Optional[GeminiClient] = None) -> dict:
         if synthesized_truth != prior_truth:
             synth_count += 1
             
-        # Run contradiction probe
+        # Run contradiction probe (within this entity)
         new_conflicts = run_contradiction_probe(db, ent, client)
         conflicts_found += len(new_conflicts)
-        
+
+    # Cross-entity contradiction pass (catches deadlocks split across person pages)
+    conflicts_found += len(run_global_contradiction_probe(db, client))
+
     return {
         "messages_processed": msg_count,
         "entities_synthesized": synth_count,
