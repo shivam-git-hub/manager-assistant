@@ -7,6 +7,11 @@ from app.agent.registry import registry
 from app.agent.prompts import compile_system_prompt
 from app.agent.gemini_client import get_client, GeminiClient
 from app.config import SMART_MODEL
+# Importing tools registers all 10 handlers on the shared registry as an import
+# side-effect. Without this, the registry is empty at runtime and Harry answers
+# with no tools (hallucinating). Tests happened to pass because test_agent.py
+# imports this module directly; the running app never did.
+import app.agent.tools  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

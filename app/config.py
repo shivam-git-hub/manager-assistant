@@ -25,6 +25,7 @@ CONFIG_JSON_PATH = BASE_DIR / "config.json"
 
 smart_model_val = "gemini-2.5-pro"
 flash_model_val = "gemini-2.5-flash"
+gemini_api_key_val = None
 
 if CONFIG_JSON_PATH.exists():
     try:
@@ -35,6 +36,9 @@ if CONFIG_JSON_PATH.exists():
                     smart_model_val = cfg["smart_model"]
                 if "flash_model" in cfg:
                     flash_model_val = cfg["flash_model"]
+                # Accept both snake_case and UPPER keys for the API key.
+                if cfg.get("gemini_api_key") or cfg.get("GEMINI_API_KEY"):
+                    gemini_api_key_val = cfg.get("gemini_api_key") or cfg.get("GEMINI_API_KEY")
             else:
                 logger.warning("config.json is not a valid JSON object")
     except Exception as e:
@@ -42,7 +46,7 @@ if CONFIG_JSON_PATH.exists():
 
 SMART_MODEL = os.getenv("SMART_MODEL", smart_model_val)
 FLASH_MODEL = os.getenv("FLASH_MODEL", flash_model_val)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", None)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", gemini_api_key_val)
 
 # Outbound Quiet Hours config (IST)
 WORK_HOURS_START = 9
