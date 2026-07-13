@@ -8,6 +8,18 @@ import pytz
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional
+import logging
+logger = logging.getLogger(__name__)
+
+on_time_change = []
+
+def fire_time_change():
+    for cb in on_time_change:
+        try:
+            cb()
+        except Exception as e:
+            logger.exception(f"Error in on_time_change callback: {e}")
+
 
 from app.config import IST, DATA_DIR
 
@@ -205,6 +217,7 @@ def api_set_time(payload: TimeSetRequest):
             detail="Datetime must be naive IST (no timezone offset). Expected YYYY-MM-DDTHH:MM:SS"
         )
     set_time(dt)
+    fire_time_change()
     return get_state()
 
 @router.post("/advance", response_model=dict)
@@ -221,10 +234,12 @@ def api_advance_time(payload: TimeAdvanceRequest):
             detail="Advance duration must be positive and greater than zero."
         )
     advance(total_seconds)
+    fire_time_change()
     return get_state()
 
 @router.post("/reset", response_model=dict)
 def api_reset_time():
     """Resets the simulated clock to match the current real time."""
     reset_to_real()
+    fire_time_change()
     return get_state()

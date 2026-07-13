@@ -95,13 +95,11 @@ def send_or_hold(channel_type: str, payload: dict, db: Session) -> dict:
         msg_id = _dispatch(channel_type, payload, db)
         return {"status": "sent", "message_id": msg_id}
 
-@router.post("/release")
-async def release_queued_messages(db: Session = Depends(get_db)):
+def release_queued_messages_sync(db: Session) -> dict:
     """
     Releases and sends all held messages whose scheduled release time is <= now_ist.
     """
     now = timeservice.now_ist()
-    # Find all held messages due to be released
     stmt = select(OutboundQueue).where(
         (OutboundQueue.status == "held") & (OutboundQueue.scheduled_release_at <= now)
     )
@@ -116,8 +114,6 @@ async def release_queued_messages(db: Session = Depends(get_db)):
             msg_id = None
 
         if msg_id is None:
-            # Bad payload or transport rejection: don't retry forever, and
-            # don't claim it was sent.
             row.status = "cancelled"
         else:
             row.status = "sent"
@@ -126,12 +122,13 @@ async def release_queued_messages(db: Session = Depends(get_db)):
             count += 1
 
     db.commit()
-    
-    # Get total remaining held
     stmt_rem = select(OutboundQueue).where(OutboundQueue.status == "held")
     remaining = len(db.scalars(stmt_rem).all())
-    
     return {"released": count, "remaining_held": remaining}
+
+@router.post("/release")
+async def release_queued_messages(db: Session = Depends(get_db)):
+    return release_queued_messages_sync(db)
 
 @router.get("/queue")
 async def list_outbound_queue(status: Optional[str] = Query(None), db: Session = Depends(get_db)):

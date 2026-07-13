@@ -4,18 +4,62 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
+import asyncio
+import sys
 
-from app.database import init_db
+from app.database import init_db, SessionLocal
 from app.config import PORT, HOST
 from app.integrations import team, slack, outlook, unified
-from app import timeservice, outbound
+from app import timeservice, outbound, scheduler, followups, brief
 from app.kb import api as kb_api
+
+async def background_tick_loop():
+    try:
+        while True:
+            await asyncio.sleep(30)
+            db = SessionLocal()
+            try:
+                scheduler.tick(db)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).exception(f"Error in background scheduler tick: {e}")
+            finally:
+                db.close()
+    except asyncio.CancelledError:
+        pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup database table structure automatically
     init_db()
-    yield
+    
+    if "pytest" not in sys.modules:
+        # Register time-change callback hook
+        def time_change_callback():
+            db = SessionLocal()
+            try:
+                scheduler.tick(db)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).exception(f"Error ticking scheduler on time change: {e}")
+            finally:
+                db.close()
+                
+        timeservice.on_time_change.append(time_change_callback)
+        
+        # Start live background tick loop
+        task = asyncio.create_task(background_tick_loop())
+        
+        yield
+        
+        # Clean shutdown
+        task.cancel()
+        try:
+            await task
+        except Exception:
+            pass
+    else:
+        yield
 
 app = FastAPI(
     title="Manager Assistant Integration Portal",
@@ -41,6 +85,9 @@ app.include_router(outlook.router)
 app.include_router(unified.router)
 app.include_router(outbound.router)
 app.include_router(kb_api.router)
+app.include_router(scheduler.router)
+app.include_router(followups.router)
+app.include_router(brief.router)
 
 # Ensure static files directory exists
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

@@ -30,6 +30,9 @@ class Project(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     manager_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")  # active, completed, on_hold
+    health: Mapped[str] = mapped_column(String(10), default="green")
+    health_reasons: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    health_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist(), onupdate=lambda: timeservice.now_ist())
 
@@ -67,6 +70,9 @@ class UnifiedMessage(Base):
 def init_db():
     from app.outbound import OutboundQueue  # Register with Base metadata
     from app.kb import models as kb_models # Register with Base metadata
+    from app.scheduler import ScheduledJob
+    from app.followups import Followup
+    from app.brief import Brief
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
@@ -76,6 +82,17 @@ def init_db():
         if "direction" not in columns:
             db.execute(text("ALTER TABLE unified_messages ADD COLUMN direction VARCHAR(10) DEFAULT 'inbound'"))
             db.commit()
+            
+        # Check if 'health' column exists in projects
+        res_proj = db.execute(text("PRAGMA table_info(projects)")).fetchall()
+        proj_cols = [row[1] for row in res_proj]
+        if "health" not in proj_cols:
+            db.execute(text("ALTER TABLE projects ADD COLUMN health VARCHAR(10) DEFAULT 'green'"))
+        if "health_reasons" not in proj_cols:
+            db.execute(text("ALTER TABLE projects ADD COLUMN health_reasons TEXT"))
+        if "health_updated_at" not in proj_cols:
+            db.execute(text("ALTER TABLE projects ADD COLUMN health_updated_at DATETIME"))
+        db.commit()
             
         harry = db.query(TeamMember).filter(TeamMember.id == "U_HARRY").first()
         if not harry:
@@ -101,6 +118,10 @@ def init_db():
         for m in members:
             from app.kb.models import get_or_create_entity
             get_or_create_entity(db, slug=f"person:{m.id}", type="person", name=m.name, ref_id=m.id)
+            
+        # Seed default background jobs
+        from app.scheduler import seed_default_jobs
+        seed_default_jobs(db)
     finally:
         db.close()
 
