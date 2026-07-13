@@ -356,3 +356,38 @@ def search_kb(q: str = Query(...), db: Session = Depends(get_db)):
         claims=claim_hits,
         timeline=timeline_hits
     )
+
+
+@router.post("/process")
+def process_unprocessed_messages(limit: int = Query(20), db: Session = Depends(get_db)):
+    from app.kb.extraction import extract_from_message
+    stmt = select(UnifiedMessage).where(UnifiedMessage.is_processed == False).order_by(UnifiedMessage.timestamp.asc()).limit(limit)
+    msgs = list(db.scalars(stmt).all())
+    
+    processed = 0
+    claims_created = 0
+    timeline_created = 0
+    skipped = 0
+    
+    for msg in msgs:
+        res = extract_from_message(db, msg)
+        processed += 1
+        if res.get("skipped"):
+            skipped += 1
+        else:
+            claims_created += res.get("claims_created", 0)
+            timeline_created += res.get("timeline_entries_created", 0)
+            
+    return {
+        "processed": processed,
+        "claims_created": claims_created,
+        "timeline_entries_created": timeline_created,
+        "skipped": skipped
+    }
+
+
+@router.post("/dream")
+def execute_dream_cycle(db: Session = Depends(get_db)):
+    from app.kb.synthesis import run_dream_cycle
+    stats = run_dream_cycle(db)
+    return stats
