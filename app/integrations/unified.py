@@ -29,6 +29,13 @@ def get_unified_messages(source: Optional[str] = None, limit: int = 100, db: Ses
     # Reverse to return in standard ascending chronological order for chat UI
     return list(reversed(result))
 
+@router.get("/api/messages/{id}", response_model=UnifiedMessageResponse)
+def get_unified_message_by_id(id: int, db: Session = Depends(get_db)):
+    msg = db.get(UnifiedMessage, id)
+    if not msg:
+        raise HTTPException(status_code=404, detail=f"Message with ID {id} not found")
+    return msg
+
 @router.post("/api/integrations/dashboard/message", response_model=UnifiedMessageResponse, status_code=status.HTTP_201_CREATED)
 def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
     """
@@ -223,3 +230,89 @@ def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(task)
     return task
+
+# ────────────────────────────────────────────────────────
+# PORTFOLIO VIEW METADATA AGGREGATION
+# ────────────────────────────────────────────────────────
+import re
+from typing import Dict
+from sqlalchemy import func
+from pydantic import BaseModel
+from app.kb.models import Entity, TimelineEntry, Conflict, slugify
+
+class PortfolioProjectResponse(BaseModel):
+    project_id: int
+    name: str
+    status: str
+    health: str
+    health_reasons: Optional[str] = None
+    conflict_count: int
+    task_counts: Dict[str, int]
+    last_activity_at: Optional[datetime] = None
+    compiled_truth_teaser: Optional[str] = None
+    entity_slug: str
+
+@router.get("/api/dashboard/portfolio", response_model=List[PortfolioProjectResponse])
+def get_dashboard_portfolio(db: Session = Depends(get_db)):
+    projects = db.scalars(select(Project).order_by(Project.id.asc())).all()
+    
+    resp = []
+    for p in projects:
+        slug = f"project:{slugify(p.name)}"
+        entity = db.scalars(select(Entity).where(Entity.slug == slug)).first()
+        
+        # 1. Open conflicts count
+        conflict_count = 0
+        compiled_truth_teaser = None
+        last_activity_at = None
+        
+        if entity:
+            conflict_count = db.scalar(
+                select(func.count(Conflict.id))
+                .where((Conflict.entity_id == entity.id) & (Conflict.status == "open"))
+            ) or 0
+            
+            # Compiled truth first sentence
+            if entity.compiled_truth:
+                teaser_match = re.split(r'(?<=[.!?])\s+', entity.compiled_truth)
+                if teaser_match:
+                    compiled_truth_teaser = teaser_match[0]
+                    
+            # Last activity
+            last_entry = db.scalars(
+                select(TimelineEntry)
+                .where(TimelineEntry.entity_id == entity.id)
+                .order_by(TimelineEntry.happened_at.desc(), TimelineEntry.id.desc())
+                .limit(1)
+            ).first()
+            if last_entry:
+                last_activity_at = last_entry.happened_at
+                
+        # 2. Task counts
+        tasks = db.scalars(select(Task).where(Task.project_id == p.id)).all()
+        task_counts = {"pending": 0, "in_progress": 0, "completed": 0, "blocked": 0}
+        for t in tasks:
+            if t.status in task_counts:
+                task_counts[t.status] += 1
+                
+        resp.append({
+            "project_id": p.id,
+            "name": p.name,
+            "status": p.status,
+            "health": p.health,
+            "health_reasons": p.health_reasons,
+            "conflict_count": conflict_count,
+            "task_counts": task_counts,
+            "last_activity_at": last_activity_at,
+            "compiled_truth_teaser": compiled_truth_teaser,
+            "entity_slug": slug
+        })
+        
+    # Sort: red first, then yellow, then green; secondary by last activity desc
+    def sort_key(item):
+        health_rank = {"red": 0, "yellow": 1, "green": 2}
+        hr = health_rank.get(item["health"].lower(), 3)
+        la_epoch = item["last_activity_at"].timestamp() if item["last_activity_at"] else 0
+        return (hr, -la_epoch)
+        
+    return sorted(resp, key=sort_key)

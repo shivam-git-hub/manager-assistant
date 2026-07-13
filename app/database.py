@@ -67,6 +67,15 @@ class UnifiedMessage(Base):
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     raw_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role: Mapped[str] = mapped_column(String(20))  # "user" | "assistant"
+    content: Mapped[str] = mapped_column(Text)
+    tool_trace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON-serialized trace list
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
 def init_db():
     from app.outbound import OutboundQueue  # Register with Base metadata
     from app.kb import models as kb_models # Register with Base metadata
