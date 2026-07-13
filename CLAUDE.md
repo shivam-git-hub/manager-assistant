@@ -127,7 +127,10 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   (`SIM_CLOCK_PATH` env for tests); endpoints `GET/POST /api/time[...]`.
   Wall-clock reads outside timeservice are forbidden (guard test).
 - LLM config: `SMART_MODEL`/`FLASH_MODEL`/`GEMINI_API_KEY` in `app/config.py`
-  (env → config.json → defaults); `config.json` is gitignored.
+  (env → config.json → defaults); `config.json` is gitignored. The KEY is read
+  from config.json too as of Step 6 review (`gemini_api_key`/`GEMINI_API_KEY`
+  accepted) — before that fix it was env-only despite the docs. Live-verified
+  models: `gemini-2.5-pro` (smart) / `gemini-2.5-flash` (flash).
 - FastAPI + SQLAlchemy 2.0 + SQLite (`data/db.sqlite`); simulator is
   `app/static/index.html` (Vue 3 CDN single file).
 - `unified_messages`: platform_msg_id UNIQUE (idempotency), `is_processed`
@@ -197,7 +200,11 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   (kb_search/get_entity/list_projects/list_tasks/update_task/get_conflicts/
   send_slack_dm/send_email/create_followup/get_current_time; auto-registered
   on import), `prompts.py` 3-tier system prompt (stable/context/volatile; sim
-  time + open-conflict COUNT in volatile), `harness.py::run_agent`. Loop honors
+  time + open-conflict COUNT in volatile), `harness.py::run_agent`. GOTCHA
+  (fixed at review): `tools.py` self-registers on import but nothing in the
+  runtime chain imported it — the registry was empty in the live app and Harry
+  hallucinated with no tools (tests passed only because test_agent.py imported
+  it). `harness.py` now imports `app.agent.tools`; keep that import. Loop honors
   the Gemini round-trip contract: echoes the assistant `tool_calls` turn before
   results, and each `{role:"tool", tool_call_id, name, content}` carries `name`
   (Gemini keys functionResponse by NAME). `app/agent/api.py`: `POST /api/chat`
