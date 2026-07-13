@@ -97,19 +97,12 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
        7b project detail (truth + hover citations) / conflicts / workload /
        briefs / chat dock (`prompts/step_07b_dashboard_views.md`)
        — done 2026-07-13
-8. [x] Meetings: MoM paste → meeting page + action items + propagation;
+8. [ ] Meetings: MoM paste → meeting page + action items + propagation;
        calendar; pre-meeting briefs (prompt: `prompts/step_08_meetings.md`)
-       — done 2026-07-13 (reviewed + fixed: MoM action-item extraction)
-9. [x] Workload/reassignment (leave marking) + training/newsletter
+9. [ ] Workload/reassignment (leave marking) + training/newsletter
        suggestions (prompt: `prompts/step_09_workload_training.md`)
-       — done 2026-07-13
 10. [ ] Seed demo scenario + end-to-end pass
         (prompt: `prompts/step_10_demo_seed.md`)
-11. [ ] Autonomous follow-ups — two-tier heartbeat (flash triage → smart agent
-        acts; agent notes; makes conflict-pings & health-nudges autonomous;
-        fixes followup lifecycle to play out over time-jumps). MUST land before
-        the final demo pass (re-run Step 10 after).
-        (prompt: `prompts/step_11_autonomous_followups.md`)
 
 All step prompts 4a–10 were pre-written on 2026-07-13 (before their
 predecessors were implemented); each carries a "the code wins" clause and
@@ -229,33 +222,6 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   project view shows severity+description but no per-claim source hover (demo
   Beat 4 narrates hovering both claims — fall back to the Claims Matrix);
   `send_or_hold` inside catch-up `morning_brief` reads the live sim time, not
-  the replayed 9am slot, so a multi-day jump can hold the teaser.
-- Live end-to-end verified against real Gemini on 2026-07-13 (key now in
-  `config.json`): extraction, synthesis with valid `[T#]` citations,
-  supersession, cross-channel deadlock→HIGH conflict, harness tool loop,
-  quiet-hours hold. Models `gemini-2.5-pro`/`gemini-2.5-flash`.
-- Meetings (Step 8): `app/kb/meetings.py` — `meetings`/`action_items` tables;
-  `POST /api/meetings`, `GET /api/meetings[?from&to]`, `GET /api/meetings/{id}`,
-  `PATCH`, `POST /api/meetings/{id}/mom`. MoM pipeline inserts a `source=manual`
-  inbound `unified_message` (genuine citation target), flash-extracts
-  decisions/action_items, creates real Tasks + DMs owners via `send_or_hold`,
-  propagates decisions to project entities as cited claims (holder=manager,
-  fact, w=1.0) + timeline entries. Pre-meeting brief = one-shot
-  `pre_meeting_brief:<id>` job at starts_at−30min (smart prose, DMs manager).
-  Agent tools list_meetings/get_meeting/create_meeting (in `app/agent/tools.py`).
-  REVIEW FIX: the MoM prompt didn't include the roster/project slugs, so the
-  model returned owner names ("Alice") not IDs ("U_ALICE") and every action
-  item was silently dropped — now injects roster + slugs + tolerant owner match.
-- KNOWN WARTS to fix (Step 8 / scheduler): pre-meeting-brief can DOUBLE-FIRE
-  (one-shot jobs aren't claimed atomically — the `time/set` hook `tick()` and
-  the 30s background loop can both run the same job before `enabled=False`
-  commits); `POST /api/messages/reset` does NOT clear `outbound_queue`,
-  `scheduled_jobs`, `meetings`, `action_items`, `chat_messages`, or `briefs`
-  (stale rows survive a reset — extend reset before the demo seed).
-- Autonomous follow-ups (Step 11, prompt written, NOT yet built): `Followup`
-  rows today are created ONLY by `POST /api/followups` + the `create_followup`
-  tool — both manual. Nothing auto-initiates from health/messages, so even the
-  demo's "Harry pings both on the conflict" (Beat 4) is currently unwired. Step
-  11 adds a two-tier heartbeat (flash triage → smart `run_agent` acts) + an
-  `agent_notes` memory + makes `run_followup_check` virtual-time-aware
-  (catchup "every") so ping→escalate plays out over a time jump.
+  the replayed 9am slot, so a multi-day jump can hold the teaser. Live manual
+  checks (real `GEMINI_API_KEY` in gitignored `config.json`) were NOT run at
+  review — no key present in this environment; verify before the demo.
