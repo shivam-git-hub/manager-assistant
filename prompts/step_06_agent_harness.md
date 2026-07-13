@@ -81,9 +81,14 @@ teach USAGE, not just what it is. All read tools reuse Step 3's query logic
   -> dict` (~150 lines, the Hermes loop essence):
   1. Build system prompt (tiers) + history + user message.
   2. Loop while budget: `client.chat(SMART_MODEL, messages, tools=defs)` →
-     if `tool_calls`: execute each in order via registry (append
-     `{"role":"tool", "tool_call_id", "content"}` results), continue; else →
-     final text.
+     if `tool_calls`: FIRST append the assistant message itself
+     (`{"role":"assistant", "content", "tool_calls"}`) — Gemini requires its
+     own functionCall turn echoed back before any results, or the next
+     request 400s — THEN execute each call in order via the registry,
+     appending one `{"role":"tool", "tool_call_id", "name", "content"}` per
+     call (`name` rides along because Gemini's functionResponse is keyed by
+     function NAME, not id — the client needs it for the conversion);
+     continue. No `tool_calls` → final text.
   3. Budget exhausted → return best-effort text ("I ran out of steps…").
   4. Return `{"reply": str, "tool_trace": [{"name", "args", "result_preview"}]}`.
 
@@ -112,9 +117,10 @@ final text).
 3. Harness happy path: script [call kb_search → final answer citing result]
    → reply correct, trace has 1 tool, both messages persisted with sim
    timestamps.
-4. Tool execution order preserved for multi-tool responses; tool results
-   arrive as role:"tool" with matching ids (inspect messages sent to fake on
-   call 2).
+4. Tool execution order preserved for multi-tool responses; call 2's message
+   list contains the echoed assistant tool_calls message FOLLOWED BY the
+   role:"tool" results with matching ids and names (inspect messages sent to
+   the fake).
 5. Volatile tier contains current sim time: set clock to a known value,
    inspect the system prompt the fake receives.
 6. `send_slack_dm` tool at 23:00 sim → result says held with release time;

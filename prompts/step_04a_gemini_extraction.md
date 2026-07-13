@@ -54,6 +54,11 @@ fine — vendoring and trimming the original is also fine if easier):
   `functionDeclarations` with `sanitize_gemini_schema()` (strip `$schema`,
   `additionalProperties`, `title`, etc. recursively — allowed-keys set, per
   hermes_index). Translate the response back (functionCall parts → tool_calls).
+  Round-trip contract (Step 6's harness relies on it): an assistant message
+  carrying `tool_calls` → model-role content with functionCall parts; a
+  `{"role":"tool", "tool_call_id", "name", "content"}` message → a
+  functionResponse part keyed by `name` (Gemini ignores ids — name is what
+  matters).
 - **Always send `maxOutputTokens`** (Gemini applies a low default otherwise —
   known quirk). `json_mode=True` sets `responseMimeType: "application/json"`.
 - Retries: on 429/5xx, up to 3 attempts with 2s/4s/8s sleeps — BUT wall-clock
