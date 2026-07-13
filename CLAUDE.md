@@ -80,21 +80,31 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
        render (prompt: `prompts/step_02_harry_outbound.md`) — done 2026-07-12
 3. [x] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
        (prompt: `prompts/step_03_kb_schema.md`) — done 2026-07-13
-4. [ ] Gemini client + flash claim extraction (4a); dream-cycle synthesis +
-       contradiction probe (4b)
+4. [ ] Gemini client + flash claim extraction (4a:
+       `prompts/step_04a_gemini_extraction.md`); dream-cycle synthesis +
+       contradiction probe (4b: `prompts/step_04b_dream_synthesis.md`)
 5. [ ] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
-       morning brief, quiet-hours release
+       morning brief, quiet-hours release (prompt: `prompts/step_05_scheduler.md`)
 6. [ ] Agent harness + tools + real-time dashboard chat (Hermes indexed:
        `spec/research/hermes_index.md` — vendor its Gemini adapter, copy
        IterationBudget verbatim, follow its tool-registry pattern)
+       (prompt: `prompts/step_06_agent_harness.md`)
 7. [ ] Project Tracker Dashboard — Vue 3 CDN, code split across plain JS/CSS
-       files, hand-built design system (must NOT look AI-generated). Views:
-       portfolio health, project detail (truth + hover citations, milestones,
-       tasks), conflicts panel, workload, morning-brief inbox, Harry chat dock
+       files, hand-built design system (must NOT look AI-generated). Split:
+       7a shell/design-system/portfolio (`prompts/step_07a_dashboard_shell.md`),
+       7b project detail (truth + hover citations) / conflicts / workload /
+       briefs / chat dock (`prompts/step_07b_dashboard_views.md`)
 8. [ ] Meetings: MoM paste → meeting page + action items + propagation;
-       calendar; pre-meeting briefs
-9. [ ] Workload/reassignment (leave marking) + training/newsletter suggestions
-10. [ ] Seed demo scenario + demo script + end-to-end pass
+       calendar; pre-meeting briefs (prompt: `prompts/step_08_meetings.md`)
+9. [ ] Workload/reassignment (leave marking) + training/newsletter
+       suggestions (prompt: `prompts/step_09_workload_training.md`)
+10. [ ] Seed demo scenario + end-to-end pass
+        (prompt: `prompts/step_10_demo_seed.md`)
+
+All step prompts 4a–10 were pre-written on 2026-07-13 (before their
+predecessors were implemented); each carries a "the code wins" clause and
+gets adjusted at review time if reality diverged. Demo delivery script:
+`spec/demo_script.md` (refine at Step 10).
 
 ## Demo storyline (~8 min)
 
