@@ -669,6 +669,66 @@ def create_meeting_handler(
         }
     }
 
+
+def mark_leave_handler(db: Session, member_id: str, starts_on: str, ends_on: str, reason: Optional[str] = None) -> Dict[str, Any]:
+    from app.kb.workload import create_leave, LeaveCreate
+    try:
+        parsed_starts = date.fromisoformat(starts_on)
+        parsed_ends = date.fromisoformat(ends_on)
+    except ValueError:
+        return {"error": "Invalid date format. Must be YYYY-MM-DD"}
+        
+    payload = LeaveCreate(
+        member_id=member_id,
+        starts_on=parsed_starts,
+        ends_on=parsed_ends,
+        reason=reason
+    )
+    try:
+        res = create_leave(payload, db)
+        return {
+            "success": True,
+            "message": f"Leave marked successfully for {member_id} from {starts_on} to {ends_on}.",
+            "leave_id": res.id
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def list_reassignment_suggestions_handler(db: Session, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    from app.kb.workload import list_reassignments
+    res = list_reassignments(status=status, db=db)
+    return [
+        {
+            "id": r.id,
+            "leave_id": r.leave_id,
+            "task_id": r.task_id,
+            "from_member_id": r.from_member_id,
+            "to_member_id": r.to_member_id,
+            "rationale": r.rationale,
+            "status": r.status
+        }
+        for r in res
+    ]
+
+
+def approve_reassignment_handler(db: Session, suggestion_id: int) -> Dict[str, Any]:
+    from app.kb.workload import approve_reassignment as approve_reassignment_internal
+    try:
+        res = approve_reassignment_internal(suggestion_id, db)
+        return {
+            "success": True,
+            "message": f"Reassignment suggestion {suggestion_id} approved and task reassigned.",
+            "suggestion": {
+                "id": res.id,
+                "task_id": res.task_id,
+                "to_member_id": res.to_member_id,
+                "status": res.status
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 LIST_MEETINGS_SCHEMA = {
     "name": "list_meetings",
     "description": "Lists calendar entries for the range of dates. Helpful to retrieve what meetings are scheduled or completed.",
@@ -730,6 +790,62 @@ CREATE_MEETING_SCHEMA = {
     }
 }
 
+MARK_LEAVE_SCHEMA = {
+    "name": "mark_leave",
+    "description": "Marks a team member on leave for a specified date range and automatically drafts reassignment suggestions for their upcoming or overdue tasks.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "member_id": {
+                "type": "string",
+                "description": "The unique ID of the team member going on leave."
+            },
+            "starts_on": {
+                "type": "string",
+                "description": "The start date in YYYY-MM-DD format."
+            },
+            "ends_on": {
+                "type": "string",
+                "description": "The end date in YYYY-MM-DD format."
+            },
+            "reason": {
+                "type": "string",
+                "description": "Optional reason for the leave."
+            }
+        },
+        "required": ["member_id", "starts_on", "ends_on"]
+    }
+}
+
+LIST_REASSIGNMENT_SUGGESTIONS_SCHEMA = {
+    "name": "list_reassignment_suggestions",
+    "description": "Lists pending reassignment proposals generated from team member leaves.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "description": "Optional filter by status, e.g., 'suggested', 'approved', 'rejected'."
+            }
+        }
+    }
+}
+
+APPROVE_REASSIGNMENT_SCHEMA = {
+    "name": "approve_reassignment",
+    "description": "Approves a proposed task reassignment by its suggestion ID. WARNING: Only call this tool when explicitly instructed by the manager.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "suggestion_id": {
+                "type": "integer",
+                "description": "The integer ID of the reassignment suggestion to approve."
+            }
+        },
+        "required": ["suggestion_id"]
+    }
+}
+
 # -----------------------------------------------------------------------------
 # Tool Registration
 # -----------------------------------------------------------------------------
@@ -750,6 +866,11 @@ def register_tools() -> None:
     registry.register("list_meetings", LIST_MEETINGS_SCHEMA, list_meetings_handler)
     registry.register("get_meeting", GET_MEETING_SCHEMA, get_meeting_handler)
     registry.register("create_meeting", CREATE_MEETING_SCHEMA, create_meeting_handler)
+
+    # Workload Tools
+    registry.register("mark_leave", MARK_LEAVE_SCHEMA, mark_leave_handler)
+    registry.register("list_reassignment_suggestions", LIST_REASSIGNMENT_SUGGESTIONS_SCHEMA, list_reassignment_suggestions_handler)
+    registry.register("approve_reassignment", APPROVE_REASSIGNMENT_SCHEMA, approve_reassignment_handler)
 
 # Auto register on import
 register_tools()

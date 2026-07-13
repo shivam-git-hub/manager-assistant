@@ -100,8 +100,9 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
 8. [x] Meetings: MoM paste → meeting page + action items + propagation;
        calendar; pre-meeting briefs (prompt: `prompts/step_08_meetings.md`)
        — done 2026-07-13 (reviewed + fixed: MoM action-item extraction)
-9. [ ] Workload/reassignment (leave marking) + training/newsletter
+9. [x] Workload/reassignment (leave marking) + training/newsletter
        suggestions (prompt: `prompts/step_09_workload_training.md`)
+       — done 2026-07-13
 10. [ ] Seed demo scenario + end-to-end pass
         (prompt: `prompts/step_10_demo_seed.md`)
 11. [ ] Autonomous follow-ups — two-tier heartbeat (flash triage → smart agent

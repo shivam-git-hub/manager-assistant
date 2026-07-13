@@ -101,6 +101,37 @@ class ActionItem(Base):
     due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
 
+class Leave(Base):
+    __tablename__ = "leaves"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
+    starts_on: Mapped[date] = mapped_column(Date)
+    ends_on: Mapped[date] = mapped_column(Date)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
+class ReassignmentSuggestion(Base):
+    __tablename__ = "reassignment_suggestions"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    leave_id: Mapped[int] = mapped_column(Integer, ForeignKey("leaves.id"))
+    task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"))
+    from_member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
+    to_member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
+    rationale: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="suggested")  # "suggested", "approved", "rejected"
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+class Digest(Base):
+    __tablename__ = "digests"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    week_start: Mapped[date] = mapped_column(Date, unique=True)
+    content: Mapped[str] = mapped_column(Text)  # JSON-serialized string
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
 def init_db():
     from app.outbound import OutboundQueue  # Register with Base metadata
     from app.kb import models as kb_models # Register with Base metadata

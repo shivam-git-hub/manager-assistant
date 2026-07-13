@@ -37,9 +37,23 @@ def get_next_9am(now: datetime) -> datetime:
         return today_9am
     return today_9am + timedelta(days=1)
 
+def get_next_monday_9_30(now: datetime) -> datetime:
+    days_ahead = 0 - now.weekday()
+    if days_ahead < 0:
+        days_ahead += 7
+    elif days_ahead == 0:
+        today_9_30 = datetime(now.year, now.month, now.day, 9, 30, 0)
+        if now >= today_9_30:
+            days_ahead += 7
+        else:
+            return today_9_30
+            
+    target_date = now.date() + timedelta(days=days_ahead)
+    return datetime(target_date.year, target_date.month, target_date.day, 9, 30, 0)
+
 def seed_default_jobs(db: Session) -> None:
     """
-    Seeds the 5 default background cron jobs into scheduled_jobs if missing.
+    Seeds the default background cron jobs into scheduled_jobs if missing.
     """
     now = timeservice.now_ist()
     
@@ -73,6 +87,12 @@ def seed_default_jobs(db: Session) -> None:
             "interval_seconds": 86400, # 24 hours (daily)
             "catchup_policy": "every",
             "next_due_at": get_next_9am(now)
+        },
+        {
+            "job_type": "weekly_digest",
+            "interval_seconds": 604800, # 1 week
+            "catchup_policy": "once",
+            "next_due_at": get_next_monday_9_30(now)
         }
     ]
     
@@ -204,3 +224,10 @@ def lazy_pre_meeting_brief(db, job_type=None):
     return pre_meeting_brief_handler(db, job_type)
 
 register_handler("pre_meeting_brief", lazy_pre_meeting_brief)
+
+# Weekly Digest handler
+def lazy_weekly_digest(db, job_type=None):
+    from app.kb.workload import run_weekly_digest
+    return run_weekly_digest(db)
+
+register_handler("weekly_digest", lazy_weekly_digest)
