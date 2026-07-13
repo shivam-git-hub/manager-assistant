@@ -82,4 +82,12 @@ def get_or_create_entity(db: Session, slug: str, type: str, name: str, ref_id: O
         db.add(entity)
         db.commit()
         db.refresh(entity)
+    elif entity.name != name or (ref_id is not None and entity.ref_id != ref_id):
+        # Callers pass the current display name (e.g. team-member rename) —
+        # keep the entity page in sync instead of freezing the first value.
+        entity.name = name
+        if ref_id is not None:
+            entity.ref_id = ref_id
+        db.commit()
+        db.refresh(entity)
     return entity

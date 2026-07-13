@@ -78,8 +78,8 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
 1. [x] Sim-time service + smart/flash model config (spec/feature_04) — done 2026-07-12
 2. [x] Harry identity + outbound send path + quiet-hours queue + simulator
        render (prompt: `prompts/step_02_harry_outbound.md`) — done 2026-07-12
-3. [ ] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
-       (prompt: `prompts/step_03_kb_schema.md`)
+3. [x] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
+       (prompt: `prompts/step_03_kb_schema.md`) — done 2026-07-13
 4. [ ] Gemini client + flash claim extraction (4a); dream-cycle synthesis +
        contradiction probe (4b)
 5. [ ] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
@@ -133,5 +133,23 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   cleaned body only (no "Subject:" prefix).
 - Simulator payloads MUST mirror real service shapes (Slack Events API,
   MS Graph). No processing logic in the simulator — collectors/KB only.
+- KB (Step 3): `app/kb/models.py` — `entities` (slug UNIQUE like
+  `project:phoenix` / `person:U_ALICE`, `compiled_truth` + `truth_updated_at`),
+  `timeline_entries` (APPEND-ONLY, `source_message_id` FK = citation target),
+  `attributed_claims` (holder, kind ∈ fact/status/commitment/blocker/opinion,
+  weight 0-1, `superseded_by` chain + `active`), `conflicts` (claim pairs,
+  open/resolved/dismissed; PATCH is the ONLY way to close — never auto).
+  Router `app/kb/api.py` at `/api/kb/*`: entities list/create/page, timeline
+  append+list (newest first, id-desc tiebreak), claims create/list/supersede
+  (409 if already superseded), conflicts create/list/PATCH, `GET /api/kb/search?q=`
+  (LIKE, grouped entities/claims/timeline, capped 20 each).
+- Entity collectors are deterministic: `get_or_create_entity()` +
+  `slugify()` in `app/kb/models.py` (syncs name/ref_id on change — rename-safe);
+  auto-wired into `POST /api/projects` (`project:<slugified-name>`) and
+  `POST /api/team` (`person:<id>`); `init_db()` backfills both.
+- Citation convention: compiled truth carries inline `[T<timeline_entry_id>]`
+  markers; dashboard resolves marker → timeline entry → source message.
+- `POST /api/messages/reset` wipes messages/projects/tasks AND all four KB
+  tables, then re-backfills person entities (incl. Harry).
 - Tests: `tests/conftest.py` seeds Harry; `client` fixture's lifespan still
   runs `init_db()` against the real `data/db.sqlite` (known wart, demo-OK).

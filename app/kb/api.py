@@ -71,9 +71,9 @@ def get_entity_page(slug: str, db: Session = Depends(get_db)):
     timeline = db.scalars(
         select(TimelineEntry)
         .where(TimelineEntry.entity_id == entity.id)
-        .order_by(TimelineEntry.happened_at.desc())
+        .order_by(TimelineEntry.happened_at.desc(), TimelineEntry.id.desc())
     ).all()
-    
+
     claims = db.scalars(
         select(AttributedClaim)
         .where((AttributedClaim.entity_id == entity.id) & (AttributedClaim.active == True))
@@ -132,7 +132,7 @@ def get_timeline(slug: str, limit: int = Query(50), db: Session = Depends(get_db
     timeline = db.scalars(
         select(TimelineEntry)
         .where(TimelineEntry.entity_id == entity.id)
-        .order_by(TimelineEntry.happened_at.desc())
+        .order_by(TimelineEntry.happened_at.desc(), TimelineEntry.id.desc())
         .limit(limit)
     ).all()
     return list(timeline)
