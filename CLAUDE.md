@@ -274,6 +274,17 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   heartbeat 500'd live (tests passed — they don't hit the network). Fixed to
   never strip property NAMES under `properties` (regression test in
   test_extraction.py). If a new tool 400s the loop, suspect this again.
+- SECOND live-only Gemini-payload bug (found 2026-07-13 during live demo prep,
+  fixed same day): `messages_to_gemini_contents` set `functionResponse.response`
+  to the raw parsed tool result, but Gemini requires that field to be a STRUCT
+  (object). Any tool returning a JSON ARRAY (e.g. `get_conflicts` → `[{...}]`)
+  produced `response: [...]` → Gemini 400 `"Proto field is not repeating, cannot
+  start list"` on the SECOND turn (the tool-result echo), so the first model turn
+  succeeded and then chat/heartbeat 500'd. Fixed in `gemini_client.py`: wrap any
+  non-dict result as `{"result": <value>}` before sending (regression test in
+  test_extraction.py test_01). Same failure family as the sanitizer bug —
+  live-only, tests don't hit the network. Symptom to watch: chat replies error
+  only when Harry actually calls a list-returning tool.
 - GOTCHA (Step 11 review): `seed_default_jobs` was insert-if-missing only, so
   policy/interval changes never reached the persistent `data/db.sqlite` (the
   followup_check "every" flip was inert on the demo DB — only fresh test DBs saw

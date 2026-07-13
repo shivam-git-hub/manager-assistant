@@ -99,6 +99,21 @@ def test_01_client_unit_conversions():
     assert "title" not in sanitized["properties"]["title"]  # annotation stripped
     assert all(r in sanitized["properties"] for r in sanitized["required"])
 
+    # Regression: a tool result that is a JSON array (e.g. get_conflicts) must be
+    # wrapped in an object — Gemini's functionResponse.response is a Struct, and a
+    # bare list 400s the whole turn ("Proto field is not repeating, cannot start
+    # list"). This broke every live tool call until fixed.
+    tool_msgs = [
+        {"role": "tool", "name": "get_conflicts", "content": '[{"id": 1}, {"id": 2}]'},
+        {"role": "tool", "name": "get_entity", "content": '{"slug": "project:phoenix"}'},
+    ]
+    tcontents, _ = messages_to_gemini_contents(tool_msgs)
+    list_resp = tcontents[0]["parts"][0]["functionResponse"]["response"]
+    assert isinstance(list_resp, dict)  # list wrapped, never a bare array
+    assert list_resp == {"result": [{"id": 1}, {"id": 2}]}
+    dict_resp = tcontents[1]["parts"][0]["functionResponse"]["response"]
+    assert dict_resp == {"slug": "project:phoenix"}  # dict passed through unchanged
+
 def test_02_client_retry():
     """
     2. Client retry: fake transport raises a 429-ish error twice then succeeds ->

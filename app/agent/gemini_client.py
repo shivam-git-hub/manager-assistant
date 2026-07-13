@@ -72,10 +72,17 @@ def messages_to_gemini_contents(messages: List[Dict[str, Any]]) -> tuple[List[Di
                     }
                 })
         elif role == "tool":
+            # Gemini's functionResponse.response must be a STRUCT (object), never a
+            # list/scalar. Tools that return a JSON array (e.g. get_conflicts) would
+            # otherwise 400 the whole request ("Proto field is not repeating, cannot
+            # start list"). Wrap any non-dict result in an object.
+            resp_value = json_parse_if_string(content)
+            if not isinstance(resp_value, dict):
+                resp_value = {"result": resp_value}
             parts.append({
                 "functionResponse": {
                     "name": msg.get("name"),
-                    "response": json_parse_if_string(content)
+                    "response": resp_value
                 }
             })
         else:
