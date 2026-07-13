@@ -381,6 +381,14 @@ def run_seeding(db: Session) -> dict:
     # Trigger final dream cycle to establish starting presentation state
     run_dream_cycle(db)
 
+    # Deterministically evaluate project health so Phoenix reflects its blocked
+    # task + open conflict RIGHT NOW. run_health_eval is pure scoring (no LLM);
+    # without this call the seed's health stays at its "green" default until a
+    # background health_eval tick happens to fire, and the checklist below would
+    # report phoenix_degraded=False on a freshly-seeded, not-yet-ticked server.
+    from app.health import run_health_eval
+    run_health_eval(db)
+
     # Build morning brief
     from app.brief import generate_brief_sync
     generate_brief_sync(db, date(2026, 7, 16))

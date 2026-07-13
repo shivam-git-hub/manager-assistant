@@ -34,11 +34,12 @@ def get_dm_channel_id(user_a: str, user_b: str) -> str:
     return f"DM_{sorted_users[0]}_{sorted_users[1]}"
 
 
-def run_followup_check(db: Session) -> dict:
+def run_followup_check(db: Session, now: Optional[datetime] = None) -> dict:
     """
     Automated check of open followups: answers detection, pinging due items, and escalation.
     """
-    now = timeservice.now_ist()
+    if now is None:
+        now = timeservice.now_ist()
     
     # 1. Answer Detection
     open_pings = list(db.scalars(

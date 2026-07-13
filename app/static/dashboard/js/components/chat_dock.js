@@ -22,7 +22,7 @@ export default {
     methods: {
         async fetchChatHistory() {
             try {
-                const res = await fetch('api/chat/history');
+                const res = await fetch('../api/chat/history');
                 if (res.ok) {
                     this.messages = await res.json();
                     this.scrollToBottom();
@@ -48,7 +48,7 @@ export default {
             this.scrollToBottom();
             
             try {
-                const res = await fetch('api/chat', {
+                const res = await fetch('../api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
@@ -67,7 +67,7 @@ export default {
         async clearHistory() {
             if (confirm('Are you sure you want to clear Harry\'s chat history?')) {
                 try {
-                    const res = await fetch('api/chat/history', { method: 'DELETE' });
+                    const res = await fetch('../api/chat/history', { method: 'DELETE' });
                     if (res.ok) {
                         this.messages = [];
                     }

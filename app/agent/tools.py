@@ -301,6 +301,30 @@ def create_followup_handler(
     else:
         parsed_due = timeservice.now_ist() + timedelta(hours=24)
         
+    # Hard duplication guard
+    stmt = select(Followup).where(
+        and_(
+            Followup.status == "open",
+            Followup.target_member_id == member_id
+        )
+    )
+    existing = db.scalars(stmt).all()
+    for f in existing:
+        same_entity = entity_slug is not None and f.entity_slug == entity_slug
+        same_question = f.question.strip().lower() == question.strip().lower()
+        if same_entity or same_question:
+            return {
+                "success": True,
+                "message": "Already following up on this item. No new follow-up was created.",
+                "followup": {
+                    "id": f.id,
+                    "target_member_id": f.target_member_id,
+                    "question": f.question,
+                    "due_at": f.due_at,
+                    "status": f.status
+                }
+            }
+
     followup = Followup(
         entity_slug=entity_slug,
         target_member_id=member_id,
@@ -729,6 +753,50 @@ def approve_reassignment_handler(db: Session, suggestion_id: int) -> Dict[str, A
     except Exception as e:
         return {"error": str(e)}
 
+
+def record_note_handler(
+    db: Session,
+    kind: str,
+    content: str,
+    subject_ref: Optional[str] = None
+) -> Dict[str, Any]:
+    from app.agent.notes import record_note
+    try:
+        note = record_note(db, kind=kind, content=content, subject_ref=subject_ref)
+        return {
+            "success": True,
+            "message": f"Note recorded successfully under ID {note.id}."
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def list_open_followups_handler(
+    db: Session,
+    target_member_id: Optional[str] = None
+) -> Dict[str, Any]:
+    try:
+        stmt = select(Followup).where(Followup.status == "open")
+        if target_member_id:
+            stmt = stmt.where(Followup.target_member_id == target_member_id)
+        followups = db.scalars(stmt).all()
+        return {
+            "success": True,
+            "followups": [
+                {
+                    "id": f.id,
+                    "target_member_id": f.target_member_id,
+                    "question": f.question,
+                    "entity_slug": f.entity_slug,
+                    "due_at": str(f.due_at),
+                    "ping_count": f.ping_count
+                } for f in followups
+            ]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 LIST_MEETINGS_SCHEMA = {
     "name": "list_meetings",
     "description": "Lists calendar entries for the range of dates. Helpful to retrieve what meetings are scheduled or completed.",
@@ -846,6 +914,43 @@ APPROVE_REASSIGNMENT_SCHEMA = {
     }
 }
 
+RECORD_NOTE_SCHEMA = {
+    "name": "record_note",
+    "description": "Records a persistent memory note about an action, observation, or decision made by the agent.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "kind": {
+                "type": "string",
+                "description": "The category of note, e.g., 'followup_decision', 'observation', 'escalation'."
+            },
+            "content": {
+                "type": "string",
+                "description": "The details of the note or action taken."
+            },
+            "subject_ref": {
+                "type": "string",
+                "description": "Optional reference to a subject, e.g., 'person:U_BOB', 'conflict:3', 'project:phoenix', 'followup:5'."
+            }
+        },
+        "required": ["kind", "content"]
+    }
+}
+
+LIST_OPEN_FOLLOWUPS_SCHEMA = {
+    "name": "list_open_followups",
+    "description": "Queries currently open follow-up checkpoints stored in the database.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "target_member_id": {
+                "type": "string",
+                "description": "Optional team member ID to filter follow-ups by."
+            }
+        }
+    }
+}
+
 # -----------------------------------------------------------------------------
 # Tool Registration
 # -----------------------------------------------------------------------------
@@ -861,6 +966,8 @@ def register_tools() -> None:
     registry.register("send_email", SEND_EMAIL_SCHEMA, send_email_handler)
     registry.register("create_followup", CREATE_FOLLOWUP_SCHEMA, create_followup_handler)
     registry.register("get_current_time", GET_CURRENT_TIME_SCHEMA, get_current_time_handler)
+    registry.register("record_note", RECORD_NOTE_SCHEMA, record_note_handler)
+    registry.register("list_open_followups", LIST_OPEN_FOLLOWUPS_SCHEMA, list_open_followups_handler)
     
     # Meetings Tools
     registry.register("list_meetings", LIST_MEETINGS_SCHEMA, list_meetings_handler)

@@ -73,6 +73,12 @@ def seed_default_jobs(db: Session) -> None:
         {
             "job_type": "followup_check",
             "interval_seconds": 3600,  # 1 hour
+            "catchup_policy": "every",
+            "next_due_at": now
+        },
+        {
+            "job_type": "heartbeat",
+            "interval_seconds": 7200,  # 2 hours
             "catchup_policy": "once",
             "next_due_at": now
         },
@@ -108,7 +114,14 @@ def seed_default_jobs(db: Session) -> None:
                 enabled=True
             )
             db.add(job)
-            
+        else:
+            # Reconcile static DEFINITION fields on redeploy so policy/interval changes
+            # (e.g. Step 11 flipping followup_check to catchup="every") actually take
+            # effect on a persistent DB. Runtime state (next_due_at / last_run_at /
+            # enabled) is intentionally left untouched.
+            existing.catchup_policy = item["catchup_policy"]
+            existing.interval_seconds = item["interval_seconds"]
+
     db.commit()
 
 def tick(db: Session) -> dict:
@@ -214,9 +227,15 @@ from app.brief import run_morning_brief
 
 register_handler("dream_cycle", lambda db, vt=None: run_dream_cycle(db))
 register_handler("quiet_release", lambda db, vt=None: release_queued_messages_sync(db))
-register_handler("followup_check", lambda db, vt=None: run_followup_check(db))
+register_handler("followup_check", lambda db, vt=None: run_followup_check(db, now=vt))
 register_handler("health_eval", lambda db, vt=None: run_health_eval(db))
 register_handler("morning_brief", lambda db, vt=None: run_morning_brief(db, vt))
+
+def lazy_heartbeat(db, vt=None):
+    from app.agent.heartbeat import run_heartbeat
+    return run_heartbeat(db)
+
+register_handler("heartbeat", lazy_heartbeat)
 
 # Meetings handlers
 def lazy_pre_meeting_brief(db, job_type=None):

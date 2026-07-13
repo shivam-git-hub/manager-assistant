@@ -38,7 +38,7 @@ export default {
             this.loading = true;
             try {
                 // 1. Fetch meeting detailed detail
-                const res = await fetch(`api/meetings/${this.id}`);
+                const res = await fetch(`../api/meetings/${this.id}`);
                 if (!res.ok) throw new Error('Meeting not found');
                 const data = await res.json();
                 
@@ -52,7 +52,7 @@ export default {
                 }
                 
                 // 2. Fetch meeting Entity page logs (briefs, summaries)
-                const entRes = await fetch(`api/kb/entities/${this.entitySlug}`);
+                const entRes = await fetch(`../api/kb/entities/${this.entitySlug}`);
                 if (entRes.ok) {
                     const entData = await entRes.json();
                     this.timeline = entData.timeline || [];
@@ -76,7 +76,7 @@ export default {
             
             this.processing = true;
             try {
-                const res = await fetch(`api/meetings/${this.id}/mom`, {
+                const res = await fetch(`../api/meetings/${this.id}/mom`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text: this.momDraft })

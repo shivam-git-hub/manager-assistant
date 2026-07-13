@@ -83,6 +83,22 @@ def test_01_client_unit_conversions():
     assert "name" in good_schema["properties"]
     assert "title" not in good_schema["properties"]["name"]
 
+    # Regression: a property NAMED "title" (e.g. create_meeting) must survive — the
+    # sanitizer strips "title" as a schema annotation, never as a property name, or
+    # `required` references a missing property and Gemini 400s the whole tools payload.
+    meeting_schema = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "title": "Meeting title"},
+            "attendees": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["title", "attendees"],
+    }
+    sanitized = sanitize_gemini_schema(meeting_schema)
+    assert "title" in sanitized["properties"]  # property name preserved
+    assert "title" not in sanitized["properties"]["title"]  # annotation stripped
+    assert all(r in sanitized["properties"] for r in sanitized["required"])
+
 def test_02_client_retry():
     """
     2. Client retry: fake transport raises a 429-ish error twice then succeeds ->

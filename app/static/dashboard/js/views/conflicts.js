@@ -15,7 +15,7 @@ export default {
         async fetchConflicts() {
             this.loading = true;
             try {
-                const res = await fetch('api/kb/conflicts?status=open');
+                const res = await fetch('../api/kb/conflicts?status=open');
                 if (res.ok) {
                     this.conflicts = await res.json();
                 }
@@ -31,7 +31,7 @@ export default {
             if (note === null) return;
             
             try {
-                const res = await fetch(`api/kb/conflicts/${conflictId}`, {
+                const res = await fetch(`../api/kb/conflicts/${conflictId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

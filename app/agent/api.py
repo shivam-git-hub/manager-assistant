@@ -133,3 +133,32 @@ def clear_chat_history(db: Session = Depends(get_db)):
     db.execute(delete(ChatMessage))
     db.commit()
     return {"success": True, "message": "Chat history cleared successfully."}
+
+
+heartbeat_router = APIRouter(tags=["Agent Heartbeat"])
+
+@heartbeat_router.post("/api/heartbeat/run")
+def force_heartbeat(db: Session = Depends(get_db)):
+    """
+    Manually triggers the agent heartbeat check (Triage and Action loop).
+    """
+    from app.agent.heartbeat import run_heartbeat
+    return run_heartbeat(db)
+
+@heartbeat_router.get("/api/agent/notes")
+def get_agent_notes(limit: int = Query(30), db: Session = Depends(get_db)):
+    """
+    Retrieves a chronological list of recent agent memory notes.
+    """
+    from app.agent.notes import recent_notes
+    notes = recent_notes(db, limit=limit)
+    return [
+        {
+            "id": n.id,
+            "created_at": n.created_at,
+            "kind": n.kind,
+            "subject_ref": n.subject_ref,
+            "content": n.content
+        } for n in notes
+    ]
+

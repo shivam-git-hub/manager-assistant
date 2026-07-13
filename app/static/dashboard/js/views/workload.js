@@ -85,12 +85,12 @@ export default {
             this.loading = true;
             try {
                 const [teamRes, taskRes, followupRes, leavesRes, reassignRes, digestsRes] = await Promise.all([
-                    fetch('api/team'),
-                    fetch('api/tasks'),
-                    fetch('api/followups?status=open'),
-                    fetch('api/workload/leaves'),
-                    fetch('api/workload/reassignments?status=suggested'),
-                    fetch('api/workload/digests?limit=4')
+                    fetch('../api/team'),
+                    fetch('../api/tasks'),
+                    fetch('../api/followups?status=open'),
+                    fetch('../api/workload/leaves'),
+                    fetch('../api/workload/reassignments?status=suggested'),
+                    fetch('../api/workload/digests?limit=4')
                 ]);
                 
                 if (teamRes.ok) this.members = await teamRes.json();
@@ -113,7 +113,7 @@ export default {
             this.formError = '';
             this.formSuccess = '';
             try {
-                const res = await fetch('api/workload/leaves', {
+                const res = await fetch('../api/workload/leaves', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(this.leaveForm)
@@ -138,7 +138,7 @@ export default {
             if (!confirmed) return;
             
             try {
-                const res = await fetch(`api/workload/reassignments/${id}/approve`, {
+                const res = await fetch(`../api/workload/reassignments/${id}/approve`, {
                     method: 'POST'
                 });
                 if (res.ok) {
@@ -157,7 +157,7 @@ export default {
             if (!confirmed) return;
             
             try {
-                const res = await fetch(`api/workload/reassignments/${id}/reject`, {
+                const res = await fetch(`../api/workload/reassignments/${id}/reject`, {
                     method: 'POST'
                 });
                 if (res.ok) {

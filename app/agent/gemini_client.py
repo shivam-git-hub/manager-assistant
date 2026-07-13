@@ -14,16 +14,26 @@ def sanitize_gemini_schema(schema: Any) -> Any:
     """
     Recursively strips $schema, additionalProperties, and title from a JSON Schema
     since Gemini's function call validator rejects them.
+
+    NOTE: the keys under a `properties` map are arbitrary PROPERTY NAMES, not schema
+    keywords — a tool may legitimately have a property named "title" (e.g.
+    create_meeting). We must sanitize those property *values* but never drop the
+    property *names*, or a name in `required` becomes "not defined" and Gemini 400s
+    the entire tools payload.
     """
     if isinstance(schema, list):
         return [sanitize_gemini_schema(item) for item in schema]
     elif isinstance(schema, dict):
         keys_to_strip = {"$schema", "additionalProperties", "title"}
-        return {
-            k: sanitize_gemini_schema(v)
-            for k, v in schema.items()
-            if k not in keys_to_strip
-        }
+        out = {}
+        for k, v in schema.items():
+            if k in keys_to_strip:
+                continue
+            if k == "properties" and isinstance(v, dict):
+                out[k] = {pname: sanitize_gemini_schema(pv) for pname, pv in v.items()}
+            else:
+                out[k] = sanitize_gemini_schema(v)
+        return out
     return schema
 
 def json_parse_if_string(val: Any) -> Any:

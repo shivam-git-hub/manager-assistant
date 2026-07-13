@@ -16,7 +16,7 @@ export default {
         async fetchBriefs() {
             this.loading = true;
             try {
-                const res = await fetch('api/briefs?limit=7');
+                const res = await fetch('../api/briefs?limit=7');
                 if (res.ok) {
                     this.briefs = await res.json();
                     if (this.briefs.length > 0) {

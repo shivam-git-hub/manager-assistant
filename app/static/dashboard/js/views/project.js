@@ -62,7 +62,7 @@ export default {
             this.loading = true;
             try {
                 // 1. Fetch Entity details
-                const res = await fetch(`api/kb/entities/${this.slug}`);
+                const res = await fetch(`../api/kb/entities/${this.slug}`);
                 if (!res.ok) throw new Error('Project details not found');
                 const data = await res.json();
                 
@@ -74,7 +74,7 @@ export default {
                 
                 // 2. Fetch Project Tasks (using ref_id)
                 if (this.entity.ref_id) {
-                    const taskRes = await fetch(`api/tasks?project_id=${this.entity.ref_id}`);
+                    const taskRes = await fetch(`../api/tasks?project_id=${this.entity.ref_id}`);
                     if (taskRes.ok) {
                         this.tasks = await taskRes.json();
                     }
@@ -93,7 +93,7 @@ export default {
                 await Promise.all(Array.from(msgIdsToFetch).map(async (msgId) => {
                     if (!this.prefetchedMessages[msgId]) {
                         try {
-                            const msgRes = await fetch(`api/messages/${msgId}`);
+                            const msgRes = await fetch(`../api/messages/${msgId}`);
                             if (msgRes.ok) {
                                 this.prefetchedMessages[msgId] = await msgRes.json();
                             }
@@ -140,7 +140,7 @@ export default {
             if (note === null) return; // user cancelled
             
             try {
-                const res = await fetch(`api/kb/conflicts/${conflictId}`, {
+                const res = await fetch(`../api/kb/conflicts/${conflictId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

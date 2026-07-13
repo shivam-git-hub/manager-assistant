@@ -97,12 +97,19 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
        7b project detail (truth + hover citations) / conflicts / workload /
        briefs / chat dock (`prompts/step_07b_dashboard_views.md`)
        — done 2026-07-13
-8. [ ] Meetings: MoM paste → meeting page + action items + propagation;
+8. [x] Meetings: MoM paste → meeting page + action items + propagation;
        calendar; pre-meeting briefs (prompt: `prompts/step_08_meetings.md`)
-9. [ ] Workload/reassignment (leave marking) + training/newsletter
+       — done 2026-07-13 (MoM fix cdaf5f0)
+9. [x] Workload/reassignment (leave marking) + training/newsletter
        suggestions (prompt: `prompts/step_09_workload_training.md`)
-10. [ ] Seed demo scenario + end-to-end pass
+       — implemented b495173, reviewed 2026-07-13 (no bugs found)
+10. [x] Seed demo scenario + end-to-end pass
         (prompt: `prompts/step_10_demo_seed.md`)
+        — implemented 4663eaf, reviewed 2026-07-13 (health-eval fix)
+11. [x] Autonomous follow-ups — two-tier heartbeat (flash triage → smart
+        run_agent acts) + agent_notes memory + virtual-time-aware follow-up
+        lifecycle (prompt: `prompts/step_11_autonomous_followups.md`)
+        — reviewed + live-verified 2026-07-13
 
 All step prompts 4a–10 were pre-written on 2026-07-13 (before their
 predecessors were implemented); each carries a "the code wins" clause and
@@ -218,10 +225,68 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   view prefetches cited messages and renders `[T#]` chips → hover popover shows
   the source `unified_message` (THE trust moment). Chat dock → `POST /api/chat`
   with a "used N tools" trace expander.
+- Workload (Step 9): `app/kb/workload.py` — `Leave`/`ReassignmentSuggestion`/
+  `Digest` tables. `POST /api/workload/leaves` deterministically drafts
+  reassignments (least-loaded eligible member, flash only for the rationale w/
+  fallback) + DMs the manager; `approve_reassignment` reassigns + timeline +
+  DMs both parties; `run_weekly_digest` (weekly_digest cron, Mon 09:30, dedup on
+  week_start) flash json_mode training suggestions validated against the roster.
+  Tools: `mark_leave`, `list_reassignment_suggestions`, `approve_reassignment`.
+  Reviewed clean (minor: one flash call per task in create_leave; digest teaser
+  hardcodes "Hi Shivam").
+- Demo seed (Step 10): `app/seed_demo.py` — `run_seeding()` builds a 16-day
+  Phoenix/Atlas narrative (ingest → dream cycles → organic Bob-vs-Alice
+  deadlock → held 11 PM ping), `clear_database()` wipes ALL tables incl.
+  scheduled_jobs and re-seeds (so the seed path avoids the clock-rewind cron
+  stall). `POST /api/demo/seed {confirm:true}` + CLI `python -m app.seed_demo`.
+  `check_demo_readiness()` returns the 5-item checklist. FIX at review: seeding
+  now calls the deterministic `run_health_eval(db)` before the checklist — the
+  seed never evaluated health, so Phoenix stayed "green" until a background tick,
+  and the synchronous checklist under-reported `phoenix_degraded`. NOTE: a full
+  live seed is SLOW (~10 min: per-message extraction + many pro-model dream
+  cycles) — budget for it. REVIEW LESSON: a stray `app.main` server (survived a
+  failed pkill) kept its 30s scheduler loop mutating `data/db.sqlite` and raced
+  manual ticks — always confirm `ps aux | grep app.main` is empty before live DB
+  checks.
+- Autonomous follow-ups (Step 11): two-tier heartbeat. `app/agent/situation.py`
+  `build_situation(db)` — deterministic collector (unmet commitments/blockers
+  where holder silent >24h, open conflicts with no covering follow-up, degraded
+  projects, overdue/blocked tasks, gone-quiet owners >2d, open follow-ups for
+  dedup, recent notes) → `{has_signals, digest, ...}`. `app/agent/heartbeat.py`
+  `triage(db,client)` short-circuits (NO llm) when `has_signals` False, else
+  FLASH json_mode → `{action_needed,reason,focus}`; `run_heartbeat(db,client)`
+  on yes REUSES `run_agent` (smart) with a HEARTBEAT directive to create
+  follow-ups / ping both conflict holders / escalate + `record_note`.
+  `app/agent/notes.py` `agent_notes` table + `record_note`/`recent_notes`
+  (registered in `init_db`). New tools: `record_note`, `list_open_followups`;
+  `create_followup_handler` has a dup guard (same target + (same non-null
+  entity_slug OR same normalized question) → no-op). Endpoints
+  `POST /api/heartbeat/run`, `GET /api/agent/notes`. Scheduler seeds `heartbeat`
+  (7200s, catchup once) and flips `followup_check` to catchup "every" +
+  `run_followup_check(db, now=vt)` so ping→escalate replays across time-jumps.
+  Live-verified end-to-end (real key): overdue commitment → triage yes → agent
+  creates+records a follow-up; 2nd heartbeat idempotent (triage says "already
+  covered", acts nothing); ping fires; escalation DM over a +3d jump (unit test).
+- CRITICAL cross-cutting bug fixed at Step 11 review (regressed at Step 8, broke
+  ALL live tool calls): `sanitize_gemini_schema` stripped every dict key named
+  `title`, deleting the `title` PROPERTY of `create_meeting` while `required`
+  still listed it → Gemini 400 on the whole tools payload → Harry's chat AND
+  heartbeat 500'd live (tests passed — they don't hit the network). Fixed to
+  never strip property NAMES under `properties` (regression test in
+  test_extraction.py). If a new tool 400s the loop, suspect this again.
+- GOTCHA (Step 11 review): `seed_default_jobs` was insert-if-missing only, so
+  policy/interval changes never reached the persistent `data/db.sqlite` (the
+  followup_check "every" flip was inert on the demo DB — only fresh test DBs saw
+  it). Now reconciles `catchup_policy`/`interval_seconds` on existing rows
+  (runtime state next_due/last_run/enabled preserved). SEPARATE hazard: setting
+  the sim clock BACKWARD leaves `scheduled_jobs.next_due_at` in the future, so
+  crons silently stall until sim time catches up; reset does not clear
+  scheduled_jobs. Demo goes forward — don't rewind, or start from a fresh DB.
 - Known demo-time gaps (not blockers, flag if touched): conflicts strip in the
   project view shows severity+description but no per-claim source hover (demo
   Beat 4 narrates hovering both claims — fall back to the Claims Matrix);
   `send_or_hold` inside catch-up `morning_brief` reads the live sim time, not
   the replayed 9am slot, so a multi-day jump can hold the teaser. Live manual
-  checks (real `GEMINI_API_KEY` in gitignored `config.json`) were NOT run at
-  review — no key present in this environment; verify before the demo.
+  checks WERE run at Step 11 review with a real `GEMINI_API_KEY` (gitignored
+  `config.json`): extraction, dream synthesis, agent tool loop, and the
+  autonomous heartbeat all verified end-to-end.

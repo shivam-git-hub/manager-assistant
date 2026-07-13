@@ -38,7 +38,7 @@ createApp({
         
         const fetchPortfolio = async () => {
             try {
-                const res = await fetch('api/dashboard/portfolio');
+                const res = await fetch('../api/dashboard/portfolio');
                 if (res.ok) {
                     portfolioData.value = await res.json();
                 }
@@ -49,7 +49,7 @@ createApp({
         
         const fetchClock = async () => {
             try {
-                const res = await fetch('api/time');
+                const res = await fetch('../api/time');
                 if (res.ok) {
                     const data = await res.json();
                     clockState.value = data;
@@ -61,7 +61,7 @@ createApp({
         
         const fetchConflictsCount = async () => {
             try {
-                const res = await fetch('api/kb/conflicts?status=open');
+                const res = await fetch('../api/kb/conflicts?status=open');
                 if (res.ok) {
                     const list = await res.json();
                     openConflictsCount.value = list.length;

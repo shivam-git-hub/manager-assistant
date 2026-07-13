@@ -138,6 +138,7 @@ def init_db():
     from app.scheduler import ScheduledJob
     from app.followups import Followup
     from app.brief import Brief
+    from app.agent.notes import AgentNote
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:

@@ -61,9 +61,9 @@ export default {
             this.loading = true;
             try {
                 const [meetRes, teamRes, projRes] = await Promise.all([
-                    fetch('api/meetings'),
-                    fetch('api/team'),
-                    fetch('api/dashboard/portfolio')
+                    fetch('../api/meetings'),
+                    fetch('../api/team'),
+                    fetch('../api/dashboard/portfolio')
                 ]);
                 
                 if (meetRes.ok) this.meetings = await meetRes.json();
@@ -99,7 +99,7 @@ export default {
             };
             
             try {
-                const res = await fetch('api/meetings', {
+                const res = await fetch('../api/meetings', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
