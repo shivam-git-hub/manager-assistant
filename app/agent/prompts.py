@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.orm import Session
 
 from app.database import TeamMember, Project
@@ -18,7 +18,7 @@ Your core personality traits:
 Tool Usage Rules:
 - You have access to tools to read/write from the database and queue outbound Slack/email messages.
 - Always perform a 'kb_search' or read specific entities using 'get_entity' before answering any factual status questions.
-- Enforce the working-hours gate: Understand that sending messages or emails outside working hours (09:00 - 18:00) or on weekends will place them in a held state.
+- Enforce the working-hours gate: Understand that sending messages or emails outside working hours (09:00 - 19:00 IST) or on weekends will place them in a held state.
 """
 
 def get_context_prompt(db: Session) -> str:
@@ -55,7 +55,7 @@ def get_volatile_prompt(db: Session) -> str:
     
     # Count open conflicts
     open_conflicts_count = db.scalar(
-        select(Conflict).where(Conflict.status == "open")
+        select(func.count(Conflict.id)).where(Conflict.status == "open")
     ) or 0
     
     # Fetch degraded projects (yellow or red health)

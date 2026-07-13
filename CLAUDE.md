@@ -80,20 +80,23 @@ send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
        render (prompt: `prompts/step_02_harry_outbound.md`) — done 2026-07-12
 3. [x] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
        (prompt: `prompts/step_03_kb_schema.md`) — done 2026-07-13
-4. [ ] Gemini client + flash claim extraction (4a:
+4. [x] Gemini client + flash claim extraction (4a:
        `prompts/step_04a_gemini_extraction.md`); dream-cycle synthesis +
        contradiction probe (4b: `prompts/step_04b_dream_synthesis.md`)
-5. [ ] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
+       — done 2026-07-13
+5. [x] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
        morning brief, quiet-hours release (prompt: `prompts/step_05_scheduler.md`)
-6. [ ] Agent harness + tools + real-time dashboard chat (Hermes indexed:
+       — done 2026-07-13
+6. [x] Agent harness + tools + real-time dashboard chat (Hermes indexed:
        `spec/research/hermes_index.md` — vendor its Gemini adapter, copy
        IterationBudget verbatim, follow its tool-registry pattern)
-       (prompt: `prompts/step_06_agent_harness.md`)
-7. [ ] Project Tracker Dashboard — Vue 3 CDN, code split across plain JS/CSS
+       (prompt: `prompts/step_06_agent_harness.md`) — done 2026-07-13
+7. [x] Project Tracker Dashboard — Vue 3 CDN, code split across plain JS/CSS
        files, hand-built design system (must NOT look AI-generated). Split:
        7a shell/design-system/portfolio (`prompts/step_07a_dashboard_shell.md`),
        7b project detail (truth + hover citations) / conflicts / workload /
        briefs / chat dock (`prompts/step_07b_dashboard_views.md`)
+       — done 2026-07-13
 8. [ ] Meetings: MoM paste → meeting page + action items + propagation;
        calendar; pre-meeting briefs (prompt: `prompts/step_08_meetings.md`)
 9. [ ] Workload/reassignment (leave marking) + training/newsletter
@@ -163,3 +166,55 @@ brief) → ask Harry anything (cited synthesis; meeting prep).
   tables, then re-backfills person entities (incl. Harry).
 - Tests: `tests/conftest.py` seeds Harry; `client` fixture's lifespan still
   runs `init_db()` against the real `data/db.sqlite` (known wart, demo-OK).
+- Extraction/dream cycle (Step 4a/4b): `app/agent/gemini_client.py`
+  (`GeminiClient.chat(model, messages, tools?, json_mode?)` → OpenAI-shaped
+  `{content, tool_calls:[{id,name,arguments}], finish_reason, usage}`;
+  `transport` injectable for tests, `get_client()` cached singleton, key
+  resolved at CALL time; retries 429/5xx with real `time.sleep`).
+  `app/kb/extraction.py::extract_from_message` (flash, per inbound msg; skips
+  Harry-outbound/<10 chars; validates+clamps; `is_processed=True` ALWAYS in a
+  `finally`). `app/kb/synthesis.py`: `run_supersession_pass` +
+  `synthesize_entity` (smart; dirty-check on truth_updated_at; re-validates
+  `[T#]` markers against this entity's timeline, strips unknown) +
+  `run_contradiction_probe` (flash; skips pairs with an existing conflict in
+  ANY status) + `run_dream_cycle` orchestrator. Endpoints: `POST /api/kb/process`
+  (extraction only), `POST /api/kb/dream` (full cycle).
+- Scheduler (Step 5): `app/scheduler.py` — `scheduled_jobs` (job_type UNIQUE,
+  `catchup_policy` once|every), `seed_default_jobs()` called from `init_db()`
+  seeds 5 crons (dream_cycle, quiet_release, followup_check, health_eval,
+  morning_brief@9am/every). `tick(db)` runs everything due ≤ sim now; `every`
+  policy replays each missed slot passing the virtual slot time. Driven by a
+  30s asyncio loop + `timeservice.on_time_change` hook, BOTH gated off under
+  pytest (`"pytest" not in sys.modules` in `app/main.py` lifespan). Manual
+  `POST /api/scheduler/tick`. `app/followups.py` (Followup model, DM channel
+  `DM_<sorted ids>`, ping→2nd ping→escalate-to-manager), `app/health.py`
+  (score→green/yellow/red, DMs manager on degrade), `app/brief.py`
+  (`briefs` table brief_date UNIQUE, smart-model prose w/ deterministic
+  fallback; `GET /api/briefs`). All autonomous sends go through `send_or_hold`.
+- Agent harness (Step 6): `app/agent/` — `budget.py` IterationBudget
+  (limit 20), `registry.py` self-registering `ToolRegistry` (`execute` catches
+  handler errors → `"ERROR: …"`, caps result 8000 chars), `tools.py` 10 tools
+  (kb_search/get_entity/list_projects/list_tasks/update_task/get_conflicts/
+  send_slack_dm/send_email/create_followup/get_current_time; auto-registered
+  on import), `prompts.py` 3-tier system prompt (stable/context/volatile; sim
+  time + open-conflict COUNT in volatile), `harness.py::run_agent`. Loop honors
+  the Gemini round-trip contract: echoes the assistant `tool_calls` turn before
+  results, and each `{role:"tool", tool_call_id, name, content}` carries `name`
+  (Gemini keys functionResponse by NAME). `app/agent/api.py`: `POST /api/chat`
+  (last 20 msgs as history), `GET/DELETE /api/chat/history`; `chat_messages`
+  table (created_at sim IST).
+- Dashboard (Step 7): served at `/dashboard/` via StaticFiles(html=True);
+  `app/static/dashboard/` split into `js/{app,router}.js`,
+  `js/views/{portfolio,project,conflicts,workload,briefs}.js`,
+  `js/components/chat_dock.js`, `css/{theme,components}.css`. Hash router.
+  Aggregate endpoint `GET /api/dashboard/portfolio` (red-first sort). Project
+  view prefetches cited messages and renders `[T#]` chips → hover popover shows
+  the source `unified_message` (THE trust moment). Chat dock → `POST /api/chat`
+  with a "used N tools" trace expander.
+- Known demo-time gaps (not blockers, flag if touched): conflicts strip in the
+  project view shows severity+description but no per-claim source hover (demo
+  Beat 4 narrates hovering both claims — fall back to the Claims Matrix);
+  `send_or_hold` inside catch-up `morning_brief` reads the live sim time, not
+  the replayed 9am slot, so a multi-day jump can hold the teaser. Live manual
+  checks (real `GEMINI_API_KEY` in gitignored `config.json`) were NOT run at
+  review — no key present in this environment; verify before the demo.
