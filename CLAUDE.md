@@ -7,34 +7,23 @@ manager updates). Goal: an end-to-end **demoable** product — not scalable infr
 
 ## Architecture rework branch (2026-07-14)
 
-`feature/architecture-optimization` is a step-by-step rework of the
-autonomous-LLM-call architecture (started after auditing how many LLM calls
-fire without a human: dream-cycle extraction/synthesis/contradiction-probe,
-morning brief, weekly digest, reassignment rationale, heartbeat triage+act —
-see chat history, not re-derived here). **This branch must run on a port
-other than 3003** (the `main` branch's port) so the existing demo server can
-keep running unmodified while this branch is developed — use a separate git
-worktree, not an in-place branch switch of the same checkout (an in-place
-switch changes files out from under the already-running, non-`--reload`
-`main` server). Pick a port (e.g. 3004) and use it consistently for this
-branch's server.
+`feature/architecture-optimization` — step-by-step rework, one requested
+change at a time. **Run this branch on a port other than 3003** via a
+separate git worktree (not an in-place branch switch — that would change
+files out from under the already-running `main` server). Feature worktree:
+`../manager-assistant-feature`, port 3004.
 
-Step 1 done this branch (2026-07-14): messages sent **directly to Harry**
-(a Slack DM to `U_HARRY`, or an email to `harry.assistant@company.com`) now
-bypass `/api/chat` entirely. New module `app/agent/direct_contact.py`:
-`handle_direct_contact()` formats the inbound message as
-`channel: <slack/mail/telegram>\nsender: <>\ndate: <>\ntime: <>\nmessage: <>`
-and calls `run_agent()` directly (no `chat_messages` history), then sends
-Harry's reply back through the same channel via `send_or_hold` (still
-quiet-hours gated). Wired into `slack_webhook` and `outlook_mock_ingest`
-right after the existing DB insert — **ingestion into `unified_messages` is
-unchanged**, this is purely additive. Both call sites gate on
-`"pytest" not in sys.modules` (matching the existing `app/main.py` scheduler
-guard) because `test_outlook_ingestion` omits `toRecipients`, which defaults
-`recipient_email` to Harry's address — without the guard that test would
-silently fire a real Gemini call. `/api/chat` itself is UNCHANGED for now
-("we will define later" — dashboard chat dock still works as before); this
-step only intercepts the Slack/Outlook ingest paths.
+Step 1 (2026-07-14): messages sent **directly to Harry** (Slack DM to
+`U_HARRY`, or email to `harry.assistant@company.com`) bypass `/api/chat` and
+go straight to `run_agent()` via new `app/agent/direct_contact.py`
+(`handle_direct_contact`), formatted as
+`channel: <slack/mail/telegram>\nsender: <>\ndate: <>\ntime: <>\nmessage: <>`,
+reply sent back through the same channel via `send_or_hold`. Wired into
+`slack_webhook`/`outlook_mock_ingest` right after the existing DB insert —
+ingestion unchanged. Gated on `"pytest" not in sys.modules` (existing
+`app/main.py` pattern) because `test_outlook_ingestion` omits `toRecipients`,
+which defaults `recipient_email` to Harry's address. `/api/chat` itself is
+untouched — to be redesigned later.
 
 ## Non-negotiable rules (see spec/notes_and_instructions.md)
 
