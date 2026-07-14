@@ -92,6 +92,25 @@ async def slack_webhook(request: Request, db: Session = Depends(get_db)):
         except IntegrityError:
             db.rollback()
             return {"status": "ignored", "detail": "duplicate message (race condition)"}
+
+        # If this message was sent directly to Harry (a Slack DM), route it
+        # straight into the agent harness instead of requiring /api/chat.
+        # Gated off under pytest: this would otherwise hit the real Gemini
+        # API from a unit test (no transport is faked here).
+        import sys
+        if "pytest" not in sys.modules:
+            from app.agent.direct_contact import dm_channel_id, handle_direct_contact
+            if new_msg.channel_raw_id == dm_channel_id("U_HARRY", user_id):
+                handle_direct_contact(
+                    db=db,
+                    source="slack",
+                    sender=sender_name or user_id,
+                    timestamp=timestamp_ist,
+                    message_text=new_msg.content,
+                    reply_channel_type="slack",
+                    build_reply_payload=lambda text: {"channel": new_msg.channel_raw_id, "text": text},
+                )
+
         return {"status": "ok", "message_id": msg_id, "sender_mapped": sender_name}
         
     return {"status": "ignored", "detail": "unsupported event type"}

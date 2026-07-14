@@ -166,7 +166,32 @@ async def outlook_mock_ingest(payload: OutlookEmailPayload, response: Response, 
         db.rollback()
         response.status_code = status.HTTP_200_OK
         return {"status": "ignored", "detail": "duplicate email ID (race condition)", "message_id": payload.id}
-    
+
+    # If this email was addressed directly to Harry, route it straight into
+    # the agent harness instead of requiring /api/chat. Gated off under
+    # pytest: this would otherwise hit the real Gemini API from a unit test
+    # (no transport is faked here) -- see test_outlook_ingestion, which omits
+    # toRecipients and so defaults recipient_email to Harry's address.
+    import sys
+    if "pytest" not in sys.modules:
+        from app.agent.direct_contact import handle_direct_contact
+        if recipient_email == "harry.assistant@company.com":
+            handle_direct_contact(
+                db=db,
+                source="outlook",
+                sender=sender_name or sender_email,
+                timestamp=dt_ist,
+                message_text=cleaned_content,
+                reply_channel_type="outlook",
+                build_reply_payload=lambda text: {
+                    "message": {
+                        "subject": f"Re: {payload.subject}",
+                        "body": {"contentType": "text", "content": text},
+                        "toRecipients": [{"emailAddress": {"address": sender_email}}],
+                    }
+                },
+            )
+
     return {"status": "ok", "message_id": payload.id, "sender_mapped": sender_name}
 
 
