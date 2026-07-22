@@ -27,6 +27,8 @@ from app.controlplane.models import (
     Employee,
     Project as RegistryProject,
     ProjectMember,
+    Portfolio,
+    PortfolioProject,
 )
 from app.projects.paths import ensure_project_scaffold
 
@@ -265,3 +267,152 @@ def patch_project(
     db.commit()
     db.refresh(project)
     return _project_detail(db, project, manager)
+
+
+# ────────────────────────────────────────────────────────
+# Portfolios (wireframes 4.png, 8.png) -- a manager's personal grouping of
+# their own projects. Real entity (named, independently deletable,
+# projects added/removed one at a time), not a saved filter/view, per the
+# step_27 prompt's explicit fork -- see Portfolio's model docstring.
+# ────────────────────────────────────────────────────────
+
+class PortfolioCreateIn(BaseModel):
+    name: str
+
+
+class PortfolioPatchIn(BaseModel):
+    name: Optional[str] = None
+    add_project_ids: Optional[List[str]] = None
+    remove_project_ids: Optional[List[str]] = None
+
+
+def _visible_project_ids(db: DBSession, manager: Manager) -> set:
+    owned_ids = {
+        p.id for p in db.query(RegistryProject).filter(RegistryProject.manager_user_id == manager.id).all()
+    }
+    member_ids = {
+        row.project_id
+        for row in (
+            db.query(ProjectMember.project_id)
+            .join(Employee, ProjectMember.employee_id == Employee.id)
+            .filter(func.lower(Employee.email) == manager.email.lower())
+            .all()
+        )
+    }
+    return owned_ids | member_ids
+
+
+def _portfolio_detail(db: DBSession, portfolio: Portfolio, manager: Manager) -> dict:
+    rows = (
+        db.query(RegistryProject)
+        .join(PortfolioProject, PortfolioProject.project_id == RegistryProject.id)
+        .filter(PortfolioProject.portfolio_id == portfolio.id)
+        .all()
+    )
+    projects = []
+    for p in rows:
+        member_count = db.query(ProjectMember).filter(ProjectMember.project_id == p.id).count()
+        projects.append({
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "kind": p.kind,
+            "is_manager": p.manager_user_id == manager.id,
+            "member_count": member_count,
+        })
+    return {
+        "id": portfolio.id,
+        "name": portfolio.name,
+        "created_at": portfolio.created_at,
+        "projects": projects,
+    }
+
+
+@router.post("/portfolios", status_code=status.HTTP_201_CREATED)
+def create_portfolio(
+    payload: PortfolioCreateIn,
+    manager: Manager = Depends(get_current_manager),
+    db: DBSession = Depends(get_controlplane_db),
+):
+    portfolio = Portfolio(id=uuid.uuid4().hex, name=payload.name, manager_user_id=manager.id)
+    db.add(portfolio)
+    db.commit()
+    db.refresh(portfolio)
+    return _portfolio_detail(db, portfolio, manager)
+
+
+@router.get("/portfolios")
+def list_portfolios(
+    manager: Manager = Depends(get_current_manager),
+    db: DBSession = Depends(get_controlplane_db),
+):
+    portfolios = (
+        db.query(Portfolio)
+        .filter(Portfolio.manager_user_id == manager.id)
+        .order_by(Portfolio.created_at)
+        .all()
+    )
+    return [_portfolio_detail(db, p, manager) for p in portfolios]
+
+
+@router.get("/portfolios/{portfolio_id}")
+def get_portfolio(
+    portfolio_id: str,
+    manager: Manager = Depends(get_current_manager),
+    db: DBSession = Depends(get_controlplane_db),
+):
+    portfolio = db.get(Portfolio, portfolio_id)
+    if portfolio is None or portfolio.manager_user_id != manager.id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return _portfolio_detail(db, portfolio, manager)
+
+
+@router.patch("/portfolios/{portfolio_id}")
+def patch_portfolio(
+    portfolio_id: str,
+    payload: PortfolioPatchIn,
+    manager: Manager = Depends(get_current_manager),
+    db: DBSession = Depends(get_controlplane_db),
+):
+    portfolio = db.get(Portfolio, portfolio_id)
+    if portfolio is None or portfolio.manager_user_id != manager.id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    if payload.name is not None:
+        portfolio.name = payload.name
+
+    if payload.add_project_ids:
+        visible_ids = _visible_project_ids(db, manager)
+        for project_id in payload.add_project_ids:
+            if project_id not in visible_ids:
+                raise HTTPException(status_code=400, detail=f"Unknown or inaccessible project_id: {project_id}")
+            existing = (
+                db.query(PortfolioProject)
+                .filter(PortfolioProject.portfolio_id == portfolio.id, PortfolioProject.project_id == project_id)
+                .first()
+            )
+            if not existing:
+                db.add(PortfolioProject(id=uuid.uuid4().hex, portfolio_id=portfolio.id, project_id=project_id))
+
+    for project_id in payload.remove_project_ids or []:
+        db.query(PortfolioProject).filter(
+            PortfolioProject.portfolio_id == portfolio.id, PortfolioProject.project_id == project_id
+        ).delete()
+
+    db.commit()
+    db.refresh(portfolio)
+    return _portfolio_detail(db, portfolio, manager)
+
+
+@router.delete("/portfolios/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_portfolio(
+    portfolio_id: str,
+    manager: Manager = Depends(get_current_manager),
+    db: DBSession = Depends(get_controlplane_db),
+):
+    portfolio = db.get(Portfolio, portfolio_id)
+    if portfolio is None or portfolio.manager_user_id != manager.id:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    db.query(PortfolioProject).filter(PortfolioProject.portfolio_id == portfolio.id).delete()
+    db.delete(portfolio)
+    db.commit()

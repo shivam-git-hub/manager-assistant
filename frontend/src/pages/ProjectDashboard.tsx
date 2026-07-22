@@ -55,12 +55,14 @@ function TaskRow({
   onApprove,
   onEdit,
   depth = 0,
+  showAssignee = true,
 }: {
   task: ProjectTask;
   isManager: boolean;
   onApprove: (t: ProjectTask) => void;
   onEdit: (t: ProjectTask) => void;
   depth?: number;
+  showAssignee?: boolean;
 }) {
   const pr = PRIORITY_META[task.priority];
   return (
@@ -75,15 +77,17 @@ function TaskRow({
           {task.description && <span className="block text-xs text-inksoft" style={depth ? { paddingLeft: depth * 16 } : undefined}>{task.description}</span>}
         </td>
         <td className="py-2 pr-3 align-top">{pr && <Chip label={pr.label} bg={pr.bg} fg={pr.fg} />}</td>
-        <td className="py-2 pr-3 align-top text-sm text-ink">
-          {task.assignee_name ? (
-            <span className="inline-block rounded-md bg-card border border-cardline px-2.5 py-1 text-xs font-semibold">
-              {task.assignee_name}
-            </span>
-          ) : (
-            <span className="text-inksoft text-xs">—</span>
-          )}
-        </td>
+        {showAssignee && (
+          <td className="py-2 pr-3 align-top text-sm text-ink">
+            {task.assignee_name ? (
+              <span className="inline-block rounded-md bg-card border border-cardline px-2.5 py-1 text-xs font-semibold">
+                {task.assignee_name}
+              </span>
+            ) : (
+              <span className="text-inksoft text-xs">—</span>
+            )}
+          </td>
+        )}
         <td className="py-2 pr-3 align-top text-sm text-ink whitespace-nowrap">{fmtDue(task.due)}</td>
         <td className="py-2 pr-3 align-top">
           <StateChip task={task} />
@@ -107,10 +111,20 @@ function TaskRow({
         </td>
       </tr>
       {task.subtasks.map((s) => (
-        <TaskRow key={s.id} task={s} isManager={isManager} onApprove={onApprove} onEdit={onEdit} depth={depth + 1} />
+        <TaskRow key={s.id} task={s} isManager={isManager} onApprove={onApprove} onEdit={onEdit} depth={depth + 1} showAssignee={showAssignee} />
       ))}
     </>
   );
+}
+
+// Flattens a task tree (parents + all nested subtasks) into one list --
+// used by Team view, which groups by assignee regardless of nesting depth.
+function flattenTasks(tasks: ProjectTask[]): ProjectTask[] {
+  // subtasks: [] on each flattened entry -- TaskRow recurses into
+  // task.subtasks itself, and the flattened list already surfaces every
+  // subtask as its own top-level row, so leaving the nested arrays intact
+  // would render each subtask twice.
+  return tasks.flatMap((t) => [{ ...t, subtasks: [] }, ...flattenTasks(t.subtasks)]);
 }
 
 function TaskDialog({
@@ -326,6 +340,7 @@ export default function ProjectDashboard() {
   const [editing, setEditing] = useState<ProjectTask | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [view, setView] = useState<"task" | "team">("task");
 
   const load = useCallback(() => {
     getProject(id).then(setProject).catch(() => navigate("/projects"));
@@ -388,19 +403,32 @@ export default function ProjectDashboard() {
           </tr>
         </thead>
         <tbody>
-          {rows.map((t) =>
-            showAssignee ? (
-              <TaskRow key={t.id} task={t} isManager={isManager} onApprove={approve} onEdit={setEditing} />
-            ) : (
-              // My Tasks: same row shape minus the Assigned column -- render
-              // via a stripped table for simplicity
-              <TaskRow key={t.id} task={{ ...t, assignee_name: null }} isManager={isManager} onApprove={approve} onEdit={setEditing} />
-            ),
-          )}
+          {rows.map((t) => (
+            <TaskRow key={t.id} task={t} isManager={isManager} onApprove={approve} onEdit={setEditing} showAssignee={showAssignee} />
+          ))}
         </tbody>
       </table>
     </div>
   );
+
+  // Team view (wireframe 6.png's "switch to: Team view" link): one section
+  // per project member, listing every task (incl. nested subtasks,
+  // flattened) assigned to them -- Assigned column dropped since it's
+  // implied by the grouping. Unassigned tasks get their own trailing
+  // section so nothing silently disappears.
+  const flatTasks = flattenTasks(tasks);
+  const teamGroups = [
+    ...project.members.map((m) => ({
+      key: m.employee_id,
+      label: m.name,
+      tasks: flatTasks.filter((t) => t.assignee_employee_id === m.employee_id),
+    })),
+    {
+      key: "unassigned",
+      label: "Unassigned",
+      tasks: flatTasks.filter((t) => !t.assignee_employee_id),
+    },
+  ].filter((g) => g.tasks.length > 0);
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">
@@ -435,18 +463,39 @@ export default function ProjectDashboard() {
           <button
             onClick={() => setCreating(true)}
             aria-label="Add task"
-            className="h-7 w-7 rounded-full bg-nav text-white text-lg leading-none hover:bg-navdeep"
+            className="h-7 w-7 rounded-full bg-nav text-white text-lg leading-none hover:bg-navdeep flex items-center justify-center"
           >
             +
           </button>
         )}
+        <button
+          onClick={() => setView(view === "task" ? "team" : "task")}
+          className="text-xs font-bold text-inksoft underline hover:text-nav"
+        >
+          switch to: {view === "task" ? "Team view" : "Task view"}
+        </button>
       </div>
       {tasks.length === 0 ? (
         <p className="mt-2 text-sm text-inksoft">
           No tasks yet{isManager ? " -- add the first with the + button" : ""}.
         </p>
-      ) : (
+      ) : view === "task" ? (
         <div className="mt-3">{taskTable(tasks, true)}</div>
+      ) : (
+        <div className="mt-3 space-y-6">
+          {teamGroups.length === 0 ? (
+            <p className="text-sm text-inksoft">No tasks assigned yet.</p>
+          ) : (
+            teamGroups.map((g) => (
+              <div key={g.key}>
+                <h3 className="font-bold text-ink text-sm">
+                  {g.label} <span className="font-normal text-inksoft">({g.tasks.length})</span>
+                </h3>
+                <div className="mt-1">{taskTable(g.tasks, false)}</div>
+              </div>
+            ))
+          )}
+        </div>
       )}
 
       <h2 className="mt-10 text-xl font-extrabold text-ink">My Tasks</h2>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import StatusFlower from "@/components/StatusFlower";
 import ProjectCard from "@/components/ProjectCard";
 import CreateProjectModal from "@/components/CreateProjectModal";
@@ -230,7 +230,7 @@ function CardRail({
   newLabel: string;
 }) {
   const navigate = useNavigate();
-  const navigateToProject = (id: string) => navigate(`/projects/${id}`);
+  const navigateToProject = (id: string) => navigate(`/projects/${id}/dashboard`);
   return (
     <section className="mt-8">
       <h2 className="text-2xl font-extrabold text-ink">{title}</h2>
@@ -256,18 +256,11 @@ function CardRail({
 export default function Home({ manager }: { manager: Manager }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [creating, setCreating] = useState<"team" | "personal" | null>(null);
-  const location = useLocation();
 
   const loadProjects = useCallback(() => {
     getProjects().then(setProjects).catch(() => setProjects([]));
   }, []);
   useEffect(loadProjects, [loadProjects]);
-
-  useEffect(() => {
-    if (location.hash === "#todos") {
-      document.getElementById("todos")?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [location]);
 
   const tasks = projects.filter((p) => p.kind === "personal");
   const teamProjects = projects.filter((p) => p.kind === "team");

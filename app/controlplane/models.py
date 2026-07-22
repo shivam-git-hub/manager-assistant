@@ -203,6 +203,35 @@ class ProjectMember(ControlPlaneBase):
     role: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
 
+class Portfolio(ControlPlaneBase):
+    """A manager's personal grouping of projects (wireframes 4.png/8.png --
+    "My Portfolios"). Real entity, not a saved filter: it has its own name,
+    is independently creatable/deletable, and projects are added/removed
+    from it one at a time (see PortfolioProject) -- a saved-filter/view
+    couldn't support any of that. Scoped to the owning manager only (no
+    sharing/membership concept, unlike Project)."""
+
+    __tablename__ = "portfolios"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # uuid4 hex
+    name: Mapped[str] = mapped_column(String(255))
+    manager_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("managers.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
+
+class PortfolioProject(ControlPlaneBase):
+    """One row per (portfolio, project) membership -- same unique-pair
+    pattern as ProjectMember, so re-adding an existing project is a no-op
+    at the schema level."""
+
+    __tablename__ = "portfolio_projects"
+    __table_args__ = (UniqueConstraint("portfolio_id", "project_id", name="uq_portfolio_project"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # uuid4 hex
+    portfolio_id: Mapped[str] = mapped_column(String(36), ForeignKey("portfolios.id"))
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id"))
+
+
 def init_controlplane_db() -> None:
     """Schema create + idempotent ALTER-TABLE migration checks -- same
     PRAGMA-based pattern as app.tenancy.db.init_manager_db, needed here too

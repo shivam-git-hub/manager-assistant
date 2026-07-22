@@ -21,9 +21,10 @@ from app.controlplane import api as auth_api
 from app.controlplane import outlook_auth
 from app.controlplane import slack_auth
 from app.controlplane import agents as agents_api
-from app.controlplane.models import init_controlplane_db
+from app.controlplane.models import init_controlplane_db, SessionLocal as ControlPlaneSessionLocal, Project as RegistryProject
 from app.tenancy.db import list_provisioned_manager_ids
 from app.tenancy.paths import ensure_manager_scaffold
+from app.projects.db import init_project_db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,6 +40,22 @@ async def lifespan(app: FastAPI):
     # app.tenancy.db.init_manager_db.
     for manager_id in list_provisioned_manager_ids():
         ensure_manager_scaffold(manager_id)
+
+    # Same reasoning, one level over: each registry project has its own
+    # db.sqlite (app.projects.db), created at project-creation time only --
+    # a schema change added after a project already existed (e.g.
+    # Task.priority, step 21) never reached it since nothing re-ran
+    # init_project_db for pre-existing projects. Discovered live 2026-07-23
+    # (task creation 500ing on an old project with "no column named
+    # priority"). Sweep every registry project at boot, mirroring the
+    # manager-db sweep above.
+    db = ControlPlaneSessionLocal()
+    try:
+        project_ids = [p.id for p in db.query(RegistryProject.id).all()]
+    finally:
+        db.close()
+    for project_id in project_ids:
+        init_project_db(project_id)
 
     if "pytest" not in sys.modules:
         # projectkb job scheduler: real wall-clock cadence (ingestion/heartbeat/

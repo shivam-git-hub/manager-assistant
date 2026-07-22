@@ -275,9 +275,9 @@ implementations). The v1 architecture below is being superseded per-piece.
   order items 8-9, not yet implemented): `prompts/step_26_lint_job.md`
   (deterministic integrity checks + optional non-blocking LLM coherence
   pass), `prompts/step_27_frontend_remaining_gaps.md` (blocklist settings
-  UI, full Create-Project form per wireframe 5.png, Portfolios pages
-  4/8.png — needs a design/spec check first, workload view, grab-bag not
-  sequentially dependent on the others). `app/projectkb/jobs/lint.py`
+  UI, full Create-Project form per wireframe 5.png, workload view — grab-bag
+  not sequentially dependent on the others; Portfolios pages 4/8.png done
+  2026-07-23, see the "Live-testing fixes" bullet below). `app/projectkb/jobs/lint.py`
   still describes v1-era concepts (timeline.md tiers, todos/conflicts) in
   its docstring — step 26 replaces that docstring along with the code,
   don't preserve the stale wording.
@@ -580,6 +580,52 @@ surface.
   (`sudo chown -R $(whoami) ~/.npm`) needs an interactive terminal Claude
   doesn't have — worth doing once from a real shell.
 
+- **UI corrections + Portfolios 2026-07-23** (Shivam, live-testing feedback,
+  out of step-sequence): (a) project cards everywhere (Home rails, Projects
+  grid) now navigate straight to `/projects/:id/dashboard` instead of
+  `/projects/:id` (Overview) — Overview stays reachable via the reciprocal
+  "View Project"/"switch to dashboard" buttons already on each page. (b)
+  **Portfolios built** (wireframes 4.png/8.png, closing the step_27 grab-bag
+  item) — resolved as a real entity per that prompt's explicit design fork
+  (named, independently deletable, projects added/removed one at a time —
+  not a saved filter/view): new control-plane tables `Portfolio` +
+  `PortfolioProject` (`app/controlplane/models.py`), CRUD at
+  `POST/GET/PATCH/DELETE /api/portfolios[/{id}]` (`app/api/
+  projects_registry.py`, scoped to the owning manager only, `add_project_ids`
+  validated against that manager's own visible-projects set). Frontend:
+  `Projects.tsx`'s Portfolios/Projects toggle is now live (was a disabled
+  stub); new `PortfolioDetail.tsx` (`/portfolios/:id`) — editable name
+  (blur-to-save), delete, member-project grid with per-card remove, "+"
+  add-picker restricted to projects not already in the portfolio.
+  `tests/test_portfolios.py` (9 tests: CRUD, re-add-is-noop, cross-manager
+  scoping, 401/404s). (c) **Team view** added to `ProjectDashboard.tsx`'s
+  Tasks table (wireframe 6.png's "switch to: Team view" link, previously
+  unbuilt) — flattens the task tree (parents + all nested subtasks, via new
+  `flattenTasks()`) and groups by `assignee_employee_id` into one mini task
+  table per project member (plus a trailing "Unassigned" group), Assigned
+  column dropped since it's implied by the grouping. Fixed a latent column-
+  misalignment bug found while building this: `TaskRow` always rendered an
+  Assignee `<td>` regardless of the table header, so "My Tasks" (which hid
+  the column by blanking `assignee_name` rather than actually omitting the
+  cell) was one column short of its own header row — `TaskRow` now takes an
+  explicit `showAssignee` prop instead. (d) Small visual fix: circular "+"
+  buttons (Projects/Tasks grid floating button, ProjectDashboard's "Add
+  task") were missing `flex items-center justify-center`, so the glyph sat
+  low in the circle instead of centered. (e) **Tasks got its own grid +
+  nav tab** (`Tasks.tsx`, `/tasks`, mirrors `Projects.tsx` filtered to
+  `kind="personal"`) — previously personal projects ("Tasks") only lived in
+  Home's card rail with no dedicated page, unlike team projects.
+  `NAV_TABS` gained a "Tasks" entry alongside the existing "Projects" one.
+  (f) **Quick-add-todo popup**: the TopNav "Todo" button used to
+  `navigate("/#todos")`, forcing a trip to Home even from deep pages: now
+  opens `QuickAddTodoModal` (new component) directly, lifted to `App.tsx`
+  so it's reachable from anywhere; Home's now-dead `#todos` hash-scroll
+  effect removed. (g) Found and fixed a real bug while live-testing (c):
+  see the "Schema changes also sweep N project DBs" gotcha below — task
+  creation was 500ing on the one pre-existing real project because its
+  db.sqlite predated the `Task.priority` migration and nothing had ever
+  re-run it.
+
 ## Critical bugs (prevent regressions)
 
 1. **Gemini schema sanitizer** — never strip dict key names under `properties`; stripping `title` deletes the property definition while `required` still lists it → Gemini 400. See `app/agent/gemini_client.py`.
@@ -590,4 +636,5 @@ surface.
 - **Scheduler state persistence:** `seed_default_jobs()` reconciles policy/interval on existing `scheduled_jobs` rows (runtime state preserved). Never rewind sim clock — scheduled jobs won't catch up. Start fresh if needed.
 - **DB mutation race:** Confirm `ps aux | grep app.main` is empty before manual DB ticks (scheduler loop + manual tick can race).
 - **Schema changes now sweep N manager DBs:** every manager's `db.sqlite` gets `init_manager_db`'s migration checks re-run at boot (see `app/main.py`'s lifespan) — a permanent operational cost of the per-manager split, not a one-time thing.
+- **Schema changes also sweep N project DBs (fixed 2026-07-23):** the same gap existed one level over for `app/projects/db.py::init_project_db` — it only ran at project-creation time, so `Task.priority` (step 21) never reached any project created before that step, and task creation 500'd on those projects ("no column named priority") until live-tested. `app/main.py`'s lifespan now also loops every registry project (`app.controlplane.models.Project`) and calls `init_project_db` at boot, mirroring the manager-db sweep above.
 - **Test fixtures auto-login:** `tests/conftest.py`'s `client` fixture always calls dev-login for a fresh throwaway manager before yielding — a test that specifically needs an *unauthenticated* client must build its own bare `TestClient(app)` (see `tests/test_auth.py::test_me_without_cookie_is_401` for the pattern), not use the shared fixture.

@@ -58,6 +58,7 @@ export const NAV_TABS: { label: string; path?: string }[] = [
   { label: "Plan My Day" },
   { label: "Workflows" },
   { label: "Projects", path: "/projects" }, // added on Shivam's ask -- missing from the wireframe
+  { label: "Tasks", path: "/tasks" }, // added on Shivam's ask -- missing from the wireframe
 ];
 
 export const SIDEBAR_ITEMS: { label: string; path?: string }[] = [

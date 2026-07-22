@@ -269,6 +269,38 @@ export function deleteProject(id: string): Promise<void> {
   return request(`/api/projects/${id}`, { method: "DELETE" });
 }
 
+// ── Portfolios (wireframes 4.png, 8.png) ─────────────────
+
+export interface Portfolio {
+  id: string;
+  name: string;
+  created_at: string;
+  projects: ProjectSummary[];
+}
+
+export function getPortfolios(): Promise<Portfolio[]> {
+  return request("/api/portfolios");
+}
+
+export function getPortfolio(id: string): Promise<Portfolio> {
+  return request(`/api/portfolios/${id}`);
+}
+
+export function createPortfolio(name: string): Promise<Portfolio> {
+  return request("/api/portfolios", { method: "POST", body: JSON.stringify({ name }) });
+}
+
+export function patchPortfolio(
+  id: string,
+  payload: { name?: string; add_project_ids?: string[]; remove_project_ids?: string[] }
+): Promise<Portfolio> {
+  return request(`/api/portfolios/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function deletePortfolio(id: string): Promise<void> {
+  return request(`/api/portfolios/${id}`, { method: "DELETE" });
+}
+
 // ── Project drill-down (step 21) ─────────────────────────
 
 export interface ProjectTask {

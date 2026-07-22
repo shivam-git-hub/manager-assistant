@@ -1,4 +1,4 @@
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import amexLogo from "@/assets/amex.png";
 import menusIcon from "@/assets/menus.png";
 import { NAV_TABS } from "@/constants";
@@ -16,9 +16,13 @@ function HomeIcon() {
   );
 }
 
-export default function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
-  const navigate = useNavigate();
-
+export default function TopNav({
+  onMenuClick,
+  onTodoClick,
+}: {
+  onMenuClick: () => void;
+  onTodoClick: () => void;
+}) {
   return (
     <header className="sticky top-0 z-30 bg-nav text-white shadow-md">
       <div className="flex items-center gap-5 px-4 h-14">
@@ -74,7 +78,7 @@ export default function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate("/#todos")}
+            onClick={onTodoClick}
             className="rounded-full bg-white text-nav font-bold text-sm px-4 py-1.5 hover:bg-wordmark transition-colors"
           >
             Todo
