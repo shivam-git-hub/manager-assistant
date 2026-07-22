@@ -131,3 +131,48 @@ def test_reclaiming_own_agent_is_idempotent(client):
     r2 = _claim(client, "atlas")
     assert r2.status_code == 200
     assert r2.json() == {"agent_id": "atlas", "agent_name": "Atlas"}
+
+
+def test_mine_without_session_is_401(clean_controlplane_db):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    bare_client = TestClient(app)
+    r = bare_client.get("/api/agents/mine")
+    assert r.status_code == 401
+
+
+def test_mine_is_null_before_claiming(client):
+    _login(client)
+    r = client.get("/api/agents/mine")
+    assert r.status_code == 200
+    assert r.json() is None
+
+
+def test_mine_reflects_claim_and_admin_installation(client):
+    _seed_agent("atlas", "Atlas")
+
+    r = _claim(client, "atlas")
+    assert r.status_code == 200
+
+    r2 = client.get("/api/agents/mine")
+    body = r2.json()
+    assert body["agent_id"] == "atlas"
+    assert body["agent_name"] == "Atlas"
+    assert body["installed"] is False
+
+    # Admin installs it out of band (scripts/seed_agents.py) -- a plain DB
+    # write, no OAuth call in this codebase touches this row.
+    db = ControlPlaneSessionLocal()
+    try:
+        agent = db.get(Agent, "atlas")
+        agent.bot_token = "xoxb-fake"
+        agent.team_id = "T_1"
+        db.commit()
+    finally:
+        db.close()
+
+    r3 = client.get("/api/agents/mine")
+    body3 = r3.json()
+    assert body3["installed"] is True
+    assert body3["team_id"] == "T_1"

@@ -1,126 +1,132 @@
 # Connecting Slack
 
-Harry observes the **manager's own Slack DMs** (not a general-purpose bot in
-every channel). As of step 14, connecting Slack is a **multi-tenant OAuth
-install flow**: each manager installs the same Slack app into their own
-workspace via `GET /auth/slack/install`, and the resulting per-workspace
-bot token is stored in the control-plane DB, not a single shared `.env`
-value. This is "connect," not "login" -- the manager must already be signed
-in (via Outlook, step 13) before installing Slack.
+Slack is two completely independent concerns in Pulse.ai. Keeping them
+separate (redesigned 2026-07-23, after step 17's original agent-pool
+design conflated them) is the point of this document -- read both
+sections even if you only care about one.
 
-## 1. Create the Slack app (one-time, by whoever runs this deployment)
+1. **Reading** -- tracking a manager's own messages into the knowledge
+   base. One single shared Slack app ("the reader"), a user-token OAuth
+   grant per manager, nothing to do with bots.
+2. **Agents** -- a pool of separately-registered, admin-installed Slack
+   apps ("bots") that managers can claim. Claiming is pure database
+   bookkeeping; installing a bot into the workspace is a one-time admin
+   task done entirely on Slack's own site, no OAuth code in this app is
+   involved.
+
+A manager's Slack messages get tracked whether or not they've ever
+claimed an agent, and a claimed agent works whether or not its manager
+has connected reading. Neither gates the other.
+
+## Part 1: Reading (the "reader" app)
+
+### 1. Create the app (one-time)
 
 1. Go to https://api.slack.com/apps -> "Create New App" -> "From scratch".
-2. Name it (e.g. "Harry") -- this app definition is shared across all
-   managers; each of them installs *this same app* into their own
-   workspace, they don't each create their own Slack app.
+2. Name it (e.g. "Pulse Reader"). This ONE app is shared by every manager
+   -- each of them authorizes it for their own identity, they don't each
+   create an app.
+3. Under **OAuth & Permissions**, add a Redirect URL:
+   ```
+   http://localhost:3003/auth/slack/callback
+   ```
+4. Under **OAuth & Permissions -> User Token Scopes** (not Bot Token
+   Scopes -- this app never installs a bot presence), add:
+   - `im:history` -- a manager's own DMs
+   - `im:read` -- DM channel metadata
+   - `mpim:history` -- group DMs
+   - `groups:history` -- private channels the manager is in
+   - `channels:history` -- public channels the manager is in
+5. Under **Basic Information -> App Credentials**, copy the **Client ID**
+   and **Client Secret**.
 
-## 2. Bot token scopes
-
-Under **OAuth & Permissions**, add these Bot Token Scopes:
-
-- `im:history` -- read DM messages
-- `im:read` -- see DM channel metadata
-- `chat:write` -- send messages (Harry's own outbound pings)
-- `users:read` -- resolve user IDs to names (optional, we do this via our
-  own `team_members` table instead, but it helps debugging)
-
-## 3. OAuth redirect URL (multi-tenant install)
-
-Still under **OAuth & Permissions**, add a Redirect URL:
-
-```
-http://localhost:3003/auth/slack/callback
-```
-
-(add your real deployed URL too, once there is one). This is what lets
-`GET /auth/slack/install` send a manager to Slack's consent screen and get
-routed back to `/auth/slack/callback` afterward, instead of a one-time
-manual "Install to Workspace" click.
-
-Under **Basic Information -> App Credentials**, copy the **Client ID** and
-**Client Secret** -- these are `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET`,
-needed to complete each manager's install handshake.
-
-## 4. Making the manager's DMs visible to the bot
-
-Slack bots only see conversations they're a member of. There is no
-API-level "observe another user's inbox" for a plain bot token. The
-practical options, in order of how much setup they need:
-
-- **Simplest, manual per-conversation**: the manager invites the Harry bot
-  into each relevant DM as needed. Doesn't scale to "every DM automatically."
-- **Recommended for real use**: request `im:history`/`im:read`/`chat:write`
-  under **User Token Scopes** too (not just Bot Token Scopes) so the
-  installing manager can grant a *user* token instead. The resulting user
-  token acts as the manager's own account, so `im:history` genuinely
-  returns their DMs. Our connector code doesn't care which kind of token a
-  `SlackInstallation.bot_token` holds, only that it's a valid Bearer token
-  for the Slack Web API -- if you go this route, `oauth.v2.access`'s
-  response carries it under `authed_user.access_token` instead of the
-  top-level `access_token` (the install callback currently reads the
-  top-level bot token; switching to a user token needs that one-line change
-  in `app/controlplane/slack_auth.py`).
-- **Enterprise Grid**: the Discovery API can observe org-wide conversations,
-  but that's out of scope here (heavy, admin-only).
-
-## 5. Event subscriptions (webhook)
-
-Under **Event Subscriptions**, turn this on and set the Request URL to:
+### 2. Environment variables
 
 ```
-https://<your-deployed-host>/api/integrations/slack/webhook
-```
-
-Slack will send a `url_verification` challenge first -- our webhook handles
-that automatically. Subscribe to the bot event `message.im` (DM messages).
-This is one shared endpoint for every connected workspace -- incoming
-events carry `team_id` at the top level, which the webhook handler uses to
-look up which manager's `SlackInstallation` the event belongs to.
-
-## 6. Signing secret
-
-Under **Basic Information -> App Credentials**, copy the **Signing
-Secret** -- this is `SLACK_SIGNING_SECRET`. It's a single app-level value
-(not per-installation) used to verify that incoming webhook requests
-genuinely came from Slack (HMAC-SHA256 over the request body), regardless
-of which workspace they came from.
-
-## 7. Environment variables
-
-Add to `.env`:
-
-```
-SLACK_CLIENT_ID=...
-SLACK_CLIENT_SECRET=...
-SLACK_SIGNING_SECRET=...
+SLACK_READER_CLIENT_ID=...
+SLACK_READER_CLIENT_SECRET=...
 SLACK_REDIRECT_URI=http://localhost:3003/auth/slack/callback
 ```
 
-Without `SLACK_SIGNING_SECRET` and at least one connected workspace, the
-connector runs in "unconfigured" mode: webhook signature checks are skipped
-(with a warning) and outbound sends are recorded in the database but not
-actually delivered.
+### 3. Connecting
 
-## 8. Connecting a workspace
+A logged-in manager visits `GET /auth/slack/install` (the Connectors
+page's Slack "Grant" button) -- no agent claim required. They land on
+Slack's consent screen, approve, and land back on
+`/connectors?connected=slack&workspace=...`. This writes a
+`SlackReaderInstallation(manager_id, team_id, user_token)` row in the
+control-plane DB. `app/projectkb/jobs/slack_poll.py` polls with that
+token on the usual job cadence -- see app/controlplane/slack_auth.py.
 
-With the app running and a manager already signed in (see OUTLOOK.md),
-visit `GET /auth/slack/install` in a browser (or click "Connect Slack" on
-`/connect.html`). You're redirected to Slack, pick the workspace, approve
-the scopes, and land back on `/connect.html?connected=slack&workspace=...`.
-This creates (or updates) a `SlackInstallation(team_id, manager_id,
-bot_token)` row in the control-plane DB (`data/controlplane.sqlite`).
+`POST /auth/slack/disconnect` revokes the user token and forgets it.
+This has no effect on any agent the manager has claimed.
 
-## 9. The manager's own team_members row
+## Part 2: Agents (the bot pool)
 
-For the manager-only filtering to work, there must be a `TeamMember` row
-whose `role` contains "manager" (case-insensitive) and whose `slack_handle`
-matches their real Slack user ID. Create/update via `POST /api/team`.
+### 1. Create each pool app (one-time per agent, by the admin)
 
-## 10. Tracked contacts
+1. https://api.slack.com/apps -> "Create New App" -> "From scratch", named
+   distinctly (e.g. "Atlas", "Nova") -- recipients see whose bot they're
+   talking to, so each pool slot is its own real Slack app identity.
+2. Under **OAuth & Permissions -> Bot Token Scopes**, add:
+   - `im:history` -- read DMs sent to the bot
+   - `im:read` -- DM channel metadata
+   - `chat:write` -- send messages org-wide
+3. Under **Event Subscriptions**, turn this on, set the Request URL to
+   `https://<host>/api/integrations/slack/webhook` (Slack's
+   `url_verification` challenge is handled automatically), and subscribe
+   to the bot event `message.im`.
+4. Under **Basic Information -> App Credentials**, copy the **App ID**,
+   **Client ID**, **Client Secret**, and **Signing Secret**.
 
-Only DMs whose *other* participant is on the tracked-contacts list get
-stored. Add people via `POST /api/projectkb/tracked-contacts` with a
-`slack_pattern` (exact Slack user ID, or a glob if you have a convention
-for matching multiple IDs -- rare for Slack since IDs aren't structured
-like emails).
+### 2. Install each app to the workspace (one-time, admin, no OAuth code)
+
+Still on that app's **OAuth & Permissions** page, click **Install to
+Workspace** and approve. Slack then displays the **Bot User OAuth
+Token** (`xoxb-...`) directly on that page -- copy it. This is the whole
+installation step; nothing in this codebase performs an OAuth exchange
+for agents.
+
+### 3. Seed the pool
+
+Fill in `agents_pool.json` (gitignored -- see `agents_pool.json.example`)
+with each agent's `id`/`name`/`slack_app_id`/`slack_client_id`/
+`slack_client_secret`/`slack_signing_secret`, plus `bot_token`/`team_id`
+for any agent you've already installed (step 2) -- an entry without them
+seeds a claimable-but-not-yet-installed agent. Then:
+
+```
+.venv/bin/python3 -m scripts.seed_agents
+```
+
+Re-run any time you add agents or finish installing one (it upserts by
+`id`, safe to re-run).
+
+### 4. Claiming
+
+A manager sees unclaimed agents (`GET /api/agents/available`, no code
+needed) and claims one with the admin-issued access code
+(`AGENT_POOL_ACCESS_CODE` env var, `POST /api/agents/claim`) -- see
+`app/controlplane/agents.py`. This only writes `Agent.manager_id`; it
+never talks to Slack. If the claimed agent isn't installed yet (step 2
+still pending), the claim still succeeds, it just doesn't do anything
+useful until the admin finishes installing it.
+
+### 5. The manager's own team_members row
+
+For the manager-only filtering used elsewhere in the KB to work, there
+must be a `TeamMember` row whose `role` contains "manager" and whose
+`slack_handle` matches the manager's real Slack user ID -- this is set
+automatically the first time they connect reading (Part 1), since
+`authed_user.id` from that OAuth flow IS their Slack user ID
+(`_sync_manager_slack_handle` in `app/controlplane/slack_auth.py`).
+
+### 6. Chatting with a claimed bot
+
+A claimed agent's webhook is already live (routed by `api_app_id` ->
+`Agent.slack_app_id`, `app/integrations/slack.py`'s `/webhook`) -- DMing
+the bot ingests the message into that manager's KB today. A live
+reply -- the bot actually chatting back -- is a separate, not-yet-built
+piece (a "personal agent" chat endpoint triggered off this webhook).
+Unclaimed agents' webhooks are inert: `resolve_agent_by_app_id` finds no
+`manager_id` to route to, so incoming messages are ignored.

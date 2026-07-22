@@ -58,17 +58,18 @@ export interface OutlookConnection {
   send_enabled?: boolean;
 }
 
+// Slack "reading" only -- tracking this manager's own messages, entirely
+// unrelated to whether they've claimed an agent (see PoolAgent/getMyAgent
+// below for that).
 export interface SlackConnection {
-  agent_id: string;
-  agent_name: string;
-  installed: boolean;
-  team_id: string | null;
-  read_enabled: boolean;
+  connected: boolean;
+  team_id?: string | null;
+  team_name?: string | null;
 }
 
 export interface Connections {
   outlook: OutlookConnection;
-  slack: SlackConnection | null;
+  slack: SlackConnection;
 }
 
 export function getConnections(): Promise<Connections> {
@@ -95,6 +96,21 @@ export function disconnectSlack(): Promise<void> {
 export interface PoolAgent {
   id: string;
   name: string;
+}
+
+// The bot this manager has claimed, if any -- separate from Connections'
+// `slack` key (message tracking). `installed` is purely informational:
+// whether the admin has installed this agent's Slack app to the
+// workspace yet -- nothing for the manager to do about it either way.
+export interface MyAgent {
+  agent_id: string;
+  agent_name: string;
+  installed: boolean;
+  team_id: string | null;
+}
+
+export function getMyAgent(): Promise<MyAgent | null> {
+  return request("/api/agents/mine");
 }
 
 // Available agents are visible to any logged-in user; the admin's access

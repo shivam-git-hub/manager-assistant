@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DBSession
 
-from app.controlplane.models import get_controlplane_db, Manager, OutlookInstallation, Agent
+from app.controlplane.models import get_controlplane_db, Manager, OutlookInstallation, SlackReaderInstallation
 from app.controlplane.auth import (
     create_session,
     delete_session,
@@ -71,12 +71,13 @@ def me(manager: Manager = Depends(get_current_manager)):
 @router.get("/connections")
 def connections(manager: Manager = Depends(get_current_manager), db: DBSession = Depends(get_controlplane_db)):
     """Everything the manage UI needs to render Outlook/Slack connection
-    status -- connected or not, which mailbox/workspace/agent, and (Outlook
-    only) whether send access has been granted yet. Slack is agent-pool-
-    shaped now (step 17 piece 2b): a manager holds at most one Agent, so
-    this is a single object/null, not a list of workspaces."""
+    status -- connected or not, which mailbox/workspace, and (Outlook only)
+    whether send access has been granted yet. Slack here is ONLY the
+    message-tracking grant (SlackReaderInstallation, redesigned
+    2026-07-23) -- deliberately unrelated to whether this manager has
+    claimed an Agent; see GET /api/agents/mine for that."""
     outlook_installation = db.get(OutlookInstallation, manager.id)
-    agent = db.query(Agent).filter(Agent.manager_id == manager.id).first()
+    reader = db.get(SlackReaderInstallation, manager.id)
 
     outlook = None
     if outlook_installation:
@@ -88,18 +89,16 @@ def connections(manager: Manager = Depends(get_current_manager), db: DBSession =
         }
 
     slack = None
-    if agent:
+    if reader:
         slack = {
-            "agent_id": agent.id,
-            "agent_name": agent.name,
-            "installed": agent.installed_at is not None,
-            "team_id": agent.team_id,
-            "read_enabled": bool(agent.user_token),
+            "connected": True,
+            "team_id": reader.team_id,
+            "team_name": reader.team_name,
         }
 
     return {
         "outlook": outlook or {"connected": False},
-        "slack": slack,
+        "slack": slack or {"connected": False},
     }
 
 

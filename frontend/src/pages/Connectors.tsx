@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import outlookIcon from "@/assets/outlook_icon.png";
 import slackLogo from "@/assets/slack_logo.png";
 import teamsLogo from "@/assets/teams_logo.png";
@@ -16,7 +16,12 @@ import {
 
 // Connectors page (wireframe 10.png): one row per connector, Read/Send
 // permission pills, Grant/Revoke actions, Teams parked under "Coming
-// Soon". All state comes from GET /api/auth/connections.
+// Soon". All state comes from GET /api/auth/connections. Redesigned
+// 2026-07-23: Slack here is ONLY message tracking (a user-token grant,
+// same shape as Outlook's Read) -- deliberately unrelated to the Agent
+// pool (see /agents), which used to wrongly gate this row on "claim a
+// bot first." Slack has no "Send" permission here since sending happens
+// through a claimed agent, not a per-manager grant.
 
 function Pill({ enabled }: { enabled: boolean }) {
   return (
@@ -104,7 +109,6 @@ export default function Connectors() {
   const [conn, setConn] = useState<Connections | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const navigate = useNavigate();
 
   const load = useCallback(() => {
     getConnections().then(setConn).catch(() => setConn(null));
@@ -137,19 +141,8 @@ export default function Connectors() {
 
   async function revokeSlack() {
     await disconnectSlack();
-    setNotice(
-      "Slack disconnected: reading AND sending have both stopped -- your agent is offline. " +
-        "Your claim on the agent identity is kept, so reinstalling brings back the same bot.",
-    );
+    setNotice("Slack reading disconnected -- Pulse no longer tracks your messages there.");
     load();
-  }
-
-  function grantSlack() {
-    if (!conn?.slack) {
-      navigate("/agents");
-      return;
-    }
-    goToSlackInstall();
   }
 
   if (!conn) return null;
@@ -217,40 +210,30 @@ export default function Connectors() {
         <ConnectorRow
           icon={slackLogo}
           name="Slack"
-          subtitle={slack ? `Agent: ${slack.agent_name}` : "Claim an agent first (see Agents)"}
+          subtitle={
+            slack.connected
+              ? `Tracking your messages${slack.team_name ? ` in ${slack.team_name}` : ""}`
+              : "Track your Slack DMs and channels"
+          }
         >
           <PermissionRow
             name="Read"
-            pill={<Pill enabled={!!slack?.read_enabled} />}
+            pill={<Pill enabled={slack.connected} />}
             action={
-              slack?.read_enabled ? (
-                <ActionButton
-                  label="Revoke"
-                  onClick={revokeSlack}
-                  title="Disconnects the Slack install (read and send together); your agent claim is kept"
-                />
+              slack.connected ? (
+                <ActionButton label="Revoke" onClick={revokeSlack} title="Pulse stops tracking your Slack messages" />
               ) : (
-                <ActionButton label="Grant" onClick={grantSlack} />
-              )
-            }
-          />
-          <PermissionRow
-            name="Send"
-            pill={<Pill enabled={!!slack?.installed} />}
-            action={
-              slack?.installed ? (
-                <ActionButton
-                  label="Revoke"
-                  onClick={revokeSlack}
-                  title="Disconnects the Slack install (read and send together); your agent claim is kept"
-                />
-              ) : (
-                <ActionButton label="Grant" onClick={grantSlack} />
+                <ActionButton label="Grant" onClick={goToSlackInstall} />
               )
             }
           />
         </ConnectorRow>
       </div>
+
+      <p className="mt-6 text-center text-xs text-inksoft">
+        Want a bot that chats with you and your teammates? That's a separate agent -- see{" "}
+        <a href="/agents" className="text-nav font-semibold hover:underline">Agents</a>.
+      </p>
 
       <section className="mt-8 rounded-lg bg-card/60 border border-cardline px-6 py-5">
         <h2 className="font-bold text-ink">Coming Soon ..</h2>

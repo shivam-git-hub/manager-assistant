@@ -1,16 +1,23 @@
 """Real Slack connector: Events API webhook (push, already the real payload
 shape) + real Web API calls for sending and DM-participant resolution.
 
-Auth (step 17 piece 2b): agent-pool OAuth install, one distinctly-named
-Slack app ("agent") assigned 1:1 to each manager, stored in the
-control-plane DB as an Agent row (see app/controlplane/models.py) --
-`slack_app_id`/`slack_client_id`/`slack_client_secret`/`slack_signing_secret`
-are per-agent now, not one shared `.env` app -- see
-app/controlplane/slack_auth.py for the claim/install/callback flow.
-Webhook routing keys on the payload's `api_app_id` (-> Agent.slack_app_id),
-not `team_id`, since multiple agents (multiple managers' bots) can now
-share a workspace. See SLACK.md for setup and prompts/step_17_agent_pool.md
-for the full design.
+Bot identity (step 17 piece 2a, redesigned 2026-07-23): a pool of
+distinctly-named Slack apps ("agents"), each pre-registered AND
+pre-installed to the workspace by the admin out of band (scripts/
+seed_agents.py -- NOT any OAuth code in this codebase), stored in the
+control-plane DB as an Agent row (see app/controlplane/models.py).
+Claiming one (app/controlplane/agents.py) is pure DB bookkeeping -- it
+never talks to Slack. Webhook routing keys on the payload's `api_app_id`
+(-> Agent.slack_app_id), not `team_id`, since multiple agents (multiple
+managers' bots) can share a workspace.
+
+Reading a manager's own messages is a SEPARATE concern, unrelated to the
+Agent pool -- one single global reader Slack app, a user-token-only OAuth
+grant per manager (SlackReaderInstallation, app/controlplane/slack_auth.py),
+polled by app/projectkb/jobs/slack_poll.py via fetch_since() below. See
+SLACK.md for setup and prompts/step_17_agent_pool.md for the original
+design (superseded on the install/reading split, see the Agent/
+SlackReaderInstallation docstrings in app/controlplane/models.py).
 
 send() is a plain method, not an HTTP endpoint -- callers are app.outbound
 (quiet-hours gated) and, later, agent tools. Only /webhook is exposed, since
@@ -69,14 +76,16 @@ class SlackConnector(ChannelConnector):
         finally:
             db.close()
 
-    def resolve_agent_by_manager(self, manager_id: str):
-        """The one agent this manager has claimed, if any (Agent.manager_id
-        is unique -- a manager holds exactly one bot)."""
-        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
+    def resolve_reader_by_manager(self, manager_id: str):
+        """This manager's own Slack reading grant, if any (redesigned
+        2026-07-23 -- SlackReaderInstallation, NOT the Agent pool; a
+        manager can read their own messages whether or not they've ever
+        claimed a bot). See app/controlplane/models.py's docstrings."""
+        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, SlackReaderInstallation
 
         db = ControlPlaneSessionLocal()
         try:
-            return db.query(Agent).filter(Agent.manager_id == manager_id).first()
+            return db.get(SlackReaderInstallation, manager_id)
         finally:
             db.close()
 
@@ -281,8 +290,8 @@ class SlackConnector(ChannelConnector):
         if "pytest" in sys.modules:
             return []
 
-        agent = self.resolve_agent_by_manager(manager_id)
-        if agent is None or not agent.user_token:
+        reader = self.resolve_reader_by_manager(manager_id)
+        if reader is None or not reader.user_token:
             return []
 
         since_ts = f"{since.replace(tzinfo=pytz.UTC).timestamp():.6f}" if since.tzinfo is None else f"{since.timestamp():.6f}"
@@ -292,13 +301,14 @@ class SlackConnector(ChannelConnector):
             # Step 20: DMs AND every group/channel the user is in (spec
             # §4.1 -- track everything; the blocklist decides what not to
             # PROCESS, not what to fetch). Requires the broader user scopes
-            # (groups:history, channels:history, mpim:history) on the pool
-            # app -- conversations the token can't read just error per-
-            # channel and are skipped, so partial grants degrade gracefully.
+            # (groups:history, channels:history, mpim:history) on the
+            # reader app (app/controlplane/slack_auth.py's USER_SCOPES) --
+            # conversations the token can't read just error per-channel and
+            # are skipped, so partial grants degrade gracefully.
             convos = self._api_call(
                 "conversations.list",
                 {"types": "im,mpim,private_channel,public_channel", "limit": 200},
-                token=agent.user_token,
+                token=reader.user_token,
             )
             if not convos.get("ok"):
                 logger.warning(f"[slack] fetch_since: conversations.list failed for manager={manager_id}: {convos.get('error')}")
@@ -314,7 +324,7 @@ class SlackConnector(ChannelConnector):
                     history = self._api_call(
                         "conversations.history",
                         {"channel": channel_id, "oldest": since_ts, "limit": 200},
-                        token=agent.user_token,
+                        token=reader.user_token,
                     )
                 except Exception:
                     logger.exception(f"[slack] fetch_since: conversations.history failed for channel={channel_id}")
@@ -437,6 +447,13 @@ async def slack_webhook(request: Request):
         agent.slack_signing_secret,
     ):
         return {"status": "error", "message": "invalid signature"}
+
+    if agent.manager_id is None:
+        # Unclaimed pool bot -- inert by design (see agents_pool.json's
+        # docstring / SLACK.md part 2): a message to it does nothing,
+        # rather than crashing on manager_dir(None) further down.
+        logger.debug(f"[slack] webhook: agent={agent.id} is unclaimed, ignoring")
+        return {"status": "ignored", "detail": "unclaimed agent"}
 
     logger.debug(f"[slack] webhook: api_app_id={api_app_id} routed to agent={agent.id} manager={agent.manager_id}")
 

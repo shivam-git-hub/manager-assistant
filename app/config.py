@@ -35,6 +35,14 @@ SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI", f"http://localhost:{PORT}/a
 # shared admin-issued code gating who can claim a pre-created pool bot.
 AGENT_POOL_ACCESS_CODE = os.getenv("AGENT_POOL_ACCESS_CODE")
 
+# Slack "reader" app (redesigned 2026-07-23, see Agent/SlackReaderInstallation
+# docstrings in app/controlplane/models.py) -- ONE Slack app, shared by every
+# manager, requesting only a user-token grant to track that manager's own
+# messages. Deliberately separate from the Agent pool's per-agent Slack app
+# credentials (see app/controlplane/slack_auth.py, app/integrations/SLACK.md).
+SLACK_READER_CLIENT_ID = os.getenv("SLACK_READER_CLIENT_ID")
+SLACK_READER_CLIENT_SECRET = os.getenv("SLACK_READER_CLIENT_SECRET")
+
 # The Pulse.ai React frontend (frontend/, Vite dev server) -- where post-OAuth
 # redirects land the browser. Not the same origin as this backend in dev
 # (5173 vs 3003), so this can't be a relative path.

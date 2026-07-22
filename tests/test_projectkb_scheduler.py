@@ -6,6 +6,7 @@ from app.controlplane.models import (
     Manager,
     OutlookInstallation,
     Agent,
+    SlackReaderInstallation,
 )
 from app.tenancy.paths import ensure_manager_scaffold, manager_dir
 from app.tenancy.db import get_manager_session
@@ -154,9 +155,10 @@ def test_slack_poll_noop_for_manager_without_user_grant(clean_controlplane_db):
 
 
 def test_slack_poll_uses_specific_manager_user_token(clean_controlplane_db, monkeypatch):
-    """slack_poll for a manager WITH a user-token grant calls fetch_since
-    scoped to that manager_id specifically -- a bot-token-only agent
-    (no user_token) should be treated the same as no installation at all."""
+    """slack_poll for a manager WITH a reader user-token grant calls
+    fetch_since scoped to that manager_id specifically -- redesigned
+    2026-07-23 (SlackReaderInstallation, independent of any claimed
+    Agent; a claimed-but-unrelated Agent must not affect this at all)."""
     from app.projectkb.jobs import slack_poll
     from app.integrations import slack as slack_module
 
@@ -168,6 +170,9 @@ def test_slack_poll_uses_specific_manager_user_token(clean_controlplane_db, monk
                 id=f"agent-{m1}", name="Test Agent", slack_app_id=f"A_{m1}",
                 slack_client_id="cid", slack_client_secret="csecret", slack_signing_secret="ssecret",
                 manager_id=m1, team_id=f"T_{m1}", bot_token="xoxb-fake",
+            ))
+            cp_db.add(SlackReaderInstallation(
+                manager_id=m1, team_id=f"T_{m1}", team_name="Test Workspace",
                 user_token="xoxp-fake", user_id="U_M1",
             ))
             cp_db.commit()
@@ -194,10 +199,10 @@ def test_slack_poll_uses_specific_manager_user_token(clean_controlplane_db, monk
         _cleanup(m1)
 
 
-def test_slack_poll_noop_for_bot_only_installation(clean_controlplane_db):
-    """An Agent with a bot_token but no user_token (manager approved the bot
-    scope, denied the user-scope consent) -> slack_poll still no-ops,
-    doesn't error trying to poll with a missing token."""
+def test_slack_poll_noop_without_reader_installation(clean_controlplane_db):
+    """A claimed, even bot-token-installed, Agent with no
+    SlackReaderInstallation -> slack_poll still no-ops -- reading a
+    manager's own messages is unrelated to whether they hold a bot."""
     from app.projectkb.jobs import slack_poll
 
     m1 = _make_manager("bot-only")

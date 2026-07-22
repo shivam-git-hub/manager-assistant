@@ -4,10 +4,20 @@ Agent table (step 17 piece 2a). Each entry corresponds to a Slack app the
 admin pre-created manually at api.slack.com/apps (subproblem 0 --
 out-of-band, this script does not create Slack apps, only rows).
 
+Redesigned 2026-07-23 (see Agent's docstring in app/controlplane/models.py):
+`bot_token`/`team_id` are now optional fields in agents_pool.json too, not
+just registration credentials -- the admin installs each app to the
+workspace themselves via that Slack app's own "OAuth & Permissions ->
+Install to Workspace" page (which hands them the Bot User OAuth Token
+directly, no OAuth code needed anywhere in this app) and pastes the result
+in here. An entry without them just seeds an uninstalled (but claimable)
+agent -- `installed_at` is only set/updated when a bot_token is present.
+
 Usage: .venv/bin/python3 -m scripts.seed_agents [path/to/agents_pool.json]
 """
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from app.config import BASE_DIR
@@ -33,7 +43,15 @@ def seed(path: Path) -> None:
             agent.slack_client_id = entry["slack_client_id"]
             agent.slack_client_secret = entry["slack_client_secret"]
             agent.slack_signing_secret = entry["slack_signing_secret"]
-            print(f"seeded agent: {agent_id} ({entry['name']})")
+            bot_token = entry.get("bot_token")
+            if bot_token:
+                agent.bot_token = bot_token
+                agent.team_id = entry.get("team_id")
+                if agent.installed_at is None:
+                    agent.installed_at = datetime.now()
+                print(f"seeded agent: {agent_id} ({entry['name']}) -- installed")
+            else:
+                print(f"seeded agent: {agent_id} ({entry['name']}) -- not installed yet")
         db.commit()
     finally:
         db.close()

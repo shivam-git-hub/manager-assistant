@@ -28,6 +28,29 @@ class ClaimRequest(BaseModel):
     code: str
 
 
+@router.get("/mine")
+def my_agent(manager: Manager = Depends(get_current_manager)):
+    """The bot this manager has claimed, if any -- deliberately separate
+    from GET /api/auth/connections' `slack` key (that's the unrelated
+    message-tracking grant, redesigned 2026-07-23). `installed` reflects
+    whether the admin has installed this agent's Slack app to the
+    workspace yet (scripts/seed_agents.py) -- purely informational, there
+    is nothing for the manager to do about it either way."""
+    db = ControlPlaneSessionLocal()
+    try:
+        agent = db.query(Agent).filter(Agent.manager_id == manager.id).first()
+        if agent is None:
+            return None
+        return {
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "installed": agent.bot_token is not None,
+            "team_id": agent.team_id,
+        }
+    finally:
+        db.close()
+
+
 @router.get("/available")
 def list_available_agents(manager: Manager = Depends(get_current_manager)):
     """Unclaimed pool agents -- visible to any logged-in user WITHOUT the

@@ -79,7 +79,7 @@ def test_connections_empty_for_fresh_manager(client):
     assert r.status_code == 200
     body = r.json()
     assert body["outlook"] == {"connected": False}
-    assert body["slack"] is None
+    assert body["slack"] == {"connected": False}
 
 
 def test_connections_reflects_outlook_installation(client):
@@ -115,15 +115,16 @@ def test_connections_reflects_outlook_installation(client):
     assert r2.json()["outlook"]["send_enabled"] is True
 
 
-def test_connections_reflects_claimed_and_installed_agent(client):
-    from app.controlplane.models import Agent
+def test_connections_reflects_slack_reader_installation(client):
+    """Redesigned 2026-07-23: connections()'s slack key is ONLY the
+    message-tracking grant, entirely independent of any claimed Agent."""
+    from app.controlplane.models import SlackReaderInstallation
 
     db = ControlPlaneSessionLocal()
     try:
-        db.add(Agent(
-            id="atlas", name="Atlas", slack_app_id="A_ATLAS",
-            slack_client_id="cid", slack_client_secret="csecret", slack_signing_secret="ssecret",
-            manager_id=client.manager_id,
+        db.add(SlackReaderInstallation(
+            manager_id=client.manager_id, team_id="T_1", team_name="Acme",
+            user_token="xoxp-fake", user_id="U_X",
         ))
         db.commit()
     finally:
@@ -131,23 +132,27 @@ def test_connections_reflects_claimed_and_installed_agent(client):
 
     r = client.get("/api/auth/connections")
     body = r.json()
-    assert body["slack"]["agent_id"] == "atlas"
-    assert body["slack"]["installed"] is False
-    assert body["slack"]["read_enabled"] is False
+    assert body["slack"]["connected"] is True
+    assert body["slack"]["team_id"] == "T_1"
+    assert body["slack"]["team_name"] == "Acme"
+
+
+def test_connections_slack_unaffected_by_claimed_agent(client):
+    """A claimed (even installed) Agent must not make connections()'s
+    slack key report connected -- that's a completely separate concern."""
+    from app.controlplane.models import Agent
 
     db = ControlPlaneSessionLocal()
     try:
-        agent = db.get(Agent, "atlas")
-        agent.team_id = "T_1"
-        agent.bot_token = "xoxb-fake"
-        agent.user_token = "xoxp-fake"
-        agent.installed_at = datetime.now()
+        db.add(Agent(
+            id="atlas", name="Atlas", slack_app_id="A_ATLAS",
+            slack_client_id="cid", slack_client_secret="csecret", slack_signing_secret="ssecret",
+            manager_id=client.manager_id, team_id="T_1", bot_token="xoxb-fake",
+            installed_at=datetime.now(),
+        ))
         db.commit()
     finally:
         db.close()
 
-    r2 = client.get("/api/auth/connections")
-    body2 = r2.json()
-    assert body2["slack"]["installed"] is True
-    assert body2["slack"]["read_enabled"] is True
-    assert body2["slack"]["team_id"] == "T_1"
+    r = client.get("/api/auth/connections")
+    assert r.json()["slack"] == {"connected": False}

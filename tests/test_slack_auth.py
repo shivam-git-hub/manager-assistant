@@ -2,8 +2,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
+from app.controlplane.models import (
+    SessionLocal as ControlPlaneSessionLocal,
+    Agent,
+    SlackReaderInstallation,
+)
 from app.controlplane.slack_auth import _sign_state, _verify_state
+
+
+@pytest.fixture(autouse=True)
+def reader_env(monkeypatch):
+    import app.controlplane.slack_auth as slack_auth_module
+
+    monkeypatch.setattr(slack_auth_module, "SLACK_READER_CLIENT_ID", "test-reader-client-id")
+    monkeypatch.setattr(slack_auth_module, "SLACK_READER_CLIENT_SECRET", "test-reader-client-secret")
 
 
 def _login(client, email="manager@company.com", name="Manager"):
@@ -12,17 +24,19 @@ def _login(client, email="manager@company.com", name="Manager"):
     return r.json()["id"]
 
 
-def _seed_and_claim_agent(client, manager_id, agent_id="atlas", app_id="A_TEST"):
-    """Install requires a claimed agent (step 17 piece 2b) -- seed one
-    already claimed by this manager. Claimed directly at the db level:
-    the claim ENDPOINT (code-gated since 2026-07-23) has its own tests in
-    test_agents.py; here it's just setup."""
+def _seed_installed_agent(agent_id="atlas", app_id="A_TEST", manager_id=None):
+    """Admin-provisioned agent, bot_token already present -- the new
+    reality (redesigned 2026-07-23): installation happens entirely out of
+    band (see scripts/seed_agents.py / SLACK.md), never through a
+    per-manager OAuth flow."""
     db = ControlPlaneSessionLocal()
     try:
         db.add(Agent(
             id=agent_id, name="Atlas", slack_app_id=app_id,
             slack_client_id="test-slack-client-id", slack_client_secret="test-slack-client-secret",
-            slack_signing_secret="test-signing-secret", manager_id=manager_id,
+            slack_signing_secret="test-signing-secret",
+            bot_token="xoxb-preinstalled", team_id="T_KNOWN",
+            manager_id=manager_id,
         ))
         db.commit()
     finally:
@@ -30,32 +44,28 @@ def _seed_and_claim_agent(client, manager_id, agent_id="atlas", app_id="A_TEST")
     return agent_id
 
 
+# ── Reader connect flow ──────────────────────────────────────────────────
+
 def test_install_without_session_is_401(clean_controlplane_db):
     bare_client = TestClient(app)
     r = bare_client.get("/auth/slack/install", follow_redirects=False)
     assert r.status_code == 401
 
 
-def test_install_without_claimed_agent_is_404(client):
-    _login(client)
-    r = client.get("/auth/slack/install", follow_redirects=False)
-    assert r.status_code == 404
-
-
-def test_install_with_claimed_agent_redirects_with_signed_state(client):
+def test_install_redirects_with_signed_state_no_agent_needed(client):
     manager_id = _login(client)
-    _seed_and_claim_agent(client, manager_id)
 
     r = client.get("/auth/slack/install", follow_redirects=False)
     assert r.status_code in (302, 307)
     location = r.headers["location"]
     assert location.startswith("https://slack.com/oauth/v2/authorize")
-    assert "client_id=test-slack-client-id" in location
-    assert "user_scope=im%3Ahistory%2Cim%3Aread" in location or "user_scope=im:history,im:read" in location
+    assert "client_id=test-reader-client-id" in location
+    assert "user_scope=" in location
+    assert "&scope=" not in location
     assert "state=" in location
 
     state = location.split("state=")[1].split("&")[0]
-    assert _verify_state(state, "test-slack-client-secret") == manager_id
+    assert _verify_state(state) == manager_id
 
 
 def test_callback_tampered_state_is_400(client):
@@ -68,19 +78,8 @@ def test_callback_missing_code_is_400(client):
     assert r.status_code == 400
 
 
-def test_callback_state_for_manager_with_no_claimed_agent_is_400(client):
+def test_callback_creates_reader_installation(client, monkeypatch):
     manager_id = _login(client)
-    # Sign with a bogus secret since there's no claimed agent to fetch a
-    # real one from -- the callback should reject on "no agent claimed"
-    # before it even gets to signature verification.
-    state = _sign_state(manager_id, "whatever")
-    r = client.get("/auth/slack/callback", params={"code": "abc123", "state": state})
-    assert r.status_code == 400
-
-
-def test_callback_creates_installation_on_claimed_agent(client, monkeypatch):
-    manager_id = _login(client)
-    agent_id = _seed_and_claim_agent(client, manager_id)
 
     from app.controlplane import slack_auth as slack_auth_module
 
@@ -88,26 +87,46 @@ def test_callback_creates_installation_on_claimed_agent(client, monkeypatch):
         def json(self):
             return {
                 "ok": True,
-                "access_token": "xoxb-fake",
                 "team": {"id": "T12345", "name": "Acme Corp"},
-                "authed_user": {"id": "U_MANAGER_SLACK", "access_token": "xoxp-fake", "scope": "im:history,im:read"},
+                "authed_user": {"id": "U_MANAGER_SLACK", "access_token": "xoxp-fake"},
             }
 
     monkeypatch.setattr(slack_auth_module.httpx, "post", lambda *a, **kw: FakeResponse())
 
-    state = slack_auth_module._sign_state(manager_id, "test-slack-client-secret")
+    state = slack_auth_module._sign_state(manager_id)
     r = client.get("/auth/slack/callback", params={"code": "abc123", "state": state}, follow_redirects=False)
     assert r.status_code in (302, 307)
-    assert "workspace=Acme" in r.headers["location"] or "Acme" in r.headers["location"]
+    assert "Acme" in r.headers["location"]
 
     db = ControlPlaneSessionLocal()
     try:
-        agent = db.get(Agent, agent_id)
-        assert agent.team_id == "T12345"
-        assert agent.bot_token == "xoxb-fake"
-        assert agent.user_token == "xoxp-fake"
-        assert agent.user_id == "U_MANAGER_SLACK"
-        assert agent.installed_at is not None
+        installation = db.get(SlackReaderInstallation, manager_id)
+        assert installation is not None
+        assert installation.team_id == "T12345"
+        assert installation.user_token == "xoxp-fake"
+        assert installation.user_id == "U_MANAGER_SLACK"
+    finally:
+        db.close()
+
+
+def test_callback_without_authed_user_is_400(client, monkeypatch):
+    manager_id = _login(client)
+
+    from app.controlplane import slack_auth as slack_auth_module
+
+    class FakeResponse:
+        def json(self):
+            return {"ok": True, "team": {"id": "T_NO_USER_GRANT", "name": "Acme Corp"}}
+
+    monkeypatch.setattr(slack_auth_module.httpx, "post", lambda *a, **kw: FakeResponse())
+
+    state = slack_auth_module._sign_state(manager_id)
+    r = client.get("/auth/slack/callback", params={"code": "abc123", "state": state})
+    assert r.status_code == 400
+
+    db = ControlPlaneSessionLocal()
+    try:
+        assert db.get(SlackReaderInstallation, manager_id) is None
     finally:
         db.close()
 
@@ -122,20 +141,18 @@ def test_callback_syncs_manager_teammember_slack_handle(client, monkeypatch, db_
     db_session.add(TeamMember(id="U_HARRY_2", name="Shivam", role="Manager", slack_handle=None))
     db_session.commit()
 
-    _seed_and_claim_agent(client, manager_id)
-
     from app.controlplane import slack_auth as slack_auth_module
 
     class FakeResponse:
         def json(self):
             return {
-                "ok": True, "access_token": "xoxb-fake", "team": {"id": "T_SYNC", "name": "Acme"},
+                "ok": True, "team": {"id": "T_SYNC", "name": "Acme"},
                 "authed_user": {"id": "U_MANAGER_REAL", "access_token": "xoxp-fake"},
             }
 
     monkeypatch.setattr(slack_auth_module.httpx, "post", lambda *a, **kw: FakeResponse())
 
-    state = slack_auth_module._sign_state(manager_id, "test-slack-client-secret")
+    state = slack_auth_module._sign_state(manager_id)
     client.get("/auth/slack/callback", params={"code": "abc123", "state": state}, follow_redirects=False)
 
     from app.integrations.base import get_manager
@@ -144,41 +161,15 @@ def test_callback_syncs_manager_teammember_slack_handle(client, monkeypatch, db_
     assert manager_member.slack_handle == "U_MANAGER_REAL"
 
 
-def test_callback_without_authed_user_leaves_user_token_null(client, monkeypatch):
+def test_disconnect_deletes_reader_installation(client, monkeypatch):
     manager_id = _login(client)
-    agent_id = _seed_and_claim_agent(client, manager_id, agent_id="no-user-grant", app_id="A_NO_USER_GRANT")
-
-    from app.controlplane import slack_auth as slack_auth_module
-
-    class FakeResponse:
-        def json(self):
-            return {"ok": True, "access_token": "xoxb-fake", "team": {"id": "T_NO_USER_GRANT", "name": "Acme Corp"}}
-
-    monkeypatch.setattr(slack_auth_module.httpx, "post", lambda *a, **kw: FakeResponse())
-
-    state = slack_auth_module._sign_state(manager_id, "test-slack-client-secret")
-    client.get("/auth/slack/callback", params={"code": "abc123", "state": state}, follow_redirects=False)
 
     db = ControlPlaneSessionLocal()
     try:
-        agent = db.get(Agent, agent_id)
-        assert agent.bot_token == "xoxb-fake"
-        assert agent.user_token is None
-    finally:
-        db.close()
-
-
-def test_disconnect_clears_install_fields_but_keeps_claim(client, monkeypatch):
-    manager_id = _login(client)
-    agent_id = _seed_and_claim_agent(client, manager_id)
-
-    db = ControlPlaneSessionLocal()
-    try:
-        agent = db.get(Agent, agent_id)
-        agent.team_id = "T_DISCONNECT_ME"
-        agent.bot_token = "xoxb-fake"
-        agent.user_token = "xoxp-fake"
-        agent.user_id = "U_X"
+        db.add(SlackReaderInstallation(
+            manager_id=manager_id, team_id="T_DISCONNECT_ME", team_name="Acme",
+            user_token="xoxp-fake", user_id="U_X",
+        ))
         db.commit()
     finally:
         db.close()
@@ -191,28 +182,40 @@ def test_disconnect_clears_install_fields_but_keeps_claim(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        agent = db.get(Agent, agent_id)
-        assert agent is not None  # claim itself survives disconnect
-        assert agent.manager_id == manager_id
-        assert agent.bot_token is None
-        assert agent.user_token is None
-        assert agent.team_id is None
+        assert db.get(SlackReaderInstallation, manager_id) is None
     finally:
         db.close()
 
 
-def test_webhook_routes_by_api_app_id(client, monkeypatch):
-    manager_id = _login(client)
-    _seed_and_claim_agent(client, manager_id, agent_id="atlas", app_id="A_KNOWN")
+def test_disconnect_with_no_installation_is_a_noop(client):
+    _login(client)
+    r = client.post("/auth/slack/disconnect")
+    assert r.status_code == 200
 
+
+# ── Agent claim is independent of reader connect ─────────────────────────
+
+def test_install_does_not_require_a_claimed_agent(client):
+    """The core of the 2026-07-23 redesign: reading works whether or not
+    this manager has ever claimed a pool bot."""
+    manager_id = _login(client)
+
+    from app.controlplane.models import Agent as AgentModel
     db = ControlPlaneSessionLocal()
     try:
-        agent = db.get(Agent, "atlas")
-        agent.team_id = "T_KNOWN"
-        agent.bot_token = "xoxb-fake"
-        db.commit()
+        assert db.query(AgentModel).filter(AgentModel.manager_id == manager_id).first() is None
     finally:
         db.close()
+
+    r = client.get("/auth/slack/install", follow_redirects=False)
+    assert r.status_code in (302, 307)
+
+
+# ── Webhook (unaffected by the reader/agent split) ───────────────────────
+
+def test_webhook_routes_by_api_app_id(client):
+    manager_id = _login(client)
+    _seed_installed_agent(agent_id="atlas", app_id="A_KNOWN", manager_id=manager_id)
 
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
@@ -235,6 +238,31 @@ def test_webhook_routes_by_api_app_id(client, monkeypatch):
     r = client.post("/api/integrations/slack/webhook", json=payload)
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+def test_webhook_unclaimed_agent_is_ignored(client):
+    """An installed-but-unclaimed pool bot must stay inert -- a message to
+    it does nothing (no manager_id to route the ingest to)."""
+    _seed_installed_agent(agent_id="atlas", app_id="A_UNCLAIMED", manager_id=None)
+
+    payload = {
+        "team_id": "T_KNOWN",
+        "api_app_id": "A_UNCLAIMED",
+        "type": "event_callback",
+        "event": {
+            "type": "message",
+            "client_msg_id": "client_msg_unclaimed",
+            "user": "U_ALICE_123",
+            "channel": "D_ALICE_BOT",
+            "channel_type": "im",
+            "text": "hello to an unclaimed bot",
+            "ts": "1789030222.000000",
+        },
+    }
+    r = client.post("/api/integrations/slack/webhook", json=payload)
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+    assert r.json()["detail"] == "unclaimed agent"
 
 
 def test_webhook_unknown_api_app_id_is_ignored(client):

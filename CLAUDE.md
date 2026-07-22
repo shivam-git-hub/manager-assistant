@@ -304,6 +304,68 @@ implementations). The v1 architecture below is being superseded per-piece.
   the directory was empty (no admin had run the seed script yet).
   `tests/test_outlook_auth.py` +2 (Employee-created-on-login,
   Employee-row-reused-and-name-updated-on-repeat-login).
+- **Slack redesign 2026-07-23** (Shivam, live-testing feedback — supersedes
+  step 17 piece 2b's install flow; piece 2a's claim logic is untouched):
+  the original design wrongly coupled two unrelated concerns into one
+  OAuth call — "does this manager's own Slack activity get tracked" and
+  "does a bot identity exist for this manager" — because `/auth/slack/
+  install` required a CLAIMED agent and, in the same consent screen,
+  installed that agent's own Slack app into the workspace AND requested
+  the manager's user-token together. Connectors' Slack row was gated on
+  "claim an agent first," which made no sense to a user who just wants
+  their own messages read. Split into two fully independent flows:
+  - **Reading** (`app/controlplane/slack_auth.py`, rewritten): ONE global
+    "reader" Slack app (`SLACK_READER_CLIENT_ID`/`SECRET`, same pattern as
+    the single global Outlook app), user-token-only OAuth (`user_scope`
+    only, no bot `scope` at all — this app never gets a bot presence),
+    gated only on being logged in. Writes a new `SlackReaderInstallation`
+    row (manager_id PK, team_id/team_name/user_token/user_id) — NOT the
+    `Agent` table. `GET /api/auth/connections`'s `slack` key now reflects
+    ONLY this (`{"connected": bool, "team_id", "team_name"}`, changed from
+    `null` to `{"connected": false}` when absent, matching Outlook's
+    shape) — completely unaffected by whether/which Agent is claimed.
+    `app/integrations/slack.py::fetch_since` /
+    `app/projectkb/jobs/slack_poll.py` now read from
+    `resolve_reader_by_manager` (queries `SlackReaderInstallation`)
+    instead of the old `resolve_agent_by_manager`/`Agent.user_token`.
+  - **Agents** (`app/controlplane/agents.py` — piece 2a's claim logic
+    itself was ALREADY pure DB bookkeeping and needed no change): what
+    changed is that **installing** a pool agent's Slack app into the
+    workspace (getting its `bot_token`) is no longer any OAuth code in
+    this repo at all. The admin now does it directly on Slack's own site
+    (that app's "OAuth & Permissions → Install to Workspace" page, which
+    hands them the Bot User OAuth Token directly) and pastes
+    `bot_token`/`team_id` into `agents_pool.json`, re-seeded via
+    `scripts/seed_agents.py` (extended to accept those two optional
+    fields, setting `installed_at` the first time a token appears). New
+    `GET /api/agents/mine` (pure DB read: claimed agent info + whether
+    `bot_token is not None`) replaces the old conflated `conn.slack` on
+    the Agents page — `Agents.tsx`'s "Install to Slack" button is gone
+    entirely, replaced with read-only installed/not-installed text.
+  - **Review-caught fix**: the webhook handler
+    (`app/integrations/slack.py`'s `/webhook`) previously had no guard for
+    `agent.manager_id is None` — a message to an installed-but-unclaimed
+    pool bot would have proceeded to `get_manager_session(None)` and
+    crashed on `MANAGERS_DIR / None`. Added an explicit early return
+    (`{"status": "ignored", "detail": "unclaimed agent"}`) right after
+    signature verification, so unclaimed bots are now genuinely inert as
+    intended, not crash-on-DM.
+  - `Agent.user_token`/`user_id` columns are left in place but vestigial
+    (no code writes them anymore) — a SQLite `ALTER TABLE ... DROP
+    COLUMN` migration wasn't judged worth it for a dev-stage product.
+  - Explicitly OUT of scope for this change (next up, not yet built): a
+    claimed bot replying when DMed — the webhook already ingests those
+    messages into the KB today, but there's no "personal agent" chat-reply
+    endpoint yet.
+  - `app/integrations/SLACK.md` rewritten top-to-bottom into two parts
+    (Reading / Agents) reflecting the split.
+    `tests/test_slack_auth.py` rewritten (install/callback/disconnect no
+    longer need a claimed agent; new unclaimed-agent-webhook-is-ignored
+    test); `tests/test_auth.py` connections tests split into
+    reader-installation vs. claimed-agent-doesn't-affect-connections;
+    `tests/test_agents.py` +3 (`GET /api/agents/mine`);
+    `tests/test_projectkb_scheduler.py`'s two slack_poll tests moved off
+    `Agent.user_token` onto `SlackReaderInstallation`.
 
 ## Architecture (v1, agreed 2026-07-12 — being superseded)
 
@@ -397,7 +459,17 @@ uses incremental consent: base scopes (`Mail.Read,User.Read`) at login,
 `OutlookInstallation.granted_scopes`.
 
 **Step 17 (Agent Pool — spec: `prompts/step_17_agent_pool.md`, DONE + live-
-verified 2026-07-22):** Slack's step-14 design (single shared bot, bot-token
+verified 2026-07-22, Install/reading REDESIGNED 2026-07-23 — see the
+"Slack redesign 2026-07-23" bullet in Architecture v2 above for what's
+current):** the **Claim** bullet below is still accurate as-is (pure DB
+bookkeeping, unchanged). The **Install** bullet below describes the
+ORIGINAL, now-superseded flow (per-agent OAuth requiring a prior claim,
+combined bot+user scopes) — as of 2026-07-23, installing a bot is an
+admin-only, Slack-side action with no OAuth code in this repo, and reading
+is its own always-available flow unrelated to any claim; keep the history
+below for context but don't treat it as current behavior.
+
+Slack's step-14 design (single shared bot, bot-token
 only) didn't hold up once multiple managers share a workspace, so Slack is
 now split into two concerns: **reading** (a user-token grant, the manager's
 own Slack identity, isolated per-person by construction) vs **sending/being

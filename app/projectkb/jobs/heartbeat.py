@@ -52,7 +52,7 @@ def _manager_projects(manager_id: str) -> List[Dict]:
     ids. Mirrors app.api.projects_registry.list_projects' visibility
     logic, its own short-lived control-plane session (jobs run outside
     any request, so there's no Depends(get_controlplane_db) to borrow --
-    same pattern as app.integrations.slack's resolve_agent_by_manager)."""
+    same pattern as app.integrations.slack's resolve_reader_by_manager)."""
     from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, Project as RegistryProject, ProjectMember, Employee
 
     cdb = ControlPlaneSessionLocal()

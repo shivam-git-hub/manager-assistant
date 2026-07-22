@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   ApiError,
   claimAgent,
   getAvailableAgents,
-  getConnections,
-  goToSlackInstall,
-  type Connections,
+  getMyAgent,
+  type MyAgent,
   type PoolAgent,
 } from "@/lib/api";
 
 // Agents page (Shivam's addition -- not in the wireframes, styled to match
-// Connectors). Layout per Shivam 2026-07-23: "My agent" on top (the one
-// you hold), then "Available agents" (unclaimed pool bots) always listed.
-// The admin's access code is asked for AT claim time -- seeing the list
-// needs no code. One agent per user; the claim survives Slack disconnects.
+// Connectors). Layout: "My agent" on top (the one you hold), then
+// "Available agents" (unclaimed pool bots) always listed. The admin's
+// access code is asked for AT claim time -- seeing the list needs no
+// code. One agent per user. Redesigned 2026-07-23: claiming is pure
+// bookkeeping (see app/controlplane/agents.py) -- there's no "install to
+// Slack" action here anymore, the admin installs each pool bot directly
+// on Slack's own site (see SLACK.md) independent of any claim. This page
+// is also unrelated to Connectors' Slack row (that's message tracking).
 
 function AgentGlyph() {
   // Basic shape drawn inline: a friendly bot head (no agent icon in /assets).
@@ -30,16 +32,15 @@ function AgentGlyph() {
 }
 
 export default function Agents() {
-  const [conn, setConn] = useState<Connections | null>(null);
+  const [mine, setMine] = useState<MyAgent | null | undefined>(undefined);
   const [available, setAvailable] = useState<PoolAgent[]>([]);
   const [claiming, setClaiming] = useState<PoolAgent | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const navigate = useNavigate();
 
   const load = useCallback(() => {
-    getConnections().then(setConn).catch(() => setConn(null));
+    getMyAgent().then(setMine).catch(() => setMine(null));
     getAvailableAgents()
       .then((r) => setAvailable(r.agents))
       .catch(() => setAvailable([]));
@@ -70,9 +71,7 @@ export default function Agents() {
     }
   }
 
-  if (!conn) return null;
-
-  const mine = conn.slack;
+  if (mine === undefined) return null;
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-8">
@@ -88,29 +87,15 @@ export default function Agents() {
                 <div className="text-lg font-semibold text-ink">{mine.agent_name}</div>
                 <div className="text-xs text-inksoft">
                   {mine.installed
-                    ? "Installed to Slack -- reading and sending are managed in Connectors"
-                    : "Claimed, but not installed to Slack yet"}
+                    ? "Installed and ready to receive messages"
+                    : "Waiting on your admin to install it to your Slack workspace"}
                 </div>
               </div>
-              {mine.installed ? (
-                <button
-                  onClick={() => navigate("/connectors")}
-                  className="rounded-md bg-nav/15 text-nav px-4 py-2 text-sm font-semibold hover:bg-nav hover:text-white transition-colors"
-                >
-                  Manage in Connectors
-                </button>
-              ) : (
-                <button
-                  onClick={goToSlackInstall}
-                  className="rounded-md bg-nav text-white px-4 py-2 text-sm font-semibold hover:bg-navdeep"
-                >
-                  Install to Slack
-                </button>
-              )}
             </div>
             <p className="mt-3 text-sm text-inksoft">
-              This agent chats with you and your teammates, takes follow-ups, and drafts messages
-              on your behalf. The claim is yours -- disconnecting Slack later keeps it.
+              This agent chats with you and your teammates and can send messages on your behalf.
+              It's separate from your own Slack connection in Connectors, which just tracks your
+              messages.
             </p>
           </div>
         ) : (

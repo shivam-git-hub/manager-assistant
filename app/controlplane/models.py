@@ -74,17 +74,33 @@ class OutlookInstallation(ControlPlaneBase):
 class Agent(ControlPlaneBase):
     """Pool slot (step 17 piece 2a -- prompts/step_17_agent_pool.md). Each
     row is a distinctly-named, separately-registered Slack app, pre-created
-    out of band by the admin (subproblem 0) and seeded via
-    scripts/seed_agents.py -- NOT created dynamically by this code.
-    `manager_id` unique+nullable enforces the 1:1 (one bot per manager, one
-    bot per manager) at the schema level: null while unclaimed, set once a
-    manager redeems the access code and claims this slot.
+    AND pre-installed into the workspace out of band by the admin
+    (subproblem 0) and seeded via scripts/seed_agents.py -- NOT created or
+    installed dynamically by this code. `manager_id` unique+nullable
+    enforces the 1:1 (one bot per manager) at the schema level: null while
+    unclaimed, set once a manager redeems the access code and claims this
+    slot -- claiming is pure bookkeeping (see app/controlplane/agents.py),
+    it never talks to Slack.
 
-    Piece 2b (done): `/auth/slack/install`, the webhook (routed by
-    `slack_app_id` == the payload's `api_app_id`), `send()`, `/connections`,
-    disconnect, and `slack_poll` all read from this table now -- the old
-    team_id-keyed `SlackInstallation` table is retired (no live data ever
-    existed to migrate; `SLACK_CLIENT_ID` was empty until this pool model)."""
+    Redesigned 2026-07-23 (Shivam, live-testing feedback): the original
+    piece 2b had a manager-facing `/auth/slack/install` OAuth flow that
+    installed the CLAIMED agent's own Slack app into the workspace and, in
+    the same consent screen, requested the manager's own user-token for
+    reading -- conflating two unrelated concerns (whether a manager's
+    messages get tracked; whether a bot identity exists and works) and
+    making "connect Slack to read your messages" wrongly gated on "have you
+    claimed a bot." That flow is gone. `bot_token`/`team_id`/`installed_at`
+    are now populated ONLY by the admin, out of band, at
+    scripts/seed_agents.py time (the admin installs each pool app to the
+    workspace themselves via that Slack app's own "OAuth & Permissions ->
+    Install to Workspace" page, which hands them the bot token directly --
+    no OAuth code in this codebase is involved). Reading a manager's own
+    messages is now a separate, agent-independent concern -- see
+    `SlackReaderInstallation` below and app/controlplane/slack_auth.py.
+
+    `user_token`/`user_id` are vestigial (left in place rather than
+    migrated away -- SQLite ALTER-DROP is not worth it for a dev-stage
+    product): no code path writes them anymore."""
 
     __tablename__ = "agents"
 
@@ -97,16 +113,34 @@ class Agent(ControlPlaneBase):
     manager_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("managers.id"), unique=True, nullable=True)
     team_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     bot_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # User-token grant (piece 1, relocated here in piece 2b) -- the
-    # manager's own Slack identity, requested via user_scope alongside the
-    # bot scope at install time. Used for polling the manager's own DMs
-    # (app/integrations/slack.py fetch_since); distinct from bot_token,
-    # which can only see conversations the bot itself is a member of.
+    # Vestigial -- see docstring above. No longer written.
     user_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     installed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class SlackReaderInstallation(ControlPlaneBase):
+    """One manager's own Slack user-token grant for message *tracking* --
+    deliberately independent of the Agent pool (see Agent's docstring
+    above for why these used to be, wrongly, the same flow). Mirrors
+    OutlookInstallation's shape: a single global Slack app (`SLACK_READER_
+    CLIENT_ID`/`SECRET` in app/config.py, one app for every manager, same
+    pattern as the single global Outlook app) requests ONLY a user-scope
+    grant (no bot scope at all) via app/controlplane/slack_auth.py, and the
+    resulting user token is what app/projectkb/jobs/slack_poll.py polls
+    with -- same mechanism as before, just no longer requires an Agent."""
+
+    __tablename__ = "slack_reader_installations"
+
+    manager_id: Mapped[str] = mapped_column(String(36), ForeignKey("managers.id"), primary_key=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    team_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    user_token: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[str] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 class Employee(ControlPlaneBase):
