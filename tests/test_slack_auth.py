@@ -13,21 +13,20 @@ def _login(client, email="manager@company.com", name="Manager"):
 
 
 def _seed_and_claim_agent(client, manager_id, agent_id="atlas", app_id="A_TEST"):
-    """Install requires a claimed agent now (step 17 piece 2b) -- seed one
-    and claim it via the real claim endpoint."""
+    """Install requires a claimed agent (step 17 piece 2b) -- seed one
+    already claimed by this manager. Claimed directly at the db level:
+    the claim ENDPOINT (code-gated since 2026-07-23) has its own tests in
+    test_agents.py; here it's just setup."""
     db = ControlPlaneSessionLocal()
     try:
         db.add(Agent(
             id=agent_id, name="Atlas", slack_app_id=app_id,
             slack_client_id="test-slack-client-id", slack_client_secret="test-slack-client-secret",
-            slack_signing_secret="test-signing-secret",
+            slack_signing_secret="test-signing-secret", manager_id=manager_id,
         ))
         db.commit()
     finally:
         db.close()
-
-    r = client.post("/api/agents/claim", json={"agent_id": agent_id})
-    assert r.status_code == 200
     return agent_id
 
 

@@ -253,7 +253,30 @@ class OutlookConnector(ChannelConnector):
         app._harry_cache = cache
         return app
 
-    def _acquire_token(self, manager_id: Optional[str] = None) -> Optional[str]:
+    def send_allowed(self, manager_id: Optional[str] = None) -> bool:
+        """Is Mail.Send in this manager's granted_scopes? The OUR-SIDE send
+        gate (step 20 follow-up): /auth/outlook/revoke-send removes the
+        scope from granted_scopes, and this check is what makes that revoke
+        real -- Microsoft's consent may still exist, but Pulse won't use it."""
+        if self.auth_mode == "app":
+            return True  # app-mode permissions are admin-consented app-wide
+        resolved = manager_id or _resolve_active_manager_id()
+        if not resolved:
+            return False
+        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, OutlookInstallation
+
+        db = ControlPlaneSessionLocal()
+        try:
+            row = db.get(OutlookInstallation, resolved)
+            return bool(row and "Mail.Send" in (row.granted_scopes or "").split(","))
+        finally:
+            db.close()
+
+    def _acquire_token(self, manager_id: Optional[str] = None, scopes: Optional[list] = None) -> Optional[str]:
+        """`scopes` defaults to read-only. Callers that need send pass
+        ["Mail.Send"] explicitly -- silently requesting Mail.Send for a
+        user who never granted it can fail the whole silent acquisition
+        (consent_required), which would break READING for read-only users."""
         app = self._get_msal_app(manager_id)
         if app is None:
             logger.error("[outlook] no connected manager found for delegated auth -- visit /auth/outlook/login")
@@ -266,7 +289,7 @@ class OutlookConnector(ChannelConnector):
             if not accounts:
                 logger.error("[outlook] no cached delegated login found -- visit /auth/outlook/login to connect.")
                 return None
-            result = app.acquire_token_silent(["Mail.Read", "Mail.Send"], account=accounts[0])
+            result = app.acquire_token_silent(scopes or ["Mail.Read"], account=accounts[0])
             save_token_cache_for_manager(app._harry_manager_id, app._harry_cache)
 
         if not result or "access_token" not in result:
@@ -281,8 +304,9 @@ class OutlookConnector(ChannelConnector):
     def _api_call(
         self, method: str, path: str, params: Optional[dict] = None,
         json_body: Optional[dict] = None, manager_id: Optional[str] = None,
+        scopes: Optional[list] = None,
     ) -> httpx.Response:
-        token = self._acquire_token(manager_id)
+        token = self._acquire_token(manager_id, scopes=scopes)
         if not token:
             raise RuntimeError("Could not acquire Graph API token")
         headers = {"Authorization": f"Bearer {token}"}
@@ -412,6 +436,10 @@ class OutlookConnector(ChannelConnector):
             logger.debug(f"[outlook] send: skipping live call (configured={self.is_configured()}), recorded {platform_msg_id}")
             return SendResult(ok=True, platform_msg_id=platform_msg_id)
 
+        if not self.send_allowed():
+            logger.warning("[outlook] send blocked: Mail.Send not in granted_scopes (grant it from Connectors)")
+            return SendResult(ok=False, platform_msg_id=platform_msg_id, error="send_permission_not_granted")
+
         try:
             body = {
                 "message": {
@@ -421,7 +449,7 @@ class OutlookConnector(ChannelConnector):
                 },
                 "saveToSentItems": True,
             }
-            resp = self._api_call("POST", f"{self._graph_base_path()}/sendMail", json_body=body)
+            resp = self._api_call("POST", f"{self._graph_base_path()}/sendMail", json_body=body, scopes=["Mail.Send"])
             ok = resp.status_code == 202
             if not ok:
                 logger.error(f"[outlook] sendMail failed: {resp.status_code} {resp.text}")

@@ -79,6 +79,13 @@ export function disconnectOutlook(): Promise<void> {
   return request("/auth/outlook/disconnect", { method: "POST" });
 }
 
+// Our-side send revoke: Pulse stops using send access (the outbound gate
+// closes); Microsoft's consent record itself stays until the user removes
+// it at account.live.com/consent.
+export function revokeOutlookSend(): Promise<void> {
+  return request("/auth/outlook/revoke-send", { method: "POST" });
+}
+
 export function disconnectSlack(): Promise<void> {
   return request("/auth/slack/disconnect", { method: "POST" });
 }
@@ -90,14 +97,16 @@ export interface PoolAgent {
   name: string;
 }
 
-export function redeemAgentCode(code: string): Promise<{ agents: PoolAgent[] }> {
-  return request("/api/agents/redeem", { method: "POST", body: JSON.stringify({ code }) });
+// Available agents are visible to any logged-in user; the admin's access
+// code gates the CLAIM, not the view.
+export function getAvailableAgents(): Promise<{ agents: PoolAgent[] }> {
+  return request("/api/agents/available");
 }
 
-export function claimAgent(agentId: string): Promise<{ agent_id: string; agent_name: string }> {
+export function claimAgent(agentId: string, code: string): Promise<{ agent_id: string; agent_name: string }> {
   return request("/api/agents/claim", {
     method: "POST",
-    body: JSON.stringify({ agent_id: agentId }),
+    body: JSON.stringify({ agent_id: agentId, code }),
   });
 }
 

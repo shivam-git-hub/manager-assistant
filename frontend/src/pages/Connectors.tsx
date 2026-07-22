@@ -10,6 +10,7 @@ import {
   goToOutlookEnableSend,
   goToOutlookLogin,
   goToSlackInstall,
+  revokeOutlookSend,
   type Connections,
 } from "@/lib/api";
 
@@ -121,13 +122,25 @@ export default function Connectors() {
 
   async function revokeOutlook() {
     await disconnectOutlook();
-    setNotice("Outlook disconnected. Pulse no longer reads this mailbox.");
+    setNotice("Outlook disconnected. Pulse no longer reads or sends from this mailbox.");
+    load();
+  }
+
+  async function revokeOutlookSendOnly() {
+    await revokeOutlookSend();
+    setNotice(
+      "Send access revoked -- Pulse will no longer send mail as you. Reading is unaffected. " +
+        "(Microsoft keeps the consent record itself; remove it at account.live.com/consent if you want it gone there too.)",
+    );
     load();
   }
 
   async function revokeSlack() {
     await disconnectSlack();
-    setNotice("Slack disconnected. Your agent claim is kept -- reinstall anytime.");
+    setNotice(
+      "Slack disconnected: reading AND sending have both stopped -- your agent is offline. " +
+        "Your claim on the agent identity is kept, so reinstalling brings back the same bot.",
+    );
     load();
   }
 
@@ -186,8 +199,8 @@ export default function Connectors() {
               outlook.send_enabled ? (
                 <ActionButton
                   label="Revoke"
-                  disabled
-                  title="Microsoft doesn't support revoking send alone -- revoking Read disconnects both"
+                  onClick={revokeOutlookSendOnly}
+                  title="Pulse stops sending mail as you; reading is unaffected"
                 />
               ) : (
                 <ActionButton

@@ -29,35 +29,49 @@ def _login(client, email="manager@company.com", name="Manager"):
     return r.json()["id"]
 
 
-def test_redeem_without_session_is_401(clean_controlplane_db):
+def _claim(client, agent_id, code="test-access-code"):
+    return client.post("/api/agents/claim", json={"agent_id": agent_id, "code": code})
+
+
+def test_available_without_session_is_401(clean_controlplane_db):
     from fastapi.testclient import TestClient
     from app.main import app
 
     bare_client = TestClient(app)
-    r = bare_client.post("/api/agents/redeem", json={"code": "test-access-code"})
+    r = bare_client.get("/api/agents/available")
     assert r.status_code == 401
 
 
-def test_redeem_wrong_code_is_403(client):
+def test_available_lists_only_unassigned_agents_no_code_needed(client):
+    """Shivam 2026-07-23: users see the available agents WITHOUT the code;
+    the code gates the claim, not the view."""
     _login(client)
-    r = client.post("/api/agents/redeem", json={"code": "wrong-code"})
-    assert r.status_code == 403
-
-
-def test_redeem_lists_only_unassigned_agents(client):
-    manager_id = _login(client)
     _seed_agent("atlas", "Atlas")
     _seed_agent("nova", "Nova", manager_id="some-other-manager")
 
-    r = client.post("/api/agents/redeem", json={"code": "test-access-code"})
+    r = client.get("/api/agents/available")
     assert r.status_code == 200
     ids = [a["id"] for a in r.json()["agents"]]
     assert ids == ["atlas"]
 
 
+def test_claim_wrong_code_is_403(client):
+    _login(client)
+    _seed_agent("atlas", "Atlas")
+    r = _claim(client, "atlas", code="wrong-code")
+    assert r.status_code == 403
+
+    # and the agent must remain unclaimed
+    db = ControlPlaneSessionLocal()
+    try:
+        assert db.get(Agent, "atlas").manager_id is None
+    finally:
+        db.close()
+
+
 def test_claim_unknown_agent_is_404(client):
     _login(client)
-    r = client.post("/api/agents/claim", json={"agent_id": "does-not-exist"})
+    r = _claim(client, "does-not-exist")
     assert r.status_code == 404
 
 
@@ -69,7 +83,7 @@ def test_claim_sets_manager_id_and_writes_mirror(client, db_session):
     manager_id = client.manager_id
     _seed_agent("atlas", "Atlas")
 
-    r = client.post("/api/agents/claim", json={"agent_id": "atlas"})
+    r = _claim(client, "atlas")
     assert r.status_code == 200
     assert r.json() == {"agent_id": "atlas", "agent_name": "Atlas"}
 
@@ -91,7 +105,7 @@ def test_claim_already_claimed_by_someone_else_is_409(client):
     _login(client)
     _seed_agent("atlas", "Atlas", manager_id="already-owns-it")
 
-    r = client.post("/api/agents/claim", json={"agent_id": "atlas"})
+    r = _claim(client, "atlas")
     assert r.status_code == 409
 
 
@@ -100,10 +114,10 @@ def test_claim_second_agent_by_same_manager_is_409(client):
     _seed_agent("atlas", "Atlas")
     _seed_agent("nova", "Nova")
 
-    r1 = client.post("/api/agents/claim", json={"agent_id": "atlas"})
+    r1 = _claim(client, "atlas")
     assert r1.status_code == 200
 
-    r2 = client.post("/api/agents/claim", json={"agent_id": "nova"})
+    r2 = _claim(client, "nova")
     assert r2.status_code == 409
 
 
@@ -111,9 +125,9 @@ def test_reclaiming_own_agent_is_idempotent(client):
     _login(client)
     _seed_agent("atlas", "Atlas")
 
-    r1 = client.post("/api/agents/claim", json={"agent_id": "atlas"})
+    r1 = _claim(client, "atlas")
     assert r1.status_code == 200
 
-    r2 = client.post("/api/agents/claim", json={"agent_id": "atlas"})
+    r2 = _claim(client, "atlas")
     assert r2.status_code == 200
     assert r2.json() == {"agent_id": "atlas", "agent_name": "Atlas"}

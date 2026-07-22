@@ -133,11 +133,37 @@ def outlook_enable_send(manager: Manager = Depends(get_current_manager)):
         raise HTTPException(400, "Connect Outlook (sign in) before enabling send permissions")
 
     state = _sign_state("enable_send", manager.id)
+    # prompt="consent" forces Microsoft to SHOW the permission screen
+    # ("send mail as you") even when the consent technically already exists
+    # from an earlier grant -- without it, a user who ever consented before
+    # sees only a sign-in flash and reasonably doubts anything happened.
     authorize_url = _confidential_app().get_authorization_request_url(
-        BASE_SCOPES + SEND_SCOPE, state=state, redirect_uri=MS_GRAPH_REDIRECT_URI
+        BASE_SCOPES + SEND_SCOPE, state=state, redirect_uri=MS_GRAPH_REDIRECT_URI, prompt="consent"
     )
     logger.debug(f"[outlook-auth] redirecting manager={manager.id} to Microsoft authorize endpoint (enable_send)")
     return RedirectResponse(authorize_url)
+
+
+@router.post("/revoke-send")
+def outlook_revoke_send(manager: Manager = Depends(get_current_manager)):
+    """Our-side send revoke: drop Mail.Send from granted_scopes so Pulse
+    stops requesting/using send tokens (the outbound path gates on this --
+    see OutlookConnector.send). Microsoft keeps the underlying consent
+    (there is no app-side API to revoke a delegated grant); the user can
+    remove that themselves at account.live.com/consent. Read access is
+    untouched."""
+    db = ControlPlaneSessionLocal()
+    try:
+        installation = db.get(OutlookInstallation, manager.id)
+        if installation is None:
+            raise HTTPException(400, "Outlook is not connected")
+        granted = [s for s in (installation.granted_scopes or "").split(",") if s and s != "Mail.Send"]
+        installation.granted_scopes = ",".join(granted)
+        db.commit()
+        logger.info(f"[outlook-auth] send permission revoked (our side) for manager={manager.id}")
+    finally:
+        db.close()
+    return {"status": "ok"}
 
 
 @router.post("/disconnect")

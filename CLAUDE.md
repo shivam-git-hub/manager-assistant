@@ -79,6 +79,22 @@ implementations). The v1 architecture below is being superseded per-piece.
   groups:/channels:/mpim:history user scopes on the pool app — degrades
   per-channel if unconsented). `POST /api/messages/manual` = MoM/notes
   input (`source="manual"`, same pipeline).
+- **Connector/agent fixes (2026-07-23, from Shivam's live testing):**
+  (a) `POST /auth/outlook/revoke-send` — our-side send revoke: drops
+  Mail.Send from `granted_scopes`; `OutlookConnector.send_allowed()` gates
+  the live sendMail call on it (MS keeps the consent record — no app-side
+  revoke API exists). (b) enable-send authorize URL now passes
+  `prompt="consent"` so the permission screen actually shows on re-grant.
+  (c) `_acquire_token` no longer hardcodes `["Mail.Read","Mail.Send"]` for
+  silent acquisition — send scope is requested only by the send path
+  (silently requesting an unconsented scope can fail the whole silent
+  flow and break READING for read-only users). (d) Agent claim flow
+  reordered per Shivam: `GET /api/agents/available` (no code) lists
+  unclaimed agents; `POST /api/agents/claim {agent_id, code}` — the code
+  gates the claim, not the view; `/api/agents/redeem` is gone. Agents page
+  = "My agent" section + always-visible available grid. (e) Slack
+  disconnect UI copy fixed: disconnect stops BOTH read and send (bot token
+  revoked via auth.revoke, user token cleared) — only the claim survives.
 - **Known failing tests (pre-existing, NOT v2 regressions):**
   `test_heartbeat.py` (2) + `test_scheduler.py::test_04_followup_lifecycle`
   — v1 followups/heartbeat code sits mid-refactor uncommitted; these get

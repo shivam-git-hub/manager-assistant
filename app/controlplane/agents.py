@@ -23,21 +23,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["Agent Pool"])
 
 
-class RedeemRequest(BaseModel):
+class ClaimRequest(BaseModel):
+    agent_id: str
     code: str
 
 
-class ClaimRequest(BaseModel):
-    agent_id: str
-
-
-@router.post("/redeem")
-def redeem_code(payload: RedeemRequest, manager: Manager = Depends(get_current_manager)):
-    if not AGENT_POOL_ACCESS_CODE:
-        raise HTTPException(500, "AGENT_POOL_ACCESS_CODE is not configured")
-    if payload.code != AGENT_POOL_ACCESS_CODE:
-        raise HTTPException(403, "Invalid access code")
-
+@router.get("/available")
+def list_available_agents(manager: Manager = Depends(get_current_manager)):
+    """Unclaimed pool agents -- visible to any logged-in user WITHOUT the
+    access code (per Shivam 2026-07-23: users see what's available first;
+    the admin's code gates the CLAIM, not the view). Replaces the old
+    /redeem endpoint, which required the code just to see the list."""
     db = ControlPlaneSessionLocal()
     try:
         unassigned = db.query(Agent).filter(Agent.manager_id.is_(None)).all()
@@ -48,6 +44,11 @@ def redeem_code(payload: RedeemRequest, manager: Manager = Depends(get_current_m
 
 @router.post("/claim")
 def claim_agent(payload: ClaimRequest, manager: Manager = Depends(get_current_manager)):
+    if not AGENT_POOL_ACCESS_CODE:
+        raise HTTPException(500, "AGENT_POOL_ACCESS_CODE is not configured")
+    if payload.code != AGENT_POOL_ACCESS_CODE:
+        raise HTTPException(403, "Invalid access code")
+
     db = ControlPlaneSessionLocal()
     try:
         existing = db.get(Agent, payload.agent_id)

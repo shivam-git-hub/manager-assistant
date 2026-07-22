@@ -159,6 +159,9 @@ def test_enable_send_flow_grants_mail_send(client, monkeypatch):
     r2 = client.get("/auth/outlook/enable-send", follow_redirects=False)
     assert r2.status_code in (302, 307)
     assert "Mail.Send" in r2.headers["location"]
+    # prompt=consent forces the actual permission screen to show even when
+    # a prior consent exists (step 20 follow-up, Shivam's report)
+    assert "prompt=consent" in r2.headers["location"]
 
     r3 = client.get(
         "/auth/outlook/callback",
@@ -174,6 +177,50 @@ def test_enable_send_flow_grants_mail_send(client, monkeypatch):
         assert installation.granted_scopes == "Mail.Read,User.Read,Mail.Send"
     finally:
         db.close()
+
+
+def test_revoke_send_drops_scope_and_gates_sending(client, monkeypatch):
+    """Our-side send revoke: Mail.Send leaves granted_scopes, the
+    connections API reports send_enabled=False again, and the outbound
+    send gate (OutlookConnector.send_allowed) closes -- read untouched."""
+    _mock_successful_exchange(monkeypatch, email="erin@company.com", name="Erin")
+    r = client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
+    assert r.status_code in (302, 307)
+
+    db = ControlPlaneSessionLocal()
+    try:
+        manager = db.query(Manager).filter(Manager.email == "erin@company.com").first()
+    finally:
+        db.close()
+
+    r2 = client.get(
+        "/auth/outlook/callback",
+        params={"code": "send-code", "state": _sign_state("enable_send", manager.id)},
+        follow_redirects=False,
+    )
+    assert r2.status_code in (302, 307)
+
+    from app.integrations.outlook import connector as outlook_connector
+    assert outlook_connector.send_allowed(manager.id) is True
+
+    r3 = client.post("/auth/outlook/revoke-send")
+    assert r3.status_code == 200
+
+    db = ControlPlaneSessionLocal()
+    try:
+        installation = db.get(OutlookInstallation, manager.id)
+        assert installation.granted_scopes == "Mail.Read,User.Read"
+    finally:
+        db.close()
+    assert outlook_connector.send_allowed(manager.id) is False
+
+    conn = client.get("/api/auth/connections").json()
+    assert conn["outlook"]["connected"] is True
+    assert conn["outlook"]["send_enabled"] is False
+
+
+def test_revoke_send_without_installation_is_400(client):
+    assert client.post("/auth/outlook/revoke-send").status_code == 400
 
 
 def test_disconnect_removes_installation(client, monkeypatch):

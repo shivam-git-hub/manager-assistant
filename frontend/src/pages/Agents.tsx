@@ -3,17 +3,18 @@ import { useNavigate } from "react-router-dom";
 import {
   ApiError,
   claimAgent,
+  getAvailableAgents,
   getConnections,
   goToSlackInstall,
-  redeemAgentCode,
   type Connections,
   type PoolAgent,
 } from "@/lib/api";
 
 // Agents page (Shivam's addition -- not in the wireframes, styled to match
-// Connectors): unlock the pool with the admin's access code, claim one
-// available agent, then install it to Slack. A user holds at most one
-// agent; the claim is kept even if Slack is later disconnected.
+// Connectors). Layout per Shivam 2026-07-23: "My agent" on top (the one
+// you hold), then "Available agents" (unclaimed pool bots) always listed.
+// The admin's access code is asked for AT claim time -- seeing the list
+// needs no code. One agent per user; the claim survives Slack disconnects.
 
 function AgentGlyph() {
   // Basic shape drawn inline: a friendly bot head (no agent icon in /assets).
@@ -30,54 +31,37 @@ function AgentGlyph() {
 
 export default function Agents() {
   const [conn, setConn] = useState<Connections | null>(null);
+  const [available, setAvailable] = useState<PoolAgent[]>([]);
+  const [claiming, setClaiming] = useState<PoolAgent | null>(null);
   const [code, setCode] = useState("");
-  const [available, setAvailable] = useState<PoolAgent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
   const load = useCallback(() => {
     getConnections().then(setConn).catch(() => setConn(null));
+    getAvailableAgents()
+      .then((r) => setAvailable(r.agents))
+      .catch(() => setAvailable([]));
   }, []);
   useEffect(load, [load]);
 
-  async function handleUnlock() {
-    if (!code.trim()) return;
+  async function handleClaim() {
+    if (!claiming || !code.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await redeemAgentCode(code.trim());
-      setAvailable(res.agents);
-      if (res.agents.length === 0)
-        setError("The pool has no unclaimed agents right now -- ask your admin to add more.");
-    } catch (e) {
-      setError(
-        e instanceof ApiError && e.status === 403
-          ? "That access code isn't right. Codes are handed out by your admin."
-          : "Couldn't check the code -- try again.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleClaim(agent: PoolAgent) {
-    setBusy(true);
-    setError(null);
-    try {
-      await claimAgent(agent.id);
-      setAvailable(null);
+      await claimAgent(claiming.id, code.trim());
+      setClaiming(null);
+      setCode("");
       load();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
+      if (e instanceof ApiError && e.status === 403) {
+        setError("That access code isn't right. Codes are handed out by your admin.");
+      } else if (e instanceof ApiError && e.status === 409) {
         setError("That agent was taken a moment ago -- pick another.");
-        // refresh the list with the same already-validated code
-        try {
-          const res = await redeemAgentCode(code.trim());
-          setAvailable(res.agents);
-        } catch {
-          setAvailable(null);
-        }
+        setClaiming(null);
+        load();
       } else {
         setError("Claim failed -- try again.");
       }
@@ -94,93 +78,129 @@ export default function Agents() {
     <main className="mx-auto max-w-4xl px-6 py-8">
       <h1 className="text-2xl font-extrabold text-ink text-center">Agents</h1>
 
-      {mine ? (
-        <section className="mt-8 rounded-lg border border-cardline bg-white px-6 py-6">
-          <div className="flex items-center gap-4 flex-wrap">
-            <AgentGlyph />
-            <div className="flex-1 min-w-40">
-              <div className="text-lg font-semibold text-ink">{mine.agent_name}</div>
-              <div className="text-xs text-inksoft">
-                Your personal agent{mine.installed ? " -- installed to Slack" : " -- not installed to Slack yet"}
+      <section className="mt-8">
+        <h2 className="font-semibold text-ink">My agent</h2>
+        {mine ? (
+          <div className="mt-3 rounded-lg border border-cardline bg-white px-6 py-5">
+            <div className="flex items-center gap-4 flex-wrap">
+              <AgentGlyph />
+              <div className="flex-1 min-w-40">
+                <div className="text-lg font-semibold text-ink">{mine.agent_name}</div>
+                <div className="text-xs text-inksoft">
+                  {mine.installed
+                    ? "Installed to Slack -- reading and sending are managed in Connectors"
+                    : "Claimed, but not installed to Slack yet"}
+                </div>
               </div>
+              {mine.installed ? (
+                <button
+                  onClick={() => navigate("/connectors")}
+                  className="rounded-md bg-nav/15 text-nav px-4 py-2 text-sm font-semibold hover:bg-nav hover:text-white transition-colors"
+                >
+                  Manage in Connectors
+                </button>
+              ) : (
+                <button
+                  onClick={goToSlackInstall}
+                  className="rounded-md bg-nav text-white px-4 py-2 text-sm font-semibold hover:bg-navdeep"
+                >
+                  Install to Slack
+                </button>
+              )}
             </div>
-            {mine.installed ? (
-              <button
-                onClick={() => navigate("/connectors")}
-                className="rounded-md bg-nav/15 text-nav px-4 py-2 text-sm font-semibold hover:bg-nav hover:text-white transition-colors"
-              >
-                Manage in Connectors
-              </button>
-            ) : (
-              <button
-                onClick={goToSlackInstall}
-                className="rounded-md bg-nav text-white px-4 py-2 text-sm font-semibold hover:bg-navdeep"
-              >
-                Install to Slack
-              </button>
-            )}
-          </div>
-          <p className="mt-4 text-sm text-inksoft">
-            This agent chats with you and your teammates, takes follow-ups, and drafts messages on
-            your behalf. The claim is yours -- disconnecting Slack later keeps it.
-          </p>
-        </section>
-      ) : (
-        <>
-          <section className="mt-8 rounded-lg border border-cardline bg-white px-6 py-6">
-            <h2 className="font-semibold text-ink">Claim your agent</h2>
-            <p className="mt-1 text-sm text-inksoft">
-              Enter the access code from your admin to see the available agents.
+            <p className="mt-3 text-sm text-inksoft">
+              This agent chats with you and your teammates, takes follow-ups, and drafts messages
+              on your behalf. The claim is yours -- disconnecting Slack later keeps it.
             </p>
-            <div className="mt-3 flex gap-2 max-w-md">
-              <input
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
-                placeholder="Access code"
-                type="password"
-                className="flex-1 min-w-0 rounded-md border border-cardline px-3 py-2 text-sm focus:outline-none focus:border-nav"
-              />
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-inksoft">
+            You don't hold an agent yet. Claim one below with the access code from your admin.
+          </p>
+        )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="font-semibold text-ink">Available agents</h2>
+        {available.length === 0 ? (
+          <p className="mt-2 text-sm text-inksoft">
+            No unclaimed agents right now -- ask your admin to add more to the pool.
+          </p>
+        ) : (
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            {available.map((agent) => (
+              <div
+                key={agent.id}
+                className="rounded-lg border border-cardline bg-card px-5 py-4 flex items-center gap-3"
+              >
+                <AgentGlyph />
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-ink truncate">{agent.name}</div>
+                  <div className="text-xs text-inksoft">Unclaimed</div>
+                </div>
+                <button
+                  onClick={() => {
+                    setClaiming(agent);
+                    setError(null);
+                  }}
+                  disabled={!!mine || busy}
+                  title={mine ? "You already hold an agent -- one per user" : undefined}
+                  className="rounded-md bg-nav text-white px-4 py-1.5 text-sm font-semibold hover:bg-navdeep disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Claim
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {claiming && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setClaiming(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Claim ${claiming.name}`}
+          >
+            <h3 className="font-bold text-ink">Claim {claiming.name}</h3>
+            <p className="mt-1 text-sm text-inksoft">
+              Enter the access code from your admin to claim this agent.
+            </p>
+            <input
+              autoFocus
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleClaim()}
+              placeholder="Access code"
+              type="password"
+              className="mt-3 w-full rounded-md border border-cardline px-3 py-2 text-sm focus:outline-none focus:border-nav"
+            />
+            {error && <p className="mt-2 text-sm text-[#DD5454]">{error}</p>}
+            <div className="mt-4 flex justify-end gap-3">
               <button
-                onClick={handleUnlock}
-                disabled={busy}
+                onClick={() => setClaiming(null)}
+                className="rounded-md px-4 py-2 text-sm font-semibold text-inksoft hover:bg-surface"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClaim}
+                disabled={busy || !code.trim()}
                 className="rounded-md bg-nav text-white px-4 py-2 text-sm font-semibold hover:bg-navdeep disabled:opacity-60"
               >
-                Unlock
+                {busy ? "Claiming…" : "Claim agent"}
               </button>
             </div>
-          </section>
-
-          {available && available.length > 0 && (
-            <section className="mt-6">
-              <h2 className="font-semibold text-ink">Available agents</h2>
-              <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                {available.map((agent) => (
-                  <div
-                    key={agent.id}
-                    className="rounded-lg border border-cardline bg-card px-5 py-4 flex items-center gap-3"
-                  >
-                    <AgentGlyph />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-ink truncate">{agent.name}</div>
-                      <div className="text-xs text-inksoft">Unclaimed</div>
-                    </div>
-                    <button
-                      onClick={() => handleClaim(agent)}
-                      disabled={busy}
-                      className="rounded-md bg-nav text-white px-4 py-1.5 text-sm font-semibold hover:bg-navdeep disabled:opacity-60"
-                    >
-                      Claim
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-        </>
+          </div>
+        </div>
       )}
 
-      {error && <p className="mt-4 text-sm text-[#DD5454] text-center">{error}</p>}
+      {error && !claiming && <p className="mt-4 text-sm text-[#DD5454] text-center">{error}</p>}
     </main>
   );
 }
