@@ -42,6 +42,17 @@ def manager_memory_md_path(manager_id: str) -> Path:
     return manager_dir(manager_id) / "memory.md"
 
 
+def manager_events_md_path(manager_id: str) -> Path:
+    """Step 25: timestamped log of the user's own key events, append-only."""
+    return manager_dir(manager_id) / "events.md"
+
+
+def manager_dump_md_path(manager_id: str) -> Path:
+    """Step 25: literal reference dump (contacts, feature descriptions,
+    etc.) for future RAG use, append-only."""
+    return manager_dir(manager_id) / "dump.md"
+
+
 def ensure_manager_scaffold(manager_id: str) -> Path:
     """Create this manager's home directory and initialize db.sqlite
     (idempotent). Called at provisioning time -- dev-login (step 12) or

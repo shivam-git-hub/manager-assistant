@@ -25,6 +25,7 @@ from app.config import HEARTBEAT_CLAIM_BATCH_SIZE, SMART_MODEL
 from app.database import Claim, Event
 from app.agent.gemini_client import GeminiClient, get_client
 from app.projectkb.llm_json import parse_json_list_field, parse_json_object
+from app.projectkb.project_scope import manager_owned_projects_with_events
 from app.tenancy.paths import manager_memory_md_path
 
 logger = logging.getLogger(__name__)
@@ -319,31 +320,12 @@ def _run_project_fanout(db: Session, manager_id: str, tagged_events: List[Event]
     project truth -- a teammate's own DMs never feed project KB), and runs
     the per-project fan-out for each. One project failing (e.g. its own
     LLM call raises) is logged and skipped, never aborts the others."""
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Project as RegistryProject
-
-    events_by_project: Dict[str, List[Event]] = {}
-    for event in tagged_events:
-        for project_id in json.loads(event.project_ids) if event.project_ids else []:
-            events_by_project.setdefault(project_id, []).append(event)
-
+    events_by_project = manager_owned_projects_with_events(manager_id, tagged_events)
     if not events_by_project:
         return {"projects_touched": 0, "tasks_updated": 0, "tasks_drafted": 0, "archive_entries": 0}
 
-    cdb = ControlPlaneSessionLocal()
-    try:
-        managed_project_ids = {
-            p.id
-            for p in cdb.query(RegistryProject)
-            .filter(RegistryProject.id.in_(events_by_project.keys()), RegistryProject.manager_user_id == manager_id)
-            .all()
-        }
-    finally:
-        cdb.close()
-
     totals = {"projects_touched": 0, "tasks_updated": 0, "tasks_drafted": 0, "archive_entries": 0}
     for project_id, project_events in events_by_project.items():
-        if project_id not in managed_project_ids:
-            continue
         try:
             stats = _fanout_one_project(db, project_id, project_events, client)
         except Exception:

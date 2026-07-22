@@ -228,20 +228,59 @@ implementations). The v1 architecture below is being superseded per-piece.
   `project` fixture). Live-verified via the running dev backend: seeded a
   real request event linked to a real task, hit `/approve` over HTTP,
   confirmed the task flipped `todo`→`done`.
+- **Step 25 DONE 2026-07-23** (`prompts/step_25_dream_job.md`):
+  `app/projectkb/jobs/dream.py::run(db, manager_id, client=None)`.
+  Selection uses `Event.dreamed` (NOT a wall-clock `job_schedule.py`
+  cursor — deliberately: that cursor tracks REAL wall-clock scheduling
+  cadence, while `Event.created_at` is stamped in SIM time; comparing the
+  two would silently miscount "new since last dream" whenever the sim
+  clock jumps demo-days forward). Two phases per tick: (1) per-user —
+  ALL pending events (general + project-tagged) go into one `SMART_MODEL`
+  call that returns a full-rewrite `memory.md` (model instructed to
+  merge/dedupe, not blindly append) plus lines appended to `events.md`/
+  `dump.md`; (2) per-managed-project (via the same
+  `manager_owned_projects_with_events` scoping used by step 24, now
+  factored into `app/projectkb/project_scope.py` and reused by both) —
+  one call per touched project returns a full-rewrite `summary.md`,
+  appended `events.md` lines, new `Suggestion`/`Concern` rows
+  (`status="open"`, no dedup — rows accumulate across ticks by design,
+  same convention as everywhere else in the codebase), and a health
+  nudge. Health: `_compute_base_health_score()` is a pure, documented
+  0–100 formula (capped penalties: 15/blocker up to 4, 10/overdue-task up
+  to 5, 20/conflict up to 3, 1/day-since-last-progress-event up to 30);
+  the LLM may nudge by at most one band (±`HEALTH_BAND_POINTS`=15,
+  clamped in code even if the model tries ±3) and MUST supply a
+  `health_reason` or the nudge is floored back to 0 — a `HealthLog` row
+  lands every tick regardless. New per-manager md path helpers
+  (`manager_events_md_path`/`manager_dump_md_path`,
+  `app/tenancy/paths.py`) alongside the existing `manager_memory_md_path`.
+  Two review-caught fixes: (1) `parse_json_object()` tolerates malformed
+  LLM JSON by returning `{}` rather than raising — correct for the other
+  jobs, but events are the pipeline's TERMINAL stage, so a garbage
+  user-level response used to silently mark the whole batch
+  `dreamed=True` with nothing synthesized and no way to ever recover
+  those events; now an empty parse result raises explicitly, leaving the
+  batch `dreamed=False` for a real retry. (2) `_run_project_synthesis`
+  used to write `summary.md`/`events.md` to disk BEFORE committing the
+  project db's Suggestion/Concern/HealthLog rows — a failure in between
+  (e.g. the commit itself) left the file looking freshly synthesized
+  while the backing DB state silently rolled back; reordered so the DB
+  commit happens first and file writes only follow a successful commit.
+  `tests/test_dream_job.py` (20 tests). Live-verified end-to-end
+  including through the real `GET /projects/{id}/insights` endpoint the
+  frontend already consumes — suggestions/concerns/health now show real
+  data with no frontend changes needed (that endpoint was built ahead of
+  this step, in step 21, always-empty until now).
 - **Pending steps, prompts pre-written 2026-07-23** (spec §7 implementation
-  order items 7-9, not yet implemented): `prompts/step_25_dream_job.md`
-  (memory.md/events.md/dump.md per user; summary.md/events.md/
-  suggestions/concerns/health rubric per managed project),
-  `prompts/step_26_lint_job.md` (deterministic integrity checks +
-  optional non-blocking LLM coherence pass), `prompts/
-  step_27_frontend_remaining_gaps.md` (blocklist settings UI, full
-  Create-Project form per wireframe 5.png, Portfolios pages 4/8.png —
-  needs a design/spec check first, workload view, grab-bag not
-  sequentially dependent on the others). The two remaining job stubs
-  (`app/projectkb/jobs/{dream,lint}.py`) still describe v1-era concepts
-  (timeline.md tiers, todos/conflicts) in their docstrings — steps 25-26
-  replace those docstrings along with the code, don't preserve the stale
-  wording.
+  order items 8-9, not yet implemented): `prompts/step_26_lint_job.md`
+  (deterministic integrity checks + optional non-blocking LLM coherence
+  pass), `prompts/step_27_frontend_remaining_gaps.md` (blocklist settings
+  UI, full Create-Project form per wireframe 5.png, Portfolios pages
+  4/8.png — needs a design/spec check first, workload view, grab-bag not
+  sequentially dependent on the others). `app/projectkb/jobs/lint.py`
+  still describes v1-era concepts (timeline.md tiers, todos/conflicts) in
+  its docstring — step 26 replaces that docstring along with the code,
+  don't preserve the stale wording.
 
 ## Architecture (v1, agreed 2026-07-12 — being superseded)
 
