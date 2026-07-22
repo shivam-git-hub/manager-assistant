@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import ProjectCard from "@/components/ProjectCard";
 import CreateProjectModal from "@/components/CreateProjectModal";
 import { getProjects, type ProjectSummary } from "@/lib/api";
@@ -9,6 +10,7 @@ import { getProjects, type ProjectSummary } from "@/lib/api";
 // health lands with the dream job) -- both render disabled rather than
 // faked.
 export default function Projects() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [creating, setCreating] = useState(false);
   const [sort, setSort] = useState<"name">("name");
@@ -63,7 +65,7 @@ export default function Projects() {
       ) : (
         <div className="mt-6 grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
           {sorted.map((p) => (
-            <ProjectCard key={p.id} project={p} />
+            <ProjectCard key={p.id} project={p} onClick={() => navigate(`/projects/${p.id}`)} />
           ))}
         </div>
       )}

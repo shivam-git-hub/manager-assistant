@@ -128,12 +128,16 @@ def list_events(
     min_severity: int = Query(1, ge=0, le=3),
     limit: int = Query(50, ge=1, le=200),
     include_dismissed: bool = False,
+    project_id: Optional[str] = None,
     db: Session = Depends(get_manager_db),
 ) -> dict:
     """The Updates panel query (spec §2): events at/above the severity
     threshold minus dismissed ones, plus promoted ones regardless of
     severity. include_dismissed=true is the "View All" screen -- dismissed
-    rows come back (threshold still applies to non-promoted rows)."""
+    rows come back (threshold still applies to non-promoted rows).
+    project_id narrows to events tagged with that project (the project
+    dashboard's panels, step 21) -- Python-side filter over the JSON list
+    column, fine at this scale."""
     visible = or_(Event.severity >= min_severity, Event.ui_state == "promoted")
     query = select(Event).where(visible)
     if not include_dismissed:
@@ -142,6 +146,11 @@ def list_events(
     matching = db.scalars(
         query.order_by(Event.severity.desc(), Event.created_at.desc(), Event.id.desc())
     ).all()
+    if project_id is not None:
+        matching = [
+            e for e in matching
+            if e.project_ids and project_id in json.loads(e.project_ids)
+        ]
     returned = matching[:limit]
     return {
         "events": [_event_dict(e) for e in returned],
@@ -157,6 +166,9 @@ def list_events(
 class ManualMessageIn(BaseModel):
     content: str
     subject: Optional[str] = None
+    # Optional tagging hint for the future ingest/heartbeat jobs -- a MoM
+    # added from a project's own page already knows its project.
+    project_id: Optional[str] = None
 
 
 @router.post("/messages/manual", status_code=status.HTTP_201_CREATED)
@@ -186,6 +198,7 @@ def add_manual_message(
         timestamp=now,
         created_at=now,
         is_processed=False,
+        raw_metadata=json.dumps({"project_id": payload.project_id}) if payload.project_id else None,
     )
     db.add(msg)
     db.commit()

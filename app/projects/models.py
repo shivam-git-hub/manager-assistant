@@ -45,6 +45,7 @@ class Task(ProjectBase):
     # reasoning as the orphaned app.projectkb.models.Claim.source_message_id.
     assignee_employee_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="todo")  # todo|in_progress|blocked|done|pending_approval
+    priority: Mapped[str] = mapped_column(String(10), default="medium")  # low|medium|high (wireframe 6, step 21)
     due: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[str] = mapped_column(String(20))  # "manager" | "agent"
     approved_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)

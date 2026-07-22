@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import StatusFlower from "@/components/StatusFlower";
 import ProjectCard from "@/components/ProjectCard";
 import CreateProjectModal from "@/components/CreateProjectModal";
@@ -229,12 +229,14 @@ function CardRail({
   onNew: () => void;
   newLabel: string;
 }) {
+  const navigate = useNavigate();
+  const navigateToProject = (id: string) => navigate(`/projects/${id}`);
   return (
     <section className="mt-8">
       <h2 className="text-2xl font-extrabold text-ink">{title}</h2>
       <div className="mt-3 flex gap-5 overflow-x-auto pb-2">
         {projects.map((p) => (
-          <ProjectCard key={p.id} project={p} />
+          <ProjectCard key={p.id} project={p} onClick={() => navigateToProject(p.id)} />
         ))}
         <button
           onClick={onNew}

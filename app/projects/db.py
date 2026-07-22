@@ -39,11 +39,24 @@ def get_project_session(project_id: str) -> DBSession:
 
 
 def init_project_db(project_id: str) -> None:
-    """Schema create for this project's db.sqlite -- tasks/archive/
-    conflicts/suggestions/concerns/health_log. Called by
-    app.projects.paths.ensure_project_scaffold(), idempotent."""
+    """Schema create + column migrations for this project's db.sqlite --
+    tasks/archive/conflicts/suggestions/concerns/health_log. Called by
+    app.projects.paths.ensure_project_scaffold(), idempotent. Migrations
+    follow tenancy's PRAGMA pattern since project dbs already exist on
+    disk from before a column was added."""
+    from sqlalchemy import text
+
     from app.projects.models import ProjectBase
 
     engine = get_project_engine(project_id)
     ProjectBase.metadata.create_all(bind=engine)
+
+    session = get_project_session(project_id)
+    try:
+        cols = [row[1] for row in session.execute(text("PRAGMA table_info(tasks)")).fetchall()]
+        if "priority" not in cols:
+            session.execute(text("ALTER TABLE tasks ADD COLUMN priority VARCHAR(10) DEFAULT 'medium'"))
+            session.commit()
+    finally:
+        session.close()
     logger.debug(f"[projects] initialized db.sqlite for project={project_id}")

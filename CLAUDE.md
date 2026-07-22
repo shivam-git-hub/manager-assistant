@@ -95,6 +95,21 @@ implementations). The v1 architecture below is being superseded per-piece.
   = "My agent" section + always-visible available grid. (e) Slack
   disconnect UI copy fixed: disconnect stops BOTH read and send (bot token
   revoked via auth.revoke, user token cleared) — only the claim survives.
+- **Step 21 DONE 2026-07-23** (`prompts/step_21_project_drilldown.md`):
+  project drill-down. Backend: `Task.priority` (+PRAGMA migration in
+  `init_project_db`); `app/api/project_detail.py` under
+  `/api/projects/{id}` — tasks CRUD (manager-only writes, subtask nesting,
+  `schedule_state` computed vs SIM time, `my_tasks` by employee-email
+  match, approve stamps `approved_by`), `/doc` GET/PUT (project.md +
+  notes.md raw), `/vault` list/upload/download (python-multipart added;
+  basename-only guard), `/insights` bundle, `DELETE` (registry rows +
+  dir). `GET /api/events?project_id=` filter; manual MoM takes
+  `project_id` → raw_metadata. Frontend: `/projects/:id` overview (7.png —
+  md-section render + manager edit, Team/Vault/Add-MoM dialogs, timeline
+  empty state) and `/projects/:id/dashboard` (6.png — task table w/
+  priority+status chips, My Tasks, four event/insight panels, delete
+  confirm); cards clickable. Requests Approve/Reject + blocker Resolve
+  semantics arrive with the pipeline that creates those events.
 - **Known failing tests (pre-existing, NOT v2 regressions):**
   `test_heartbeat.py` (2) + `test_scheduler.py::test_04_followup_lifecycle`
   — v1 followups/heartbeat code sits mid-refactor uncommitted; these get

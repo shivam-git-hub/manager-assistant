@@ -33,6 +33,23 @@ export const HEALTH_COLORS: Record<string, string> = {
   red: "#DD5454",
 };
 
+// ── Project tasks (wireframe 6) ──────────────────────────
+export const PRIORITY_META: Record<string, { label: string; bg: string; fg: string }> = {
+  high: { label: "High", bg: "#DD5454", fg: "#FFFFFF" },
+  medium: { label: "Medium", bg: "#E9B949", fg: "#1E2A38" },
+  low: { label: "Low", bg: "#67C05B", fg: "#FFFFFF" },
+};
+
+// schedule_state → status chip. Overdue's label is completed at render
+// time with the day count ("Overdue: 6 Days").
+export const TASK_STATE_META: Record<string, { label: string; bg: string; fg: string }> = {
+  on_schedule: { label: "On schedule", bg: "#67C05B", fg: "#FFFFFF" },
+  overdue: { label: "Overdue", bg: "#E9B949", fg: "#1E2A38" },
+  blocked: { label: "Blocked", bg: "#DD5454", fg: "#FFFFFF" },
+  done: { label: "Done", bg: "#9AA5B1", fg: "#FFFFFF" },
+  pending_approval: { label: "Needs approval", bg: "#7C6FD6", fg: "#FFFFFF" },
+};
+
 // ── Navigation ───────────────────────────────────────────
 // Tabs without a path render as plain text until their pages exist.
 export const NAV_TABS: { label: string; path?: string }[] = [
