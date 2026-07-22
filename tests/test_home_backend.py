@@ -5,14 +5,31 @@ Events are only ever created by jobs (ingest/heartbeat, later steps), so
 event-read tests insert Event rows directly through the manager's session
 (db_session fixture) -- there is deliberately no create-event API.
 """
+import json
+import shutil
 import uuid
 from datetime import timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import timeservice
 from app.database import Event
 from app.main import app
+from app.projects.db import get_project_session
+from app.projects.models import Task
+from app.projects.paths import project_dir
+
+
+@pytest.fixture()
+def project(client):
+    """A team project owned by the client's throwaway manager (step 24's
+    approve-with-linked-task tests need a real, scaffolded project db)."""
+    r = client.post("/api/projects", json={"name": "Approve Test Project", "kind": "team"})
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+    yield pid
+    shutil.rmtree(project_dir(pid), ignore_errors=True)
 
 
 # ────────────────────────────────────────────────────────
@@ -141,6 +158,97 @@ def test_events_promote_after_dismiss(client, db_session):
 def test_events_state_404s(client):
     assert client.post("/api/events/nonexistent/dismiss").status_code == 404
     assert client.post("/api/events/nonexistent/promote").status_code == 404
+
+
+# ── Approve/Reject (step 24 — request events only) ──────────────────────
+
+def test_events_approve_request_excludes_from_default_query(client, db_session):
+    ev = _mk_event(db_session, severity=2, type="request")
+    r = client.post(f"/api/events/{ev.id}/approve")
+    assert r.status_code == 200
+    assert r.json()["ui_state"] == "approved"
+    assert client.get("/api/events?min_severity=1").json()["events"] == []
+    all_body = client.get("/api/events?min_severity=1&include_dismissed=true").json()
+    assert [e["id"] for e in all_body["events"]] == [ev.id]
+
+
+def test_events_reject_request_excludes_from_default_query(client, db_session):
+    ev = _mk_event(db_session, severity=2, type="request")
+    r = client.post(f"/api/events/{ev.id}/reject")
+    assert r.status_code == 200
+    assert r.json()["ui_state"] == "rejected"
+    assert client.get("/api/events?min_severity=1").json()["events"] == []
+
+
+def test_events_approve_reject_400_on_non_request_types(client, db_session):
+    ev = _mk_event(db_session, severity=2, type="status_update")
+    assert client.post(f"/api/events/{ev.id}/approve").status_code == 400
+    assert client.post(f"/api/events/{ev.id}/reject").status_code == 400
+
+
+def test_events_approve_reject_state_404s(client):
+    assert client.post("/api/events/nonexistent/approve").status_code == 404
+    assert client.post("/api/events/nonexistent/reject").status_code == 404
+
+
+def test_events_approve_with_linked_task_marks_task_done(client, db_session, project):
+    task_id = uuid.uuid4().hex
+    session = get_project_session(project)
+    try:
+        session.add(Task(id=task_id, title="Linked task", status="in_progress", priority="medium", created_by="manager"))
+        session.commit()
+    finally:
+        session.close()
+
+    ev = _mk_event(db_session, severity=1, type="request")
+    ev.project_ids = json.dumps([project])
+    ev.task_ids = json.dumps([task_id])
+    db_session.commit()
+
+    r = client.post(f"/api/events/{ev.id}/approve")
+    assert r.status_code == 200
+
+    session = get_project_session(project)
+    try:
+        task = session.get(Task, task_id)
+        assert task.status == "done"
+    finally:
+        session.close()
+
+
+def test_events_approve_with_stale_task_reference_still_resolves(client, db_session, project):
+    ev = _mk_event(db_session, severity=1, type="request")
+    ev.project_ids = json.dumps([project])
+    ev.task_ids = json.dumps(["deleted-task-id"])
+    db_session.commit()
+
+    r = client.post(f"/api/events/{ev.id}/approve")
+    assert r.status_code == 200
+    assert r.json()["ui_state"] == "approved"
+
+
+def test_events_approve_still_resolves_when_task_mutation_raises(client, db_session, project, monkeypatch):
+    """A failure while marking the linked task done (e.g. a locked project
+    db) must never surface as a 500 -- the event's own approval already
+    committed and must stay approved regardless."""
+    from app.projects import db as projects_db_module
+
+    def _boom(project_id):
+        raise RuntimeError("simulated project db failure")
+
+    monkeypatch.setattr(projects_db_module, "get_project_session", _boom)
+    # home.py imports get_project_session inside the function body, so
+    # patching the module-level symbol it resolves at call time is enough.
+
+    task_id = uuid.uuid4().hex
+    ev = _mk_event(db_session, severity=1, type="request")
+    ev.project_ids = json.dumps([project])
+    ev.task_ids = json.dumps([task_id])
+    db_session.commit()
+
+    r = client.post(f"/api/events/{ev.id}/approve")
+    assert r.status_code == 200
+    assert r.json()["ui_state"] == "approved"
 
 
 def test_events_limit(client, db_session):

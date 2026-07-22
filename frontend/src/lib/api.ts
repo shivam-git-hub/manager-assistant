@@ -186,6 +186,17 @@ export function promoteEvent(id: string): Promise<EventItem> {
   return request(`/api/events/${id}/promote`, { method: "POST" });
 }
 
+// Requests-panel actions (step 24) -- request events only; approving one
+// tied to a specific task (via the project fan-out's request->task
+// linkage) also marks that task done on the backend.
+export function approveEvent(id: string): Promise<EventItem> {
+  return request(`/api/events/${id}/approve`, { method: "POST" });
+}
+
+export function rejectEvent(id: string): Promise<EventItem> {
+  return request(`/api/events/${id}/reject`, { method: "POST" });
+}
+
 // ── Projects registry ────────────────────────────────────
 
 export interface ProjectSummary {

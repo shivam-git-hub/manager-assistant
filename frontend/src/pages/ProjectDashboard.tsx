@@ -4,7 +4,9 @@ import { PRIORITY_META, TASK_STATE_META } from "@/constants";
 import {
   createProjectTask,
   deleteProject,
+  approveEvent,
   dismissEvent,
+  rejectEvent,
   getEmployees,
   getProject,
   getProjectEvents,
@@ -21,10 +23,11 @@ import {
 
 // Project Dashboard (wireframe 6.png): team task table + My Tasks + the
 // four insight panels. Updates / Blockers & Clarifications / Requests are
-// events tagged to this project (empty until the pipeline jobs land);
-// Conflicts come from the project store. Approve/Reject on requests and
-// Resolve on blockers/conflicts arrive with the pipeline that creates
-// them -- until then panels support dismiss only.
+// events tagged to this project. Conflicts come from the project store.
+// Requests get Approve/Reject (step 24 -- approving a request tied to a
+// specific task also marks that task done); Updates/Blockers stay
+// dismiss-only -- blocker/conflict resolve semantics are a separate,
+// still-future step.
 
 function Chip({ label, bg, fg }: { label: string; bg: string; fg: string }) {
   return (
@@ -261,13 +264,41 @@ function InsightPanel({
   );
 }
 
-function EventList({ events, empty, onDismiss }: { events: EventItem[]; empty: string; onDismiss?: (id: string) => void }) {
+function EventList({
+  events,
+  empty,
+  onDismiss,
+  onApprove,
+  onReject,
+}: {
+  events: EventItem[];
+  empty: string;
+  onDismiss?: (id: string) => void;
+  onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
+}) {
   if (events.length === 0) return <p className="text-white/80">{empty}</p>;
   return (
     <>
       {events.map((e) => (
         <div key={e.id} className="group flex items-start gap-2">
           <p className="flex-1">{e.title}</p>
+          {onApprove && onReject && (
+            <div className="flex gap-2 opacity-0 group-hover:opacity-100">
+              <button
+                onClick={() => onApprove(e.id)}
+                className="text-xs font-bold text-white/90 hover:text-white underline"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => onReject(e.id)}
+                className="text-xs font-bold text-white/90 hover:text-white underline"
+              >
+                Reject
+              </button>
+            </div>
+          )}
           {onDismiss && (
             <button
               onClick={() => onDismiss(e.id)}
@@ -324,6 +355,16 @@ export default function ProjectDashboard() {
 
   async function handleDismiss(eventId: string) {
     await dismissEvent(eventId);
+    load();
+  }
+
+  async function handleApproveRequest(eventId: string) {
+    await approveEvent(eventId);
+    load();
+  }
+
+  async function handleRejectRequest(eventId: string) {
+    await rejectEvent(eventId);
     load();
   }
 
@@ -423,7 +464,12 @@ export default function ProjectDashboard() {
           <EventList events={blockers} empty="No blockers or clarification requests right now." onDismiss={handleDismiss} />
         </InsightPanel>
         <InsightPanel title="Requests">
-          <EventList events={requests} empty="No open requests." onDismiss={handleDismiss} />
+          <EventList
+            events={requests}
+            empty="No open requests."
+            onApprove={handleApproveRequest}
+            onReject={handleRejectRequest}
+          />
         </InsightPanel>
         <InsightPanel title="Conflicts">
           {!insights || insights.conflicts.length === 0 ? (

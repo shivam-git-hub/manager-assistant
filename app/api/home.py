@@ -5,10 +5,11 @@ manager-scoped routers.
 
 There is no create-event endpoint on purpose -- only jobs (ingest/heartbeat,
 later steps) create Event rows; the UI can only read them and flip
-ui_state (dismiss/promote). Until those jobs land, /api/events returns an
-honest empty state.
+ui_state (dismiss/promote/approve/reject). Until those jobs land,
+/api/events returns an honest empty state.
 """
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import List, Literal, Optional
@@ -23,6 +24,13 @@ from app.controlplane.auth import get_current_manager
 from app.controlplane.models import Manager
 from app.database import Event, Todo, UnifiedMessage
 from app.tenancy.db import get_manager_db
+
+logger = logging.getLogger(__name__)
+
+# ui_state values that mean "resolved, stop showing by default" -- dismiss
+# (any event) and approve/reject (request events only, step 24). Distinct
+# from "promoted", which always overrides regardless of severity/resolution.
+RESOLVED_UI_STATES = {"dismissed", "approved", "rejected"}
 
 router = APIRouter(prefix="/api", tags=["Home Dashboard"])
 
@@ -132,16 +140,19 @@ def list_events(
     db: Session = Depends(get_manager_db),
 ) -> dict:
     """The Updates panel query (spec §2): events at/above the severity
-    threshold minus dismissed ones, plus promoted ones regardless of
-    severity. include_dismissed=true is the "View All" screen -- dismissed
-    rows come back (threshold still applies to non-promoted rows).
+    threshold minus resolved ones (dismissed, or approved/rejected --
+    step 24 requests), plus promoted ones regardless of severity.
+    include_dismissed=true is the "View All" screen -- resolved rows come
+    back too (threshold still applies to non-promoted rows; the param
+    name predates approve/reject but keeping it avoids a frontend/backend
+    rename for the same "show everything" toggle).
     project_id narrows to events tagged with that project (the project
     dashboard's panels, step 21) -- Python-side filter over the JSON list
     column, fine at this scale."""
     visible = or_(Event.severity >= min_severity, Event.ui_state == "promoted")
     query = select(Event).where(visible)
     if not include_dismissed:
-        query = query.where(or_(Event.ui_state != "dismissed", Event.ui_state == "promoted"))
+        query = query.where(or_(Event.ui_state.notin_(RESOLVED_UI_STATES), Event.ui_state == "promoted"))
 
     matching = db.scalars(
         query.order_by(Event.severity.desc(), Event.created_at.desc(), Event.id.desc())
@@ -224,3 +235,66 @@ def dismiss_event(event_id: str, db: Session = Depends(get_manager_db)) -> dict:
 @router.post("/events/{event_id}/promote")
 def promote_event(event_id: str, db: Session = Depends(get_manager_db)) -> dict:
     return _set_event_state(db, event_id, "promoted")
+
+
+@router.post("/events/{event_id}/approve")
+def approve_event(event_id: str, db: Session = Depends(get_manager_db)) -> dict:
+    """Requests-panel Approve (step 24, per Shivam 2026-07-23): scoped to
+    type="request" events only -- blockers/conflicts get their own resolve
+    semantics later, not this. The status flip is always applied and
+    always succeeds; if the project fan-out job (heartbeat.py's
+    request->task linkage) resolved this request to specific task(s),
+    those Tasks also get marked done -- best-effort, deliberately AFTER
+    the event's own commit. A stale/deleted task, a locked project db, or
+    any other mutation failure is logged and swallowed rather than
+    surfaced as a 500: the approval itself must never appear to fail (and
+    become confusingly un-retryable, since a second call would just 400
+    on "already approved" semantics if we ever add that) just because a
+    downstream task couldn't be updated."""
+    event = db.get(Event, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event.type != "request":
+        raise HTTPException(status_code=400, detail="Only request events can be approved")
+
+    event.ui_state = "approved"
+    db.commit()
+    db.refresh(event)
+
+    task_ids = json.loads(event.task_ids) if event.task_ids else []
+    project_ids = json.loads(event.project_ids) if event.project_ids else []
+    if task_ids and project_ids:
+        from app.projects.db import get_project_session
+        from app.projects.models import Task
+
+        for task_id in task_ids:
+            for project_id in project_ids:
+                try:
+                    project_session = get_project_session(project_id)
+                    try:
+                        task = project_session.get(Task, task_id)
+                        if task is None:
+                            continue  # not in this project, try the next one
+                        task.status = "done"
+                        task.updated_at = timeservice.now_ist()
+                        project_session.commit()
+                        break  # found and updated -- stop searching projects for this task_id
+                    finally:
+                        project_session.close()
+                except Exception:
+                    logger.exception(
+                        f"[home] approved event={event_id}: failed marking task={task_id} "
+                        f"done in project={project_id}"
+                    )
+
+    return _event_dict(event)
+
+
+@router.post("/events/{event_id}/reject")
+def reject_event(event_id: str, db: Session = Depends(get_manager_db)) -> dict:
+    event = db.get(Event, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    if event.type != "request":
+        raise HTTPException(status_code=400, detail="Only request events can be rejected")
+    return _set_event_state(db, event_id, "rejected")

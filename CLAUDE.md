@@ -172,15 +172,68 @@ implementations). The v1 architecture below is being superseded per-piece.
   Task-table access, which belongs to step 24's project fan-out.
   `tests/test_heartbeat_user.py` (13 tests) — do not confuse with the
   still-failing v1 `tests/test_heartbeat.py`.
+- **Step 24 DONE 2026-07-23** (`prompts/step_24_heartbeat_project_fanout.md`,
+  refined mid-step in direct chat with Shivam — the prompt file itself
+  was updated to match before coding, per spec-first convention). Project
+  fan-out runs INSIDE the same `heartbeat.py::run()` call, right after the
+  user-level phase, not as a separate scheduled job: `_run_project_fanout`
+  groups this tick's project-tagged (`general=False`) events by
+  `project_id`, keeps only projects this manager actually manages
+  (registry `manager_user_id` check — manager-only project truth), and
+  calls `_fanout_one_project` per touched project. That function opens
+  the project's OWN `db.sqlite` (`app.projects.db`), loads its open
+  (non-`done`) tasks + `summary.md`, and makes ONE structured-output
+  `SMART_MODEL` call for: task status transitions (must cite one of this
+  run's event ids as evidence — code-checked, a transition without a
+  valid citing event is dropped, never trusted from the model alone),
+  new task/subtask drafts (always forced `status="pending_approval"`,
+  `created_by="agent"` regardless of what the model returns), and
+  `request_task_links` — `{event_id, task_id}` pairs for `type="request"`
+  events that are literally asking to mark a task done. **Archive writes
+  are deterministic, NOT LLM-synthesized** — corrected mid-step per
+  Shivam ("you don't need to further synthesise event(s) using an LLM
+  call... put all the events... in the project's archive, with an
+  appropriate timestamp"): one `ArchiveEntry` row per event handled, plain
+  logging, no second model call. Two separate commits per project — the
+  project db (transitions/drafts/archive) first, then the manager's own
+  db (Event.task_ids backfill for validated request links) — documented
+  as best-effort: a crash between them loses only the linkage, never
+  duplicates anything, since this run never re-processes the same events.
+  New `POST /api/events/{id}/approve` + `/reject` (`app/api/home.py`,
+  step 24's actual "approve/reject" mechanism — scoped to
+  `type="request"` events only, 400 otherwise; blockers/conflicts get
+  their own resolve semantics later, out of scope here). Approve flips
+  `ui_state="approved"` (commits immediately) then, best-effort, marks
+  any linked task(s) `done` — failures there are logged and swallowed,
+  never a 500, since the approval itself must never appear to fail over
+  a downstream task update. `Event.ui_state` now also allows
+  `"approved"`/`"rejected"` (still a plain string column); `GET
+  /api/events`'s default-visibility exclusion generalized from just
+  `"dismissed"` to a `RESOLVED_UI_STATES = {dismissed, approved,
+  rejected}` set (still overridden by `"promoted"`). Frontend:
+  `ProjectDashboard.tsx`'s Requests panel got Approve/Reject buttons
+  (hover-revealed, same convention as the existing dismiss `×`) in place
+  of dismiss; Updates/Blockers panels unchanged. Two review-caught fixes:
+  (1) the approve endpoint originally 500'd on a task-mutation failure
+  (e.g. a locked project db) AFTER already committing the event as
+  approved — now wrapped so any mutation failure degrades to "approved,
+  task untouched" instead of a confusing 500; (2) an event tagged to
+  TWO manager-owned projects had its `task_ids` linkage overwritten by
+  whichever project's fan-out ran second — now accumulates instead of
+  clobbering. Shared `parse_json_object()` added to
+  `app/projectkb/llm_json.py` (used for `_call_fanout_llm`'s multi-field
+  response, `parse_json_list_field` now delegates to it).
+  `tests/test_heartbeat_project_fanout.py` (10 tests) +
+  `tests/test_home_backend.py` additions (6 approve/reject tests, new
+  `project` fixture). Live-verified via the running dev backend: seeded a
+  real request event linked to a real task, hit `/approve` over HTTP,
+  confirmed the task flipped `todo`→`done`.
 - **Pending steps, prompts pre-written 2026-07-23** (spec §7 implementation
-  order items 6-9, not yet implemented): `prompts/
-  step_24_heartbeat_project_fanout.md` (project-scoped fan-out: task
-  status transitions, pending_approval task drafts, archive writes, plus
-  a small frontend Approve/Reject addition to ProjectDashboard),
-  `prompts/step_25_dream_job.md` (memory.md/events.md/dump.md per user;
-  summary.md/events.md/suggestions/concerns/health rubric per managed
-  project), `prompts/step_26_lint_job.md` (deterministic integrity checks
-  + optional non-blocking LLM coherence pass), `prompts/
+  order items 7-9, not yet implemented): `prompts/step_25_dream_job.md`
+  (memory.md/events.md/dump.md per user; summary.md/events.md/
+  suggestions/concerns/health rubric per managed project),
+  `prompts/step_26_lint_job.md` (deterministic integrity checks +
+  optional non-blocking LLM coherence pass), `prompts/
   step_27_frontend_remaining_gaps.md` (blocklist settings UI, full
   Create-Project form per wireframe 5.png, Portfolios pages 4/8.png —
   needs a design/spec check first, workload view, grab-bag not

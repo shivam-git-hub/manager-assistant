@@ -207,7 +207,7 @@ class Event(Base):
     claim_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list -> claims.id (citations)
     general: Mapped[bool] = mapped_column(Boolean, default=False)  # not tied to any project/task
     dreamed: Mapped[bool] = mapped_column(Boolean, default=False)  # consumed by dream yet?
-    ui_state: Mapped[str] = mapped_column(String(10), default="shown")  # shown | dismissed | promoted
+    ui_state: Mapped[str] = mapped_column(String(10), default="shown")  # shown | dismissed | promoted | approved | rejected (approved/rejected: request events only, step 24)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
 
 
