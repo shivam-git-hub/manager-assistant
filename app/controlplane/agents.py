@@ -112,6 +112,43 @@ def claim_agent(payload: ClaimRequest, manager: Manager = Depends(get_current_ma
     return {"agent_id": agent.id, "agent_name": agent.name}
 
 
+@router.post("/release")
+def release_agent(manager: Manager = Depends(get_current_manager)):
+    """Unclaim this manager's agent (Agents tab "Remove" -- 2026-07-23).
+    Clears manager_id/claimed_at on the Agent row, freeing it back into the
+    available pool for anyone to claim -- install-derived fields
+    (bot_token/team_id/user_token/user_id) are left as-is, mirroring
+    slack_auth.disconnect's reasoning: they belong to the Slack app
+    installation, not the claim, so a future claimant of the same bot
+    reuses the same identity rather than re-installing."""
+    db = ControlPlaneSessionLocal()
+    try:
+        agent = db.query(Agent).filter(Agent.manager_id == manager.id).first()
+        if agent is None:
+            raise HTTPException(404, "No agent claimed")
+        agent.manager_id = None
+        agent.claimed_at = None
+        db.commit()
+        agent_id = agent.id
+    finally:
+        db.close()
+
+    from app.tenancy.db import get_manager_session
+    from app.database import AgentAssignment
+
+    mdb = get_manager_session(manager.id)
+    try:
+        mirror = mdb.get(AgentAssignment, agent_id)
+        if mirror is not None:
+            mdb.delete(mirror)
+            mdb.commit()
+    finally:
+        mdb.close()
+
+    logger.info(f"[agents] manager={manager.id} released agent={agent_id}")
+    return {"status": "released"}
+
+
 def _write_assignment_mirror(manager_id: str, agent: Agent) -> None:
     """Per the explicit isolation requirement: the assignment must be
     visible from the manager's own db.sqlite too, not just the control-plane

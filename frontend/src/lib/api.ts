@@ -126,6 +126,10 @@ export function claimAgent(agentId: string, code: string): Promise<{ agent_id: s
   });
 }
 
+export function releaseAgent(): Promise<{ status: string }> {
+  return request("/api/agents/release", { method: "POST" });
+}
+
 // ── Todos ────────────────────────────────────────────────
 
 export interface TodoItem {

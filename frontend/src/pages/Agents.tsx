@@ -4,6 +4,7 @@ import {
   claimAgent,
   getAvailableAgents,
   getMyAgent,
+  releaseAgent,
   type MyAgent,
   type PoolAgent,
 } from "@/lib/api";
@@ -38,6 +39,7 @@ export default function Agents() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const load = useCallback(() => {
     getMyAgent().then(setMine).catch(() => setMine(null));
@@ -71,6 +73,20 @@ export default function Agents() {
     }
   }
 
+  async function handleRemove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await releaseAgent();
+      setConfirmingRemove(false);
+      load();
+    } catch {
+      setError("Couldn't remove your agent -- try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (mine === undefined) return null;
 
   return (
@@ -91,6 +107,13 @@ export default function Agents() {
                     : "Waiting on your admin to install it to your Slack workspace"}
                 </div>
               </div>
+              <button
+                onClick={() => setConfirmingRemove(true)}
+                disabled={busy}
+                className="rounded-md border border-cardline px-4 py-1.5 text-sm font-semibold text-inksoft hover:border-[#DD5454] hover:text-[#DD5454] disabled:opacity-50"
+              >
+                Remove
+              </button>
             </div>
             <p className="mt-3 text-sm text-inksoft">
               This agent chats with you and your teammates and can send messages on your behalf.
@@ -179,6 +202,42 @@ export default function Agents() {
                 className="rounded-md bg-nav text-white px-4 py-2 text-sm font-semibold hover:bg-navdeep disabled:opacity-60"
               >
                 {busy ? "Claiming…" : "Claim agent"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmingRemove && mine && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setConfirmingRemove(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl bg-white shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Remove ${mine.agent_name}`}
+          >
+            <h3 className="font-bold text-ink">Remove {mine.agent_name}?</h3>
+            <p className="mt-1 text-sm text-inksoft">
+              This frees {mine.agent_name} back into the available pool for anyone to claim. You
+              can claim a different agent (or this one again) afterward.
+            </p>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmingRemove(false)}
+                className="rounded-md px-4 py-2 text-sm font-semibold text-inksoft hover:bg-surface"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRemove}
+                disabled={busy}
+                className="rounded-md bg-[#DD5454] text-white px-4 py-2 text-sm font-semibold hover:bg-[#c74848] disabled:opacity-60"
+              >
+                {busy ? "Removing…" : "Remove agent"}
               </button>
             </div>
           </div>

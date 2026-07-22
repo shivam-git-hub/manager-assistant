@@ -625,6 +625,28 @@ surface.
   creation was 500ing on the one pre-existing real project because its
   db.sqlite predated the `Task.priority` migration and nothing had ever
   re-run it.
+- **Reader Slack app credentials set + two more pool bots seeded
+  2026-07-23:** `SLACK_READER_CLIENT_ID`/`SECRET` in `.env` now hold real
+  values (the reader app created per SLACK.md part 1) — `GET
+  /auth/slack/install` no longer 500s. `agents_pool.json` (gitignored)
+  grew two more entries (`nova-bot`, `kettle-bot`) alongside `atlas`, none
+  with a `bot_token` yet (admin hasn't installed them to a workspace via
+  Slack's own site — see the "Slack redesign 2026-07-23" bullet above) —
+  seeded via `.venv/bin/python3 -m scripts.seed_agents`, they show up as
+  claimable-but-not-installed. New **`POST /api/agents/release`**
+  (`app/controlplane/agents.py`) — the Agents tab "Remove" button, requested
+  alongside the credentials update. Symmetric with `claim`: clears
+  `manager_id`/`claimed_at` on the `Agent` row (freeing it back into the
+  available pool) and deletes the manager's own `AgentAssignment` mirror
+  row, but deliberately leaves `bot_token`/`team_id`/`user_token`/`user_id`
+  alone — same reasoning as `slack_auth.disconnect`, those belong to the
+  Slack app installation, not the claim, so re-claiming the same bot later
+  reuses its identity rather than needing reinstall. `Agents.tsx` gained a
+  "Remove" button next to "My agent" (confirm dialog, mirrors the
+  Portfolio-delete confirm pattern) wired to new `releaseAgent()` in
+  `lib/api.ts`. `tests/test_agents.py` +4 (401 without session, 404
+  without a claim, frees the agent + removes the mirror + is re-claimable,
+  install-derived fields survive release).
 
 ## Critical bugs (prevent regressions)
 

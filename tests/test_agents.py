@@ -176,3 +176,68 @@ def test_mine_reflects_claim_and_admin_installation(client):
     body3 = r3.json()
     assert body3["installed"] is True
     assert body3["team_id"] == "T_1"
+
+
+def test_release_without_session_is_401(clean_controlplane_db):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    bare_client = TestClient(app)
+    r = bare_client.post("/api/agents/release")
+    assert r.status_code == 401
+
+
+def test_release_without_claim_is_404(client):
+    _login(client)
+    r = client.post("/api/agents/release")
+    assert r.status_code == 404
+
+
+def test_release_frees_agent_and_removes_mirror(client, db_session):
+    manager_id = client.manager_id
+    _seed_agent("atlas", "Atlas")
+    _claim(client, "atlas")
+
+    r = client.post("/api/agents/release")
+    assert r.status_code == 200
+    assert r.json() == {"status": "released"}
+
+    db = ControlPlaneSessionLocal()
+    try:
+        agent = db.get(Agent, "atlas")
+        assert agent.manager_id is None
+        assert agent.claimed_at is None
+    finally:
+        db.close()
+
+    from app.database import AgentAssignment
+    assert db_session.get(AgentAssignment, "atlas") is None
+
+    # It's claimable again -- by the same manager or anyone else.
+    r2 = _claim(client, "atlas")
+    assert r2.status_code == 200
+
+
+def test_release_keeps_install_derived_fields(client):
+    _seed_agent("atlas", "Atlas")
+    _claim(client, "atlas")
+
+    db = ControlPlaneSessionLocal()
+    try:
+        agent = db.get(Agent, "atlas")
+        agent.bot_token = "xoxb-fake"
+        agent.team_id = "T_1"
+        db.commit()
+    finally:
+        db.close()
+
+    client.post("/api/agents/release")
+
+    db = ControlPlaneSessionLocal()
+    try:
+        agent = db.get(Agent, "atlas")
+        assert agent.manager_id is None
+        assert agent.bot_token == "xoxb-fake"
+        assert agent.team_id == "T_1"
+    finally:
+        db.close()
