@@ -114,6 +114,47 @@ implementations). The v1 architecture below is being superseded per-piece.
   `test_heartbeat.py` (2) + `test_scheduler.py::test_04_followup_lifecycle`
   — v1 followups/heartbeat code sits mid-refactor uncommitted; these get
   replaced when v2 heartbeat lands.
+- **Step 22 DONE 2026-07-23** (`prompts/step_22_ingest_job.md`): real
+  ingest job. `app/projectkb/jobs/ingestion.py::run(db, manager_id,
+  client=None)` — per manager: `classify_message()` (step 20) stamps
+  blocked/noise rows `is_processed=True`+`skip_reason`, no LLM; survivors
+  batch by `thread_id` (threadless messages = solo batches); per-batch
+  flash-model call (`client` injectable, same convention as
+  `app.kb.extraction.extract_from_message`) returns
+  `{"claims": [{"text", "message_ids"}]}`; inserts `Claim`+`ClaimSource`,
+  flips the batch's messages `is_processed=True` in the SAME commit
+  (retry-safe — a crash mid-run never leaves a message processed with no
+  claim). `content_hash` (text+sorted message_ids, no DB unique
+  constraint) is a secondary pre-insert dedup guard. New
+  `INGESTION_BATCH_SIZE` config (default 30, `app/config.py`) caps
+  candidate messages per run in **whole-thread units** — overflow waits
+  for next tick; gotcha found + fixed in review: slicing mid-thread would
+  let a later tick re-extract from a partial conversation and produce
+  divergent claims `content_hash` can't catch, so the cap walks batches
+  and stops before exceeding it, never splits one. Also fixed in review:
+  a non-dict top-level JSON response (Gemini can legally return an array)
+  used to raise `AttributeError` outside the `JSONDecodeError` catch,
+  permanently stalling that batch's retry — now explicitly guarded.
+  `tests/test_ingest_job.py` (10 tests). `count_pending_tracked_messages`
+  (dead stub, zero callers, referenced a v1 allowlist concept) deleted.
+- **Pending steps, prompts pre-written 2026-07-23** (spec §7 implementation
+  order items 5-9, not yet implemented): `prompts/step_23_heartbeat_user.md`
+  (claims → typed/tagged/severity events, user-level half of heartbeat),
+  `prompts/step_24_heartbeat_project_fanout.md` (project-scoped fan-out:
+  task status transitions, pending_approval task drafts, archive writes,
+  plus a small frontend Approve/Reject addition to ProjectDashboard),
+  `prompts/step_25_dream_job.md` (memory.md/events.md/dump.md per user;
+  summary.md/events.md/suggestions/concerns/health rubric per managed
+  project), `prompts/step_26_lint_job.md` (deterministic integrity checks
+  + optional non-blocking LLM coherence pass), `prompts/
+  step_27_frontend_remaining_gaps.md` (blocklist settings UI, full
+  Create-Project form per wireframe 5.png, Portfolios pages 4/8.png —
+  needs a design/spec check first, workload view, grab-bag not
+  sequentially dependent on the others). The three remaining job stubs
+  (`app/projectkb/jobs/{heartbeat,dream,lint}.py`) still describe v1-era
+  concepts (timeline.md tiers, todos/conflicts) in their docstrings —
+  steps 23-26 replace those docstrings along with the code, don't
+  preserve the stale wording.
 
 ## Architecture (v1, agreed 2026-07-12 — being superseded)
 

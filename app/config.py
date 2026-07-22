@@ -77,6 +77,11 @@ WORK_HOURS_END = 19
 PROJECTKB_POLL_SECONDS = int(os.getenv("PROJECTKB_POLL_SECONDS", "60"))
 INGESTION_INTERVAL_MINUTES = int(os.getenv("INGESTION_INTERVAL_MINUTES", "15"))
 INGESTION_MESSAGE_THRESHOLD = int(os.getenv("INGESTION_MESSAGE_THRESHOLD", "10"))
+# Max messages the ingest job (step 22) will send to the LLM in a single
+# run -- distinct from INGESTION_MESSAGE_THRESHOLD above (which the
+# scheduler doesn't currently read at all; this one gates work done PER
+# run, not whether a run happens). Overflow waits for the next tick.
+INGESTION_BATCH_SIZE = int(os.getenv("INGESTION_BATCH_SIZE", "30"))
 HEARTBEAT_INTERVAL_MINUTES = int(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "60"))
 DREAM_INTERVAL_MINUTES = int(os.getenv("DREAM_INTERVAL_MINUTES", "1440"))
 LINT_INTERVAL_MINUTES = int(os.getenv("LINT_INTERVAL_MINUTES", "10080"))
