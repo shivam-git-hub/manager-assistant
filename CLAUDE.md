@@ -5,26 +5,6 @@ a dashboard chat, maintains a gbrain-inspired knowledge base from all messages,
 and acts autonomously (follow-ups, deadlock detection, status inference,
 manager updates). Goal: an end-to-end **demoable** product — not scalable infra.
 
-## Architecture rework branch (2026-07-14)
-
-`feature/architecture-optimization` — step-by-step rework, one requested
-change at a time. **Run this branch on a port other than 3003** via a
-separate git worktree (not an in-place branch switch — that would change
-files out from under the already-running `main` server). Feature worktree:
-`../manager-assistant-feature`, port 3004.
-
-Step 1 (2026-07-14): messages sent **directly to Harry** (Slack DM to
-`U_HARRY`, or email to `harry.assistant@company.com`) bypass `/api/chat` and
-go straight to `run_agent()` via new `app/agent/direct_contact.py`
-(`handle_direct_contact`), formatted as
-`channel: <slack/mail/telegram>\nsender: <>\ndate: <>\ntime: <>\nmessage: <>`,
-reply sent back through the same channel via `send_or_hold`. Wired into
-`slack_webhook`/`outlook_mock_ingest` right after the existing DB insert —
-ingestion unchanged. Gated on `"pytest" not in sys.modules` (existing
-`app/main.py` pattern) because `test_outlook_ingestion` omits `toRecipients`,
-which defaults `recipient_email` to Harry's address. `/api/chat` itself is
-untouched — to be redesigned later.
-
 ## Non-negotiable rules (see spec/notes_and_instructions.md)
 
 - Spec first: draft/discuss a spec under `spec/` and get Shivam's explicit
@@ -33,26 +13,61 @@ untouched — to be redesigned later.
   Hermes-inspired (lifting their patterns/snippets is fine).
 - All datetimes: naive IST (Asia/Kolkata). In new code, wall-clock reads are
   FORBIDDEN — always use the sim-time service (see below).
-- No heavy installations: SQLite not Postgres, CDN frontend not build tooling.
+- No heavy installations: SQLite not Postgres. Backend and the simulator UI
+  stay CDN/no-build. **Exception (2026-07-22): the manager-facing product
+  frontend** (see "Frontend rebuild" below) is React + Vite + build tooling —
+  an explicit, scoped override of this rule, not a repeal of it.
 - LLM: Gemini via `GEMINI_API_KEY`. Two tiers configured as `smart_model`
   (gemini pro class: agent reasoning, synthesis) and `flash_model` (claim
   extraction, judging) in a config file, env-overridable.
 
-## Multi-agent workflow (IMPORTANT)
+## Workflow (updated 2026-07-22)
 
-Claude (this session) writes detailed step prompts → Shivam feeds them to a
-separate coding agent → that agent writes code → Claude reviews and fixes.
-Consequence: **files change between turns. Always check `git status` / recent
-commits / re-read files before editing or reviewing — never trust stale
-context.**
+Claude codes major tasks DIRECTLY in the main session (Shivam's explicit
+instruction 2026-07-22, reversing both the old separate-coding-agent flow
+and a brief Sonnet-subagent experiment — the subagent lacked context).
+Step prompts are still written first as files (`prompts/step_XX_<name>.md`,
+never inline in chat) — they double as the spec for the work. Files may
+still change between turns (Shivam edits too): **always check `git status`
+/ re-read before editing — never trust stale context.**
 
-- Step prompts are files: `prompts/step_XX_<name>.md` (never inline in chat).
-- **KEEP THIS FILE (CLAUDE.md) UPDATED** — after every step review: tick the
-  step checkbox with the date, and record any new conventions, endpoints,
-  tables, gotchas, or decisions that future turns need. Claude (reviewer)
-  owns CLAUDE.md updates; the coding agent must not edit it.
+- **KEEP THIS FILE (CLAUDE.md) UPDATED** — after every step: record new
+  conventions, endpoints, tables, gotchas, decisions.
+- Verification bar per step: code review + full pytest run + dry-run boot
+  (and for frontend: `npm run build` + headless-Chrome screenshot against
+  the wireframe).
 
-## Architecture (agreed 2026-07-12)
+## Architecture v2 (2026-07-22 — THE authority: `spec/architecture_v2_kb.md`)
+
+Approved greenfield redesign (product name: **Pulse.ai**; every org member
+is a user, not just managers). Vocabulary: `message → claim → event →
+notification` (notifications = a QUERY over events, not a table). Global
+projects registry (control-plane) + `projects/<project_id>/` dirs (shared
+by members; only the manager's pipeline writes project truth). Tasks =
+personal projects (`kind="personal"`). Four jobs: ingest 15m / heartbeat
+1h / dream 24h / lint 1w (stubs in `app/projectkb/jobs/` await v2
+implementations). The v1 architecture below is being superseded per-piece.
+
+- **Step 18 DONE 2026-07-22** (`prompts/step_18_registry_and_scaffold.md`):
+  control-plane `Employee`/`Project`(registry)/`ProjectMember`;
+  `app/projects/` package (paths/models/db — per-project sqlite with
+  tasks/archive/conflicts/suggestions/concerns/health_log + md scaffold +
+  vault/); `GET /api/employees`, `POST/GET/PATCH /api/projects` (registry —
+  old v1 handlers deleted from dashboard.py); `scripts/seed_employees.py`.
+  Gotcha fixed: `.gitignore` `projects/` → `/projects/` (was shadowing
+  `app/projects/`!). Import alias convention: `Project as RegistryProject`.
+- **Step 19 DONE 2026-07-22** (`prompts/step_19_home_backend.md`): per-user
+  tables `todos`/`claims`/`claim_sources`/`events` (app/database.py);
+  `app/api/home.py`: todos CRUD + `GET /api/events` (min_severity, plus
+  promoted, minus dismissed, `max_severity` aggregate) +
+  `POST /api/events/{id}/dismiss|promote`. No create-event API by design —
+  only jobs write events.
+- **Known failing tests (pre-existing, NOT v2 regressions):**
+  `test_heartbeat.py` (2) + `test_scheduler.py::test_04_followup_lifecycle`
+  — v1 followups/heartbeat code sits mid-refactor uncommitted; these get
+  replaced when v2 heartbeat lands.
+
+## Architecture (v1, agreed 2026-07-12 — being superseded)
 
 ```
 SIMULATOR (exists)                        HARRY'S PRODUCT (being built)
@@ -93,43 +108,6 @@ virtual: `scheduled_jobs` keyed on next-due sim time; advancing the clock runs
 everything that came due in the jumped interval, in order. Outbound realism:
 send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
 
-## Step plan (one prompt per step; update status as we go)
-
-1. [x] Sim-time service + smart/flash model config (spec/feature_04) — done 2026-07-12
-2. [x] Harry identity + outbound send path + quiet-hours queue + simulator
-       render (prompt: `prompts/step_02_harry_outbound.md`) — done 2026-07-12
-3. [x] KB schema (claims/truths/timeline/conflicts) + query APIs (no LLM)
-       (prompt: `prompts/step_03_kb_schema.md`) — done 2026-07-13
-4. [x] Gemini client + flash claim extraction (4a:
-       `prompts/step_04a_gemini_extraction.md`); dream-cycle synthesis +
-       contradiction probe (4b: `prompts/step_04b_dream_synthesis.md`)
-       — done 2026-07-13
-5. [x] Virtual scheduler: dream cycle, follow-up engine, health evaluation,
-       morning brief, quiet-hours release (prompt: `prompts/step_05_scheduler.md`)
-       — done 2026-07-13
-6. [x] Agent harness + tools + real-time dashboard chat (Hermes indexed:
-       `spec/research/hermes_index.md` — vendor its Gemini adapter, copy
-       IterationBudget verbatim, follow its tool-registry pattern)
-       (prompt: `prompts/step_06_agent_harness.md`) — done 2026-07-13
-7. [x] Project Tracker Dashboard — Vue 3 CDN, code split across plain JS/CSS
-       files, hand-built design system (must NOT look AI-generated). Split:
-       7a shell/design-system/portfolio (`prompts/step_07a_dashboard_shell.md`),
-       7b project detail (truth + hover citations) / conflicts / workload /
-       briefs / chat dock (`prompts/step_07b_dashboard_views.md`)
-       — done 2026-07-13
-8. [x] Meetings: MoM paste → meeting page + action items + propagation;
-       calendar; pre-meeting briefs (prompt: `prompts/step_08_meetings.md`)
-       — done 2026-07-13 (MoM fix cdaf5f0)
-9. [x] Workload/reassignment (leave marking) + training/newsletter
-       suggestions (prompt: `prompts/step_09_workload_training.md`)
-       — implemented b495173, reviewed 2026-07-13 (no bugs found)
-10. [x] Seed demo scenario + end-to-end pass
-        (prompt: `prompts/step_10_demo_seed.md`)
-        — implemented 4663eaf, reviewed 2026-07-13 (health-eval fix)
-11. [x] Autonomous follow-ups — two-tier heartbeat (flash triage → smart
-        run_agent acts) + agent_notes memory + virtual-time-aware follow-up
-        lifecycle (prompt: `prompts/step_11_autonomous_followups.md`)
-        — reviewed + live-verified 2026-07-13
 
 All step prompts 4a–10 were pre-written on 2026-07-13 (before their
 predecessors were implemented); each carries a "the code wins" clause and
@@ -145,179 +123,157 @@ escalates to manager) → time-travel +3 days (follow-ups fire, health degrades,
 Harry informs manager) → quiet hours (11 PM ping held → 9 AM release + morning
 brief) → ask Harry anything (cited synthesis; meeting prep).
 
-## Repo facts
+## Essential facts
 
-- Run: `.venv/bin/python3 -m app.main` (port 3003; the README's
-  `python3 app/main.py` form fails — fixed in Step 2). Tests:
-  `.venv/bin/python3 -m pytest tests/`
-- Sim clock: `app/timeservice.py`, state in `data/sim_clock.json`
-  (`SIM_CLOCK_PATH` env for tests); endpoints `GET/POST /api/time[...]`.
-  Wall-clock reads outside timeservice are forbidden (guard test).
-- LLM config: `SMART_MODEL`/`FLASH_MODEL`/`GEMINI_API_KEY` in `app/config.py`
-  (env → config.json → defaults); `config.json` is gitignored. The KEY is read
-  from config.json too as of Step 6 review (`gemini_api_key`/`GEMINI_API_KEY`
-  accepted) — before that fix it was env-only despite the docs. Live-verified
-  models: `gemini-2.5-pro` (smart) / `gemini-2.5-flash` (flash).
-- FastAPI + SQLAlchemy 2.0 + SQLite (`data/db.sqlite`); simulator is
-  `app/static/index.html` (Vue 3 CDN single file).
-- `unified_messages`: platform_msg_id UNIQUE (idempotency), `is_processed`
-  flag = future agent queue, sender resolved at ingest via `team_members`,
-  `direction` inbound/outbound (Step 2; ALTER TABLE migration in init_db).
-- Harry identity: `U_HARRY` / harry.assistant@company.com, seeded
-  insert-if-missing in `init_db()`; excluded from the impersonation dropdown.
-- Outbound (Step 2): `POST /api/integrations/slack/send` (chat.postMessage
-  shape, in-band errors HTTP 200) and `POST /api/integrations/outlook/send`
-  (Graph sendMail shape, 202 empty). These are UNGATED transports; the
-  quiet-hours gate is ONLY `send_or_hold()` in `app/outbound.py`
-  (9:00–19:00 IST, weekends quiet; `outbound_queue` table;
-  `POST /api/outbound/release`, `GET /api/outbound/queue?status=held`).
-- Outlook storage conventions (ingest AND outbound must match): channel =
-  plain recipient address (no prefix), subject in `subject` column, content =
-  cleaned body only (no "Subject:" prefix).
-- Simulator payloads MUST mirror real service shapes (Slack Events API,
-  MS Graph). No processing logic in the simulator — collectors/KB only.
-- KB (Step 3): `app/kb/models.py` — `entities` (slug UNIQUE like
-  `project:phoenix` / `person:U_ALICE`, `compiled_truth` + `truth_updated_at`),
-  `timeline_entries` (APPEND-ONLY, `source_message_id` FK = citation target),
-  `attributed_claims` (holder, kind ∈ fact/status/commitment/blocker/opinion,
-  weight 0-1, `superseded_by` chain + `active`), `conflicts` (claim pairs,
-  open/resolved/dismissed; PATCH is the ONLY way to close — never auto).
-  Router `app/kb/api.py` at `/api/kb/*`: entities list/create/page, timeline
-  append+list (newest first, id-desc tiebreak), claims create/list/supersede
-  (409 if already superseded), conflicts create/list/PATCH, `GET /api/kb/search?q=`
-  (LIKE, grouped entities/claims/timeline, capped 20 each).
-- Entity collectors are deterministic: `get_or_create_entity()` +
-  `slugify()` in `app/kb/models.py` (syncs name/ref_id on change — rename-safe);
-  auto-wired into `POST /api/projects` (`project:<slugified-name>`) and
-  `POST /api/team` (`person:<id>`); `init_db()` backfills both.
-- Citation convention: compiled truth carries inline `[T<timeline_entry_id>]`
-  markers; dashboard resolves marker → timeline entry → source message.
-- `POST /api/messages/reset` wipes messages/projects/tasks AND all four KB
-  tables, then re-backfills person entities (incl. Harry).
-- Tests: `tests/conftest.py` seeds Harry; `client` fixture's lifespan still
-  runs `init_db()` against the real `data/db.sqlite` (known wart, demo-OK).
-- Extraction/dream cycle (Step 4a/4b): `app/agent/gemini_client.py`
-  (`GeminiClient.chat(model, messages, tools?, json_mode?)` → OpenAI-shaped
-  `{content, tool_calls:[{id,name,arguments}], finish_reason, usage}`;
-  `transport` injectable for tests, `get_client()` cached singleton, key
-  resolved at CALL time; retries 429/5xx with real `time.sleep`).
-  `app/kb/extraction.py::extract_from_message` (flash, per inbound msg; skips
-  Harry-outbound/<10 chars; validates+clamps; `is_processed=True` ALWAYS in a
-  `finally`). `app/kb/synthesis.py`: `run_supersession_pass` +
-  `synthesize_entity` (smart; dirty-check on truth_updated_at; re-validates
-  `[T#]` markers against this entity's timeline, strips unknown) +
-  `run_contradiction_probe` (flash; skips pairs with an existing conflict in
-  ANY status) + `run_dream_cycle` orchestrator. Endpoints: `POST /api/kb/process`
-  (extraction only), `POST /api/kb/dream` (full cycle).
-- Scheduler (Step 5): `app/scheduler.py` — `scheduled_jobs` (job_type UNIQUE,
-  `catchup_policy` once|every), `seed_default_jobs()` called from `init_db()`
-  seeds 5 crons (dream_cycle, quiet_release, followup_check, health_eval,
-  morning_brief@9am/every). `tick(db)` runs everything due ≤ sim now; `every`
-  policy replays each missed slot passing the virtual slot time. Driven by a
-  30s asyncio loop + `timeservice.on_time_change` hook, BOTH gated off under
-  pytest (`"pytest" not in sys.modules` in `app/main.py` lifespan). Manual
-  `POST /api/scheduler/tick`. `app/followups.py` (Followup model, DM channel
-  `DM_<sorted ids>`, ping→2nd ping→escalate-to-manager), `app/health.py`
-  (score→green/yellow/red, DMs manager on degrade), `app/brief.py`
-  (`briefs` table brief_date UNIQUE, smart-model prose w/ deterministic
-  fallback; `GET /api/briefs`). All autonomous sends go through `send_or_hold`.
-- Agent harness (Step 6): `app/agent/` — `budget.py` IterationBudget
-  (limit 20), `registry.py` self-registering `ToolRegistry` (`execute` catches
-  handler errors → `"ERROR: …"`, caps result 8000 chars), `tools.py` 10 tools
-  (kb_search/get_entity/list_projects/list_tasks/update_task/get_conflicts/
-  send_slack_dm/send_email/create_followup/get_current_time; auto-registered
-  on import), `prompts.py` 3-tier system prompt (stable/context/volatile; sim
-  time + open-conflict COUNT in volatile), `harness.py::run_agent`. GOTCHA
-  (fixed at review): `tools.py` self-registers on import but nothing in the
-  runtime chain imported it — the registry was empty in the live app and Harry
-  hallucinated with no tools (tests passed only because test_agent.py imported
-  it). `harness.py` now imports `app.agent.tools`; keep that import. Loop honors
-  the Gemini round-trip contract: echoes the assistant `tool_calls` turn before
-  results, and each `{role:"tool", tool_call_id, name, content}` carries `name`
-  (Gemini keys functionResponse by NAME). `app/agent/api.py`: `POST /api/chat`
-  (last 20 msgs as history), `GET/DELETE /api/chat/history`; `chat_messages`
-  table (created_at sim IST).
-- Dashboard (Step 7): served at `/dashboard/` via StaticFiles(html=True);
-  `app/static/dashboard/` split into `js/{app,router}.js`,
-  `js/views/{portfolio,project,conflicts,workload,briefs}.js`,
-  `js/components/chat_dock.js`, `css/{theme,components}.css`. Hash router.
-  Aggregate endpoint `GET /api/dashboard/portfolio` (red-first sort). Project
-  view prefetches cited messages and renders `[T#]` chips → hover popover shows
-  the source `unified_message` (THE trust moment). Chat dock → `POST /api/chat`
-  with a "used N tools" trace expander.
-- Workload (Step 9): `app/kb/workload.py` — `Leave`/`ReassignmentSuggestion`/
-  `Digest` tables. `POST /api/workload/leaves` deterministically drafts
-  reassignments (least-loaded eligible member, flash only for the rationale w/
-  fallback) + DMs the manager; `approve_reassignment` reassigns + timeline +
-  DMs both parties; `run_weekly_digest` (weekly_digest cron, Mon 09:30, dedup on
-  week_start) flash json_mode training suggestions validated against the roster.
-  Tools: `mark_leave`, `list_reassignment_suggestions`, `approve_reassignment`.
-  Reviewed clean (minor: one flash call per task in create_leave; digest teaser
-  hardcodes "Hi Shivam").
-- Demo seed (Step 10): `app/seed_demo.py` — `run_seeding()` builds a 16-day
-  Phoenix/Atlas narrative (ingest → dream cycles → organic Bob-vs-Alice
-  deadlock → held 11 PM ping), `clear_database()` wipes ALL tables incl.
-  scheduled_jobs and re-seeds (so the seed path avoids the clock-rewind cron
-  stall). `POST /api/demo/seed {confirm:true}` + CLI `python -m app.seed_demo`.
-  `check_demo_readiness()` returns the 5-item checklist. FIX at review: seeding
-  now calls the deterministic `run_health_eval(db)` before the checklist — the
-  seed never evaluated health, so Phoenix stayed "green" until a background tick,
-  and the synchronous checklist under-reported `phoenix_degraded`. NOTE: a full
-  live seed is SLOW (~10 min: per-message extraction + many pro-model dream
-  cycles) — budget for it. REVIEW LESSON: a stray `app.main` server (survived a
-  failed pkill) kept its 30s scheduler loop mutating `data/db.sqlite` and raced
-  manual ticks — always confirm `ps aux | grep app.main` is empty before live DB
-  checks.
-- Autonomous follow-ups (Step 11): two-tier heartbeat. `app/agent/situation.py`
-  `build_situation(db)` — deterministic collector (unmet commitments/blockers
-  where holder silent >24h, open conflicts with no covering follow-up, degraded
-  projects, overdue/blocked tasks, gone-quiet owners >2d, open follow-ups for
-  dedup, recent notes) → `{has_signals, digest, ...}`. `app/agent/heartbeat.py`
-  `triage(db,client)` short-circuits (NO llm) when `has_signals` False, else
-  FLASH json_mode → `{action_needed,reason,focus}`; `run_heartbeat(db,client)`
-  on yes REUSES `run_agent` (smart) with a HEARTBEAT directive to create
-  follow-ups / ping both conflict holders / escalate + `record_note`.
-  `app/agent/notes.py` `agent_notes` table + `record_note`/`recent_notes`
-  (registered in `init_db`). New tools: `record_note`, `list_open_followups`;
-  `create_followup_handler` has a dup guard (same target + (same non-null
-  entity_slug OR same normalized question) → no-op). Endpoints
-  `POST /api/heartbeat/run`, `GET /api/agent/notes`. Scheduler seeds `heartbeat`
-  (7200s, catchup once) and flips `followup_check` to catchup "every" +
-  `run_followup_check(db, now=vt)` so ping→escalate replays across time-jumps.
-  Live-verified end-to-end (real key): overdue commitment → triage yes → agent
-  creates+records a follow-up; 2nd heartbeat idempotent (triage says "already
-  covered", acts nothing); ping fires; escalation DM over a +3d jump (unit test).
-- CRITICAL cross-cutting bug fixed at Step 11 review (regressed at Step 8, broke
-  ALL live tool calls): `sanitize_gemini_schema` stripped every dict key named
-  `title`, deleting the `title` PROPERTY of `create_meeting` while `required`
-  still listed it → Gemini 400 on the whole tools payload → Harry's chat AND
-  heartbeat 500'd live (tests passed — they don't hit the network). Fixed to
-  never strip property NAMES under `properties` (regression test in
-  test_extraction.py). If a new tool 400s the loop, suspect this again.
-- SECOND live-only Gemini-payload bug (found 2026-07-13 during live demo prep,
-  fixed same day): `messages_to_gemini_contents` set `functionResponse.response`
-  to the raw parsed tool result, but Gemini requires that field to be a STRUCT
-  (object). Any tool returning a JSON ARRAY (e.g. `get_conflicts` → `[{...}]`)
-  produced `response: [...]` → Gemini 400 `"Proto field is not repeating, cannot
-  start list"` on the SECOND turn (the tool-result echo), so the first model turn
-  succeeded and then chat/heartbeat 500'd. Fixed in `gemini_client.py`: wrap any
-  non-dict result as `{"result": <value>}` before sending (regression test in
-  test_extraction.py test_01). Same failure family as the sanitizer bug —
-  live-only, tests don't hit the network. Symptom to watch: chat replies error
-  only when Harry actually calls a list-returning tool.
-- GOTCHA (Step 11 review): `seed_default_jobs` was insert-if-missing only, so
-  policy/interval changes never reached the persistent `data/db.sqlite` (the
-  followup_check "every" flip was inert on the demo DB — only fresh test DBs saw
-  it). Now reconciles `catchup_policy`/`interval_seconds` on existing rows
-  (runtime state next_due/last_run/enabled preserved). SEPARATE hazard: setting
-  the sim clock BACKWARD leaves `scheduled_jobs.next_due_at` in the future, so
-  crons silently stall until sim time catches up; reset does not clear
-  scheduled_jobs. Demo goes forward — don't rewind, or start from a fresh DB.
-- Known demo-time gaps (not blockers, flag if touched): conflicts strip in the
-  project view shows severity+description but no per-claim source hover (demo
-  Beat 4 narrates hovering both claims — fall back to the Claims Matrix);
-  `send_or_hold` inside catch-up `morning_brief` reads the live sim time, not
-  the replayed 9am slot, so a multi-day jump can hold the teaser. Live manual
-  checks WERE run at Step 11 review with a real `GEMINI_API_KEY` (gitignored
-  `config.json`): extraction, dream synthesis, agent tool loop, and the
-  autonomous heartbeat all verified end-to-end.
+**Run & test:**
+- `.venv/bin/python3 -m app.main` (port 3003)
+- `.venv/bin/python3 -m pytest tests/`
+
+**Stack:** FastAPI + SQLAlchemy 2.0 + SQLite; Vue 3 simulator at `app/static/index.html`
+
+**Multi-tenancy (Steps 12-16, done):**
+Each manager gets `managers/<manager_id>/db.sqlite` + `projects/` +
+`job_state.json` + `tracked_contacts.json` — NOT a shared DB with a
+`manager_id` column (isolation is structural, separate SQLite files, not
+query-discipline-dependent). `app/tenancy/` — `paths.py` (dir/path helpers +
+`ensure_manager_scaffold`), `db.py` (`get_manager_engine`/`get_manager_session`/
+`get_manager_db` FastAPI dependency/`init_manager_db`/`list_provisioned_manager_ids`).
+`app/database.py`'s old global `engine`/`SessionLocal`/`get_db`/`init_db()`
+are retired — it now only holds `Base` + table classes (engine-agnostic).
+`app/controlplane/` (`data/controlplane.sqlite`) is the one still-global DB:
+`Manager`/`AuthSession`/`SlackInstallation`/`OutlookInstallation`. Login:
+dev-login (`POST /api/auth/dev-login`, gated by `DEV_AUTH_ENABLED`) or
+Outlook sign-in (`GET /auth/outlook/login`); both call `ensure_manager_scaffold`
+on first login. Slack connect: `GET /auth/slack/install` (requires login
+first — connect, not login). Cookie-authenticated routes use
+`Depends(get_manager_db)`. Two exceptions with no cookie available: the
+Slack webhook resolves `manager_id` via `team_id` → `SlackInstallation`
+(opens a session directly, not through the dependency); `projectkb`'s
+background scheduler (`app/projectkb/scheduler.py`) iterates every
+provisioned manager each tick via `list_provisioned_manager_ids()`. Minimal
+test-the-flow UI: `app/static/login.html` (LOGIN, Outlook sign-in only) →
+`app/static/connect.html` (manage page: connect/disconnect Slack+Outlook,
+enable-send toggle), state driven by `GET /api/auth/connections`. Outlook
+uses incremental consent: base scopes (`Mail.Read,User.Read`) at login,
+`Mail.Send` opt-in later via `GET /auth/outlook/enable-send` — see
+`OutlookInstallation.granted_scopes`.
+
+**Step 17 (Agent Pool — spec: `prompts/step_17_agent_pool.md`, DONE + live-
+verified 2026-07-22):** Slack's step-14 design (single shared bot, bot-token
+only) didn't hold up once multiple managers share a workspace, so Slack is
+now split into two concerns: **reading** (a user-token grant, the manager's
+own Slack identity, isolated per-person by construction) vs **sending/being
+messaged** (a dedicated bot per manager, drawn from a pre-created pool).
+`SlackInstallation` is retired, replaced by `Agent` (`app/controlplane/
+models.py`) — one row per pool Slack app, `manager_id` unique+nullable
+enforces one-bot-per-manager at the schema level, holds its own
+`slack_app_id`/`slack_client_id`/`slack_client_secret`/`slack_signing_secret`
+plus `team_id`/`bot_token`/`user_token`/`user_id` once installed.
+
+- **Claim** (`app/controlplane/agents.py`): admin seeds the pool
+  (`scripts/seed_agents.py` + gitignored `agents_pool.json`). `POST
+  /api/agents/redeem {code}` → `POST /api/agents/claim {agent_id}` — atomic
+  guarded `UPDATE ... WHERE manager_id IS NULL`, 409 on race/double-claim,
+  idempotent re-claim. Mirrors an `AgentAssignment` row into the manager's
+  own `db.sqlite` too (`app/database.py`).
+- **Install** (`app/controlplane/slack_auth.py`, requires a claimed agent):
+  OAuth `state` is HMAC-signed per-agent (that agent's own client_secret).
+  On success writes `team_id`/`bot_token`/`user_token`/`user_id` onto the
+  `Agent` row. **Critical fix, live-verified:** the callback also upserts
+  `TeamMember.slack_handle = authed_user.id` for the manager
+  (`_sync_manager_slack_handle`) — without this, DM-participant resolution
+  can never recognize the manager in webhook/polled events.
+- **Webhook** (`app/integrations/slack.py`) routes by `api_app_id` →
+  `Agent.slack_app_id` (not `team_id` — multiple agents can share a
+  workspace), verified against that agent's own `slack_signing_secret`.
+- **Reading is polled, not pushed** (`app/projectkb/jobs/slack_poll.py`,
+  `JobName.SLACK_POLL`) — `conversations.list`/`conversations.history` via
+  the manager's own `user_token`, shaped into synthetic Events-API dicts by
+  `_history_message_to_event` and fed through the existing `normalize()`/
+  `ingest()` pipeline unchanged. Deliberate design choice over a webhook:
+  whether Slack pushes events for a user-scope grant on conversations the
+  bot isn't in was never verified; polling sidesteps that.
+- **`disconnect`** clears install-derived fields but keeps the manager's
+  agent *claim* — reinstalling reuses the same bot identity.
+- **Channels/groups:** `NormalizedMessage.conversation_type` (`"dm"` default)
+  gates DMs on the original tracked-contacts logic, channels/groups on the
+  parallel `app/projectkb/tracked_channels.py` list. Data model only —
+  actually polling channels/groups is NOT yet implemented (`fetch_since` is
+  still DM-only, `types=im`).
+- **Live-verified 2026-07-22** end-to-end with a real Slack app ("Atlas"):
+  claim → install → OAuth token capture → `slack_handle` sync → manual
+  `slack_poll.run()` → real message landed in `UnifiedMessage` with correct
+  sender/receiver/content. Direct DMs to the bot itself correctly do NOT get
+  ingested (by design — the bot's own Slack ID is never a tracked contact).
+
+**LLM:** Gemini via `GEMINI_API_KEY` in config.json/env: `smart_model` (gemini-2.5-pro) + `flash_model` (gemini-2.5-flash)
+
+**Simulator clock:** `app/timeservice.py` — backend-authoritative, virtual crons react to time jumps
+
+**Harness (Step 6):** `app/agent/` — self-registering ToolRegistry, tools imported by harness, Gemini round-trip respected (echo tool_calls + `{role:"tool", name, content}`)
+
+## Frontend rebuild (started 2026-07-22)
+
+**Built so far:** Login (1.png, live-verified with real Outlook OAuth);
+Home (2.png: Updates panel ← `/api/events`, TODOs CRUD panel, Tasks +
+Projects card rails, hamburger sidebar 9.png w/ Agents entry added,
+Projects nav tab added on Shivam's ask); Projects grid (3.png, minimal
+create-modal until 5.png's full form). `/connectors` + `/agents` are
+ComingSoon stubs — next builds. Conventions: runtime knobs in
+`frontend/src/constants.ts` (severity palette, nav tabs, panel limits);
+structural colors in `tailwind.config.js`; Segoe UI stack; the 4-petal
+StatusFlower SVG is the status glyph everywhere; unbuilt nav items render
+as plain text, never dead links; no-data states are honest (grey flowers,
+empty-state copy) — NEVER dummy data. Screenshot trick: temp page in
+app/static/ that fetches dev-login then redirects to :5173 (headless
+Chrome hangs on fresh `--user-data-dir` — don't use it).
+
+The manager-facing product UI (`app/static/dashboard/`, Vue 3 CDN) is being
+rebuilt from scratch as a professional React app, driven page-by-page by
+Shivam's own wireframes. Target look: polished B2B SaaS (Azure portal / Jira
+register as the bar), not the demo-simulator aesthetic. **This does NOT
+touch the simulator** (`app/static/index.html` — Slack/Outlook clones + sim
+clock) or the auth test-flow pages (`login.html`/`connect.html`) — those
+stay as-is; this is a new, separate frontend for Harry's actual product
+surface.
+
+- **Location:** `frontend/` — Vite + React 18 + TypeScript + Tailwind +
+  react-router-dom. `npm run dev` (port 5173) proxies `/api` and `/auth` to
+  the FastAPI backend on `:3003` (see `frontend/vite.config.ts`) — no CORS
+  config needed, cookie auth just works.
+- **Workflow:** wireframes arrive one page at a time. Build the page, then
+  verify against the real backend (start `.venv/bin/python3 -m app.main` +
+  `npm run dev`, hit the actual endpoints) — fix backend gaps as they turn
+  up rather than mocking around them. If a wireframe has an obvious flaw
+  (misaligned elements, near-duplicate-but-different colors, inconsistent
+  font sizes) fix it rather than reproducing the flaw — use judgment, no
+  need to check first unless the fix is a real design decision, not just
+  cleanup.
+- **Assets:** never invent logos/icons. Reusable source assets live in
+  `/assets` (repo root, outside `frontend/`) — copy what's needed into
+  `frontend/src/assets/`. A missing basic shape you can draw as plain SVG is
+  fine to create; anything else, ask Shivam to paste it in rather than
+  guessing at a brand mark.
+- **Node version note:** the dev machine's Node (`v20.3.1`) is too old for
+  the current `create-vite` CLI (needs `node:util`'s `styleText`, Node
+  21/22+) — the scaffold here was written by hand rather than via
+  `npm create vite`. If re-scaffolding anything, don't assume the CLI works
+  without checking.
+- npm cache note: `~/.npm/_cacache` has some root-owned subdirectories left
+  over from an earlier `sudo npm` run, which breaks plain `npm install`
+  with `EACCES`/`EEXIST` on rename. Workaround used: point at a scratch
+  cache dir via `npm_config_cache=<tmp-dir> npm install`. A real fix
+  (`sudo chown -R $(whoami) ~/.npm`) needs an interactive terminal Claude
+  doesn't have — worth doing once from a real shell.
+
+## Critical bugs (prevent regressions)
+
+1. **Gemini schema sanitizer** — never strip dict key names under `properties`; stripping `title` deletes the property definition while `required` still lists it → Gemini 400. See `app/agent/gemini_client.py`.
+2. **Tool result wrapping** — Gemini's `functionResponse.response` must be a struct (dict). Any array result (e.g., `get_conflicts`) → wrap as `{"result": <value>}`. See `messages_to_gemini_contents` in gemini_client.py.
+
+## Known gotchas
+
+- **Scheduler state persistence:** `seed_default_jobs()` reconciles policy/interval on existing `scheduled_jobs` rows (runtime state preserved). Never rewind sim clock — scheduled jobs won't catch up. Start fresh if needed.
+- **DB mutation race:** Confirm `ps aux | grep app.main` is empty before manual DB ticks (scheduler loop + manual tick can race).
+- **Schema changes now sweep N manager DBs:** every manager's `db.sqlite` gets `init_manager_db`'s migration checks re-run at boot (see `app/main.py`'s lifespan) — a permanent operational cost of the per-manager split, not a one-time thing.
+- **Test fixtures auto-login:** `tests/conftest.py`'s `client` fixture always calls dev-login for a fresh throwaway manager before yielding — a test that specifically needs an *unauthenticated* client must build its own bare `TestClient(app)` (see `tests/test_auth.py::test_me_without_cookie_is_401` for the pattern), not use the shared fixture.
