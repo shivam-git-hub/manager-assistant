@@ -42,6 +42,65 @@ export function goToOutlookLogin() {
   window.location.href = "/auth/outlook/login";
 }
 
+export function goToOutlookEnableSend() {
+  window.location.href = "/auth/outlook/enable-send";
+}
+
+export function goToSlackInstall() {
+  window.location.href = "/auth/slack/install";
+}
+
+// ── Connections (Connectors page) ────────────────────────
+
+export interface OutlookConnection {
+  connected: boolean;
+  mailbox_email?: string;
+  send_enabled?: boolean;
+}
+
+export interface SlackConnection {
+  agent_id: string;
+  agent_name: string;
+  installed: boolean;
+  team_id: string | null;
+  read_enabled: boolean;
+}
+
+export interface Connections {
+  outlook: OutlookConnection;
+  slack: SlackConnection | null;
+}
+
+export function getConnections(): Promise<Connections> {
+  return request("/api/auth/connections");
+}
+
+export function disconnectOutlook(): Promise<void> {
+  return request("/auth/outlook/disconnect", { method: "POST" });
+}
+
+export function disconnectSlack(): Promise<void> {
+  return request("/auth/slack/disconnect", { method: "POST" });
+}
+
+// ── Agent pool ───────────────────────────────────────────
+
+export interface PoolAgent {
+  id: string;
+  name: string;
+}
+
+export function redeemAgentCode(code: string): Promise<{ agents: PoolAgent[] }> {
+  return request("/api/agents/redeem", { method: "POST", body: JSON.stringify({ code }) });
+}
+
+export function claimAgent(agentId: string): Promise<{ agent_id: string; agent_name: string }> {
+  return request("/api/agents/claim", {
+    method: "POST",
+    body: JSON.stringify({ agent_id: agentId }),
+  });
+}
+
 // ── Todos ────────────────────────────────────────────────
 
 export interface TodoItem {

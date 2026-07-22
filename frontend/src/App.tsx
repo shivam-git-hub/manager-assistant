@@ -3,7 +3,8 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "@/pages/Login";
 import Home from "@/pages/Home";
 import Projects from "@/pages/Projects";
-import ComingSoon from "@/pages/ComingSoon";
+import Connectors from "@/pages/Connectors";
+import Agents from "@/pages/Agents";
 import TopNav from "@/components/TopNav";
 import Sidebar from "@/components/Sidebar";
 import { getMe, type Manager } from "@/lib/api";
@@ -37,24 +38,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home manager={manager} />} />
         <Route path="/projects" element={<Projects />} />
-        <Route
-          path="/connectors"
-          element={
-            <ComingSoon
-              title="Connectors"
-              note="Connect Outlook and Slack here. This page is next on the build list."
-            />
-          }
-        />
-        <Route
-          path="/agents"
-          element={
-            <ComingSoon
-              title="Agents"
-              note="Claim your personal agent here. This page is next on the build list."
-            />
-          }
-        />
+        <Route path="/connectors" element={<Connectors />} />
+        <Route path="/agents" element={<Agents />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

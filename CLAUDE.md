@@ -218,8 +218,12 @@ plus `team_id`/`bot_token`/`user_token`/`user_id` once installed.
 Home (2.png: Updates panel ← `/api/events`, TODOs CRUD panel, Tasks +
 Projects card rails, hamburger sidebar 9.png w/ Agents entry added,
 Projects nav tab added on Shivam's ask); Projects grid (3.png, minimal
-create-modal until 5.png's full form). `/connectors` + `/agents` are
-ComingSoon stubs — next builds. Conventions: runtime knobs in
+create-modal until 5.png's full form); Connectors (10.png — Read/Send
+pills + Grant/Revoke per connector from `/api/auth/connections`; Outlook
+send-revoke is disabled-with-tooltip since MS can't revoke send alone;
+Slack revoke keeps the agent claim; Teams parked in Coming Soon); Agents
+(no wireframe — access-code unlock → available-agents grid → claim →
+Install-to-Slack, 403/409 handled). Conventions: runtime knobs in
 `frontend/src/constants.ts` (severity palette, nav tabs, panel limits);
 structural colors in `tailwind.config.js`; Segoe UI stack; the 4-petal
 StatusFlower SVG is the status glyph everywhere; unbuilt nav items render
