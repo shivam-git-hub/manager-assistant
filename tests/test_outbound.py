@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.config import IST
 from app import timeservice
-from app.database import UnifiedMessage, TeamMember, init_db, get_db
+from app.database import UnifiedMessage, TeamMember
 from app.outbound import is_quiet_hours, next_work_morning, send_or_hold
 
 @pytest.fixture(autouse=True)
@@ -43,31 +43,20 @@ def test_01_harry_seeded_automatically(db_session):
     assert harry.slack_handle == "U_HARRY"
     assert harry.outlook_email == "harry.assistant@company.com"
 
-def test_02_slack_send_success(client, db_session):
+def test_02_slack_send_success(db_session):
     """
-    2. Slack send: valid body -> response has ok: true, ts string; DB row has
-       direction="outbound", sender_mapped_name="Harry", correct channel; message
-       appears in GET /api/messages.
+    2. Slack connector.send(): DB row has direction="outbound",
+       sender_mapped_name="Harry", correct channel, ok result.
     """
-    # Ensure timeservice is anchored to a known time
+    from app.integrations.slack import connector as slack_connector
+
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
     timeservice.set_time(anchor_time)
-    
-    payload = {
-        "channel": "C_GENERAL",
-        "text": "Hi Alice, any update on the schema?"
-    }
-    
-    response = client.post("/api/integrations/slack/send", json=payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert "ts" in data
-    assert data["channel"] == "C_GENERAL"
-    assert data["message"]["user"] == "U_HARRY"
-    assert data["message"]["text"] == "Hi Alice, any update on the schema?"
-    
-    # Check DB row
+
+    result = slack_connector.send(db_session, "C_GENERAL", "Hi Alice, any update on the schema?")
+    assert result.ok is True
+    assert result.platform_msg_id
+
     msg = db_session.query(UnifiedMessage).filter(UnifiedMessage.channel_raw_id == "C_GENERAL").first()
     assert msg is not None
     assert msg.direction == "outbound"
@@ -75,70 +64,33 @@ def test_02_slack_send_success(client, db_session):
     assert msg.sender_mapped_name == "Harry"
     assert msg.content == "Hi Alice, any update on the schema?"
     assert msg.source == "slack"
-    
-    # Check GET /api/messages API
-    res = client.get("/api/messages")
-    assert res.status_code == 200
-    messages = res.json()
-    # Find our sent message
-    out_messages = [m for m in messages if m["direction"] == "outbound"]
-    assert len(out_messages) >= 1
-    assert out_messages[0]["content"] == "Hi Alice, any update on the schema?"
-    assert out_messages[0]["sender_mapped_name"] == "Harry"
 
-def test_03_slack_send_empty_text(client):
+def test_03_slack_send_empty_text(db_session):
     """
-    3. Slack send with empty text -> {"ok": false, "error": "invalid_arguments"}.
+    3. Slack connector.send() with empty text -> ok=False, error="invalid_arguments".
     """
-    payload = {
-        "channel": "C_GENERAL",
-        "text": ""
-    }
-    response = client.post("/api/integrations/slack/send", json=payload)
-    assert response.status_code == 200
-    assert response.json() == {"ok": False, "error": "invalid_arguments"}
-    
-    # Missing fields
-    payload_missing = {
-        "channel": "C_GENERAL"
-    }
-    response2 = client.post("/api/integrations/slack/send", json=payload_missing)
-    assert response2.status_code == 200
-    assert response2.json() == {"ok": False, "error": "invalid_arguments"}
+    from app.integrations.slack import connector as slack_connector
 
-def test_04_outlook_send_success(client, db_session):
+    result = slack_connector.send(db_session, "C_GENERAL", "")
+    assert result.ok is False
+    assert result.error == "invalid_arguments"
+
+def test_04_outlook_send_success(db_session):
     """
-    4. Outlook send: valid Graph-shaped body -> 202 empty body; DB row outbound,
-       HTML body cleaned (send <style>x{color:red}</style><p>Done</p>, stored
-       content must contain "Done" and no CSS), subject stored per convention.
+    4. Outlook connector.send(): DB row outbound, HTML body cleaned (send
+       <style>x{color:red}</style><p>Done</p>, stored content must contain
+       "Done" and no CSS), subject stored per convention.
     """
-    # Anchor time
+    from app.integrations.outlook import connector as outlook_connector
+
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
     timeservice.set_time(anchor_time)
-    
-    payload = {
-        "message": {
-            "subject": "Weekly Update",
-            "body": {
-                "contentType": "HTML",
-                "content": "<style>x{color:red}</style><p>Done</p>"
-            },
-            "toRecipients": [
-                {
-                    "emailAddress": {
-                        "address": "alice@company.com"
-                    }
-                }
-            ]
-        },
-        "saveToSentItems": True
-    }
-    
-    response = client.post("/api/integrations/outlook/send", json=payload)
-    assert response.status_code == 202
-    assert response.text == "" or response.json() is None # Empty body
-    
-    # Check DB row
+
+    result = outlook_connector.send(
+        db_session, "alice@company.com", "<style>x{color:red}</style><p>Done</p>", "Weekly Update"
+    )
+    assert result.ok is True
+
     msg = db_session.query(UnifiedMessage).filter(UnifiedMessage.source == "outlook").first()
     assert msg is not None
     assert msg.direction == "outbound"
@@ -151,23 +103,16 @@ def test_04_outlook_send_success(client, db_session):
     assert "Done" in msg.content
     assert "style" not in msg.content
     assert "color:red" not in msg.content
-    assert "Subject:" not in msg.content
 
-def test_04b_outlook_send_invalid(client):
+def test_04b_outlook_send_invalid(db_session):
     """
-    Outlook send validation error -> 400 with Graph-style error.
+    Outlook connector.send() validation error -> ok=False, error="invalidRequest".
     """
-    payload = {
-        "message": {
-            "subject": "Missing recipients/body"
-        }
-    }
-    response = client.post("/api/integrations/outlook/send", json=payload)
-    assert response.status_code == 400
-    err = response.json()
-    assert "error" in err
-    assert "code" in err["error"]
-    assert "message" in err["error"]
+    from app.integrations.outlook import connector as outlook_connector
+
+    result = outlook_connector.send(db_session, "", "", "Missing recipients/body")
+    assert result.ok is False
+    assert result.error == "invalidRequest"
 
 def test_05_is_quiet_hours():
     """
@@ -299,7 +244,13 @@ def test_09_slack_ingest_direction_default(client, db_session):
     """
     9. direction defaults to "inbound" for a normal Slack webhook ingest.
     """
-    # 1. Create a matching team member first
+    # 1. Manager + tracked sender, then a matching team member
+    client.post("/api/team", json={
+        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
+    })
+    client.post("/api/projectkb/tracked-contacts", json={
+        "label": "Alice Developer", "slack_pattern": "U_ALICE_MEMBER"
+    })
     member_payload = {
         "id": "U_ALICE_MEMBER",
         "name": "Alice Developer",
@@ -309,19 +260,34 @@ def test_09_slack_ingest_direction_default(client, db_session):
     }
     client.post("/api/team", json=member_payload)
 
-    # 2. Mock a slack event message
+    # An installed Agent is required for webhook routing (step 17 piece 2b)
+    # to resolve which manager's db.sqlite an event belongs to.
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
+    cp_db = ControlPlaneSessionLocal()
+    cp_db.add(Agent(
+        id=f"agent-{client.manager_id}", name="Test Agent", slack_app_id="A_TEST",
+        slack_client_id="cid", slack_client_secret="csecret", slack_signing_secret="ssecret",
+        manager_id=client.manager_id, team_id="T_TEST", bot_token="xoxb-fake",
+    ))
+    cp_db.commit()
+    cp_db.close()
+
+    # 2. Mock a Slack DM event
     slack_payload = {
+        "team_id": "T_TEST",
+        "api_app_id": "A_TEST",
         "type": "event_callback",
         "event": {
             "type": "message",
             "client_msg_id": "client_msg_abc_999",
             "user": "U_ALICE_MEMBER",
-            "channel": "C_DEV_CHANNEL",
+            "channel": "D_ALICE_MANAGER",
+            "channel_type": "im",
             "text": "Finished the schema, Harry!",
             "ts": "1789025345.000000"
         }
     }
-    
+
     response = client.post("/api/integrations/slack/webhook", json=slack_payload)
     assert response.status_code == 200
     

@@ -5,14 +5,21 @@ from datetime import datetime
 import uuid
 from typing import List, Optional
 
-from app.database import get_db, UnifiedMessage, TeamMember, Project, Task
+from app.database import UnifiedMessage, TeamMember, Project, Task
+from app.tenancy.db import get_manager_db
 from app.kb.schemas import (
-    UnifiedMessageResponse, ProjectCreate, ProjectResponse,
+    UnifiedMessageResponse,
     TaskCreate, TaskResponse, TaskUpdate
 )
 from app.config import IST
 from app import timeservice
 
+# Moved from app/integrations/unified.py: read API over unified_messages,
+# plus projects/tasks/portfolio, plus the dashboard channel's own ingest
+# endpoint. Not a connector -- dashboard_message_ingest below is
+# deliberately NOT built against app.integrations.base.ChannelConnector;
+# direct-chat-with-Harry logic (routing into the agent) has been removed
+# from here and is deferred until the agent is redesigned.
 router = APIRouter(tags=["Unified Core & Dashboard"])
 
 # ────────────────────────────────────────────────────────
@@ -20,7 +27,7 @@ router = APIRouter(tags=["Unified Core & Dashboard"])
 # ────────────────────────────────────────────────────────
 
 @router.get("/api/messages", response_model=List[UnifiedMessageResponse])
-def get_unified_messages(source: Optional[str] = None, limit: int = 100, db: Session = Depends(get_db)):
+def get_unified_messages(source: Optional[str] = None, limit: int = 100, db: Session = Depends(get_manager_db)):
     query = select(UnifiedMessage)
     if source:
         query = query.where(UnifiedMessage.source == source)
@@ -30,14 +37,14 @@ def get_unified_messages(source: Optional[str] = None, limit: int = 100, db: Ses
     return list(reversed(result))
 
 @router.get("/api/messages/{id}", response_model=UnifiedMessageResponse)
-def get_unified_message_by_id(id: int, db: Session = Depends(get_db)):
+def get_unified_message_by_id(id: int, db: Session = Depends(get_manager_db)):
     msg = db.get(UnifiedMessage, id)
     if not msg:
         raise HTTPException(status_code=404, detail=f"Message with ID {id} not found")
     return msg
 
 @router.post("/api/integrations/dashboard/message", response_model=UnifiedMessageResponse, status_code=status.HTTP_201_CREATED)
-def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
+def dashboard_message_ingest(payload: dict, db: Session = Depends(get_manager_db)):
     """
     Accepts direct message from Dashboard.
     Format: {"user_name": "Shivam", "message": "Hi Harry"}
@@ -80,6 +87,7 @@ def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
         subject=None,
         content=msg_text,
         timestamp=timestamp_ist,
+        created_at=datetime.now(),
         is_processed=False,
         raw_metadata=None
     )
@@ -90,7 +98,7 @@ def dashboard_message_ingest(payload: dict, db: Session = Depends(get_db)):
     return new_msg
 
 @router.post("/api/messages/reset")
-def reset_database(db: Session = Depends(get_db)):
+def reset_database(db: Session = Depends(get_manager_db)):
     """
     Resets the database, deleting all unified messages, projects, and tasks.
     Keeps team members intact for testing.
@@ -118,55 +126,29 @@ def reset_database(db: Session = Depends(get_db)):
 
 
 # ────────────────────────────────────────────────────────
-# 2. PROJECTS ENDPOINTS (KB)
-# ────────────────────────────────────────────────────────
-
-@router.get("/api/projects", response_model=List[ProjectResponse])
-def get_projects(db: Session = Depends(get_db)):
-    return list(db.scalars(select(Project).order_by(Project.name)).all())
-
-@router.post("/api/projects", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-def create_project(project: ProjectCreate, db: Session = Depends(get_db)):
-    existing = db.scalars(select(Project).where(Project.name == project.name)).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Project with this name already exists")
-        
-    new_project = Project(
-        name=project.name,
-        description=project.description,
-        manager_id=project.manager_id,
-        status=project.status
-    )
-    db.add(new_project)
-    db.commit()
-    db.refresh(new_project)
-    
-    # Auto-create KB entity
-    from app.kb.models import get_or_create_entity, slugify
-    get_or_create_entity(
-        db=db,
-        slug=f"project:{slugify(new_project.name)}",
-        type="project",
-        name=new_project.name,
-        ref_id=str(new_project.id)
-    )
-    
-    return new_project
-
-
+# 2. PROJECTS (KB) -- v1 GET/POST /api/projects handlers removed (step 18,
+#    prompts/step_18_registry_and_scaffold.md §3). /api/projects is now
+#    served by app.api.projects_registry (global control-plane registry,
+#    per spec/architecture_v2_kb.md §3.1). Grep found only
+#    tests/test_kb.py depending on the old handlers -- neither the
+#    simulator (app/static/index.html) nor the old Vue dashboard's JS
+#    (app/static/dashboard/) ever called GET/POST /api/projects, only
+#    /api/tasks and /api/dashboard/portfolio below. The old per-manager
+#    app.database.Project table itself is untouched -- /api/tasks and
+#    /api/dashboard/portfolio below still read it directly.
 # ────────────────────────────────────────────────────────
 # 3. TASKS ENDPOINTS (KB)
 # ────────────────────────────────────────────────────────
 
 @router.get("/api/tasks", response_model=List[TaskResponse])
-def get_tasks(project_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_tasks(project_id: Optional[int] = None, db: Session = Depends(get_manager_db)):
     query = select(Task)
     if project_id is not None:
         query = query.where(Task.project_id == project_id)
     return list(db.scalars(query.order_by(Task.id)).all())
 
 @router.post("/api/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+def create_task(task: TaskCreate, db: Session = Depends(get_manager_db)):
     # Verify project exists
     proj = db.get(Project, task.project_id)
     if not proj:
@@ -197,7 +179,7 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     return new_task
 
 @router.patch("/api/tasks/{task_id}", response_model=TaskResponse)
-def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_db)):
+def update_task(task_id: int, payload: TaskUpdate, db: Session = Depends(get_manager_db)):
     task = db.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -253,7 +235,7 @@ class PortfolioProjectResponse(BaseModel):
     entity_slug: str
 
 @router.get("/api/dashboard/portfolio", response_model=List[PortfolioProjectResponse])
-def get_dashboard_portfolio(db: Session = Depends(get_db)):
+def get_dashboard_portfolio(db: Session = Depends(get_manager_db)):
     projects = db.scalars(select(Project).order_by(Project.id.asc())).all()
     
     resp = []

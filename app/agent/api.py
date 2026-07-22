@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, delete
 from pydantic import BaseModel
 
-from app.database import get_db, ChatMessage
+from app.database import ChatMessage
+from app.tenancy.db import get_manager_db
 from app.agent.harness import run_agent
 
 router = APIRouter(prefix="/api/chat", tags=["Agent Chat"])
@@ -38,7 +39,7 @@ class ChatResponse(BaseModel):
 # -----------------------------------------------------------------------------
 
 @router.post("", response_model=ChatResponse)
-def post_chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
+def post_chat_message(payload: ChatRequest, db: Session = Depends(get_manager_db)):
     """
     Submits a message to Harry. Loads the last 20 chat messages as conversation history,
     runs the agentic harness loop, persists both user and assistant turns, and returns the response.
@@ -93,7 +94,7 @@ def post_chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/history", response_model=List[ChatMessageResponse])
-def get_chat_history(limit: int = Query(50), db: Session = Depends(get_db)):
+def get_chat_history(limit: int = Query(50), db: Session = Depends(get_manager_db)):
     """
     Retrieves the chronological history of direct chat messages up to limit.
     """
@@ -126,7 +127,7 @@ def get_chat_history(limit: int = Query(50), db: Session = Depends(get_db)):
 
 
 @router.delete("/history")
-def clear_chat_history(db: Session = Depends(get_db)):
+def clear_chat_history(db: Session = Depends(get_manager_db)):
     """
     Deletes all records from the direct chat history table (useful for demo resets).
     """
@@ -138,7 +139,7 @@ def clear_chat_history(db: Session = Depends(get_db)):
 heartbeat_router = APIRouter(tags=["Agent Heartbeat"])
 
 @heartbeat_router.post("/api/heartbeat/run")
-def force_heartbeat(db: Session = Depends(get_db)):
+def force_heartbeat(db: Session = Depends(get_manager_db)):
     """
     Manually triggers the agent heartbeat check (Triage and Action loop).
     """
@@ -146,7 +147,7 @@ def force_heartbeat(db: Session = Depends(get_db)):
     return run_heartbeat(db)
 
 @heartbeat_router.get("/api/agent/notes")
-def get_agent_notes(limit: int = Query(30), db: Session = Depends(get_db)):
+def get_agent_notes(limit: int = Query(30), db: Session = Depends(get_manager_db)):
     """
     Retrieves a chronological list of recent agent memory notes.
     """

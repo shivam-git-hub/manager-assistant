@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, or_, and_
 from sqlalchemy.exc import IntegrityError
 
-from app.database import get_db, UnifiedMessage
+from app.database import UnifiedMessage
+from app.tenancy.db import get_manager_db
 from app import timeservice
 from app.kb.models import Entity, TimelineEntry, AttributedClaim, Conflict
 from app.kb.schemas import (
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api/kb", tags=["Knowledge Base"])
 
 # 1. GET /api/kb/entities?type=project
 @router.get("/entities", response_model=List[EntityResponse])
-def list_entities(type: Optional[str] = Query(None), db: Session = Depends(get_db)):
+def list_entities(type: Optional[str] = Query(None), db: Session = Depends(get_manager_db)):
     stmt = select(Entity)
     if type:
         stmt = stmt.where(Entity.type == type)
@@ -28,7 +29,7 @@ def list_entities(type: Optional[str] = Query(None), db: Session = Depends(get_d
 
 # 2. POST /api/kb/entities
 @router.post("/entities", response_model=EntityResponse, status_code=status.HTTP_201_CREATED)
-def create_entity(payload: EntityCreate, db: Session = Depends(get_db)):
+def create_entity(payload: EntityCreate, db: Session = Depends(get_manager_db)):
     # Validate type
     allowed_types = {"project", "person", "meeting"}
     if payload.type not in allowed_types:
@@ -63,7 +64,7 @@ def create_entity(payload: EntityCreate, db: Session = Depends(get_db)):
 
 # 3. GET /api/kb/entities/{slug}
 @router.get("/entities/{slug}", response_model=EntityPageResponse)
-def get_entity_page(slug: str, db: Session = Depends(get_db)):
+def get_entity_page(slug: str, db: Session = Depends(get_manager_db)):
     entity = db.scalars(select(Entity).where(Entity.slug == slug)).first()
     if not entity:
         raise HTTPException(status_code=404, detail=f"Entity '{slug}' not found")
@@ -95,7 +96,7 @@ def get_entity_page(slug: str, db: Session = Depends(get_db)):
 
 # 4. POST /api/kb/entities/{slug}/timeline
 @router.post("/entities/{slug}/timeline", response_model=TimelineEntryResponse, status_code=status.HTTP_201_CREATED)
-def append_timeline_entry(slug: str, payload: TimelineEntryCreate, db: Session = Depends(get_db)):
+def append_timeline_entry(slug: str, payload: TimelineEntryCreate, db: Session = Depends(get_manager_db)):
     entity = db.scalars(select(Entity).where(Entity.slug == slug)).first()
     if not entity:
         raise HTTPException(status_code=404, detail=f"Entity '{slug}' not found")
@@ -124,7 +125,7 @@ def append_timeline_entry(slug: str, payload: TimelineEntryCreate, db: Session =
 
 # 5. GET /api/kb/entities/{slug}/timeline
 @router.get("/entities/{slug}/timeline", response_model=List[TimelineEntryResponse])
-def get_timeline(slug: str, limit: int = Query(50), db: Session = Depends(get_db)):
+def get_timeline(slug: str, limit: int = Query(50), db: Session = Depends(get_manager_db)):
     entity = db.scalars(select(Entity).where(Entity.slug == slug)).first()
     if not entity:
         raise HTTPException(status_code=404, detail=f"Entity '{slug}' not found")
@@ -139,7 +140,7 @@ def get_timeline(slug: str, limit: int = Query(50), db: Session = Depends(get_db
 
 # 6. POST /api/kb/entities/{slug}/claims
 @router.post("/entities/{slug}/claims", response_model=AttributedClaimResponse, status_code=status.HTTP_201_CREATED)
-def create_claim(slug: str, payload: AttributedClaimCreate, db: Session = Depends(get_db)):
+def create_claim(slug: str, payload: AttributedClaimCreate, db: Session = Depends(get_manager_db)):
     entity = db.scalars(select(Entity).where(Entity.slug == slug)).first()
     if not entity:
         raise HTTPException(status_code=404, detail=f"Entity '{slug}' not found")
@@ -181,7 +182,7 @@ def get_claims(
     slug: str,
     active: Optional[bool] = Query(None),
     holder: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_manager_db)
 ):
     entity = db.scalars(select(Entity).where(Entity.slug == slug)).first()
     if not entity:
@@ -197,7 +198,7 @@ def get_claims(
 
 # 8. POST /api/kb/claims/{id}/supersede
 @router.post("/claims/{id}/supersede", response_model=List[AttributedClaimResponse])
-def supersede_claim(id: int, payload: AttributedClaimCreate, db: Session = Depends(get_db)):
+def supersede_claim(id: int, payload: AttributedClaimCreate, db: Session = Depends(get_manager_db)):
     old_claim = db.get(AttributedClaim, id)
     if not old_claim:
         raise HTTPException(status_code=404, detail="Claim to supersede not found")
@@ -241,7 +242,7 @@ def supersede_claim(id: int, payload: AttributedClaimCreate, db: Session = Depen
 
 # 9. POST /api/kb/conflicts
 @router.post("/conflicts", response_model=ConflictResponse, status_code=status.HTTP_201_CREATED)
-def create_conflict(payload: ConflictCreate, db: Session = Depends(get_db)):
+def create_conflict(payload: ConflictCreate, db: Session = Depends(get_manager_db)):
     entity = db.scalars(select(Entity).where(Entity.slug == payload.entity_slug)).first()
     if not entity:
         raise HTTPException(status_code=404, detail="Entity slug not found")
@@ -274,7 +275,7 @@ def create_conflict(payload: ConflictCreate, db: Session = Depends(get_db)):
 def list_conflicts(
     status: Optional[str] = Query(None),
     entity: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_manager_db)
 ):
     stmt = select(Conflict)
     if status:
@@ -288,7 +289,7 @@ def list_conflicts(
 
 # 11. PATCH /api/kb/conflicts/{id}
 @router.patch("/conflicts/{id}", response_model=ConflictResponse)
-def patch_conflict(id: int, payload: ConflictUpdate, db: Session = Depends(get_db)):
+def patch_conflict(id: int, payload: ConflictUpdate, db: Session = Depends(get_manager_db)):
     conflict = db.get(Conflict, id)
     if not conflict:
         raise HTTPException(status_code=404, detail="Conflict not found")
@@ -306,7 +307,7 @@ def patch_conflict(id: int, payload: ConflictUpdate, db: Session = Depends(get_d
 
 # 12. GET /api/kb/search?q=schema
 @router.get("/search", response_model=SearchGroupedResponse)
-def search_kb(q: str = Query(...), db: Session = Depends(get_db)):
+def search_kb(q: str = Query(...), db: Session = Depends(get_manager_db)):
     term = f"%{q}%"
     
     # 1. Search entities: name or compiled_truth
@@ -359,7 +360,7 @@ def search_kb(q: str = Query(...), db: Session = Depends(get_db)):
 
 
 @router.post("/process")
-def process_unprocessed_messages(limit: int = Query(20), db: Session = Depends(get_db)):
+def process_unprocessed_messages(limit: int = Query(20), db: Session = Depends(get_manager_db)):
     from app.kb.extraction import extract_from_message
     stmt = select(UnifiedMessage).where(UnifiedMessage.is_processed == False).order_by(UnifiedMessage.timestamp.asc()).limit(limit)
     msgs = list(db.scalars(stmt).all())
@@ -387,7 +388,7 @@ def process_unprocessed_messages(limit: int = Query(20), db: Session = Depends(g
 
 
 @router.post("/dream")
-def execute_dream_cycle(db: Session = Depends(get_db)):
+def execute_dream_cycle(db: Session = Depends(get_manager_db)):
     from app.kb.synthesis import run_dream_cycle
     stats = run_dream_cycle(db)
     return stats

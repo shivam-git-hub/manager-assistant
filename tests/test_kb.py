@@ -59,25 +59,14 @@ def test_01_entity_validations(client, db_session):
 
 def test_02_auto_creation_entities(client, db_session):
     """
-    2. POST /api/projects auto-creates project:<slug> entity;
-       POST /api/team auto-creates person:<id> entity (idempotent on repeat).
+    2. POST /api/team auto-creates person:<id> entity (idempotent on repeat).
+
+    Used to also cover POST /api/projects auto-creating a project:<slug>
+    entity, but that v1 per-manager /api/projects handler was removed in
+    step 18 (prompts/step_18_registry_and_scaffold.md §3) -- /api/projects
+    is now the global control-plane registry (app.api.projects_registry),
+    which has no KB-entity auto-creation side effect.
     """
-    # Post Project
-    proj_payload = {
-        "name": "New Web Portal",
-        "description": "A clean pastel portal",
-        "manager_id": "U_HARRY",
-        "status": "active"
-    }
-    resp_proj = client.post("/api/projects", json=proj_payload)
-    assert resp_proj.status_code == 201
-    
-    # Verify entity was automatically created
-    ent = db_session.query(Entity).filter(Entity.slug == "project:new-web-portal").first()
-    assert ent is not None
-    assert ent.type == "project"
-    assert ent.name == "New Web Portal"
-    
     # Post TeamMember
     member_payload = {
         "id": "U_CHARLIE",

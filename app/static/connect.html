@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Harry -- Manage Connections</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; color: #1a1a1a; }
+  h2 { margin-bottom: 4px; }
+  #whoami { color: #888; font-size: 14px; margin-bottom: 28px; }
+  .card { border: 1px solid #e2e2e2; border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+  .card h3 { margin: 0 0 8px; font-size: 16px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .pill.connected { background: #e6f4ea; color: #1e7e34; }
+  .pill.disconnected { background: #f0f0f0; color: #888; }
+  .pill.partial { background: #fff4e0; color: #a05a00; }
+  button, a.btn { display: inline-block; padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; text-decoration: none; border: none; cursor: pointer; }
+  a.btn.primary, button.primary { background: #0f6cbd; color: #fff; }
+  button.danger { background: #fdecea; color: #c62828; }
+  button.secondary { background: #f0f0f0; color: #333; }
+  #logout { margin-top: 24px; }
+</style>
+</head>
+<body>
+  <h2>Manage Connections</h2>
+  <div id="whoami">Loading...</div>
+
+  <div class="card">
+    <h3>Outlook <span id="outlook-pill" class="pill disconnected">disconnected</span></h3>
+    <div id="outlook-detail"></div>
+    <div class="row" id="outlook-actions"></div>
+  </div>
+
+  <div class="card">
+    <h3>Slack <span id="slack-pill" class="pill disconnected">disconnected</span></h3>
+    <div id="slack-detail"></div>
+    <div class="row" id="slack-actions"></div>
+  </div>
+
+  <button id="logout" class="secondary" onclick="logout()">Log out</button>
+
+<script>
+async function loadWhoAmI() {
+  const res = await fetch("/api/auth/me", { credentials: "include" });
+  if (!res.ok) {
+    window.location.href = "/login.html";
+    return null;
+  }
+  const manager = await res.json();
+  document.getElementById("whoami").textContent = `Signed in as ${manager.name} (${manager.email})`;
+  return manager;
+}
+
+async function loadConnections() {
+  const res = await fetch("/api/auth/connections", { credentials: "include" });
+  if (!res.ok) return;
+  const data = await res.json();
+  renderOutlook(data.outlook);
+  renderSlack(data.slack);
+}
+
+function renderOutlook(outlook) {
+  const pill = document.getElementById("outlook-pill");
+  const detail = document.getElementById("outlook-detail");
+  const actions = document.getElementById("outlook-actions");
+  actions.innerHTML = "";
+  detail.innerHTML = "";
+
+  if (!outlook.connected) {
+    pill.textContent = "disconnected";
+    pill.className = "pill disconnected";
+    const a = document.createElement("a");
+    a.className = "btn primary";
+    a.href = "/auth/outlook/login";
+    a.textContent = "Connect Outlook";
+    actions.appendChild(a);
+    return;
+  }
+
+  const mailboxP = document.createElement("p");
+  mailboxP.textContent = outlook.mailbox_email;
+  detail.appendChild(mailboxP);
+
+  if (outlook.send_enabled) {
+    pill.textContent = "read + send";
+    pill.className = "pill connected";
+  } else {
+    pill.textContent = "read only";
+    pill.className = "pill partial";
+    const enableBtn = document.createElement("a");
+    enableBtn.className = "btn primary";
+    enableBtn.href = "/auth/outlook/enable-send";
+    enableBtn.textContent = "Enable send permission";
+    actions.appendChild(enableBtn);
+  }
+
+  const disconnectBtn = document.createElement("button");
+  disconnectBtn.className = "danger";
+  disconnectBtn.textContent = "Disconnect";
+  disconnectBtn.onclick = () => disconnect("outlook");
+  actions.appendChild(disconnectBtn);
+}
+
+function renderSlack(agent) {
+  // Slack is agent-pool-shaped now (step 17 piece 2b): a manager holds at
+  // most one bot, claimed via POST /api/agents/claim (no picker UI yet --
+  // that's still API-only, deferred until the single install path is
+  // live-verified). This just reflects whatever state /connections reports.
+  const pill = document.getElementById("slack-pill");
+  const detail = document.getElementById("slack-detail");
+  const actions = document.getElementById("slack-actions");
+  detail.innerHTML = "";
+  actions.innerHTML = "";
+
+  if (!agent) {
+    pill.textContent = "no agent assigned";
+    pill.className = "pill disconnected";
+    const p = document.createElement("p");
+    p.style.color = "#888";
+    p.textContent = "Claim a bot via POST /api/agents/redeem + /api/agents/claim before connecting.";
+    detail.appendChild(p);
+    return;
+  }
+
+  const nameP = document.createElement("p");
+  nameP.textContent = `Bot: ${agent.agent_name}`;
+  detail.appendChild(nameP);
+
+  if (!agent.installed) {
+    pill.textContent = "not connected";
+    pill.className = "pill disconnected";
+    const a = document.createElement("a");
+    a.className = "btn primary";
+    a.href = "/auth/slack/install";
+    a.textContent = "Connect Slack";
+    actions.appendChild(a);
+    return;
+  }
+
+  pill.textContent = agent.read_enabled ? "read + bot" : "bot only";
+  pill.className = agent.read_enabled ? "pill connected" : "pill partial";
+
+  const disconnectBtn = document.createElement("button");
+  disconnectBtn.className = "danger";
+  disconnectBtn.textContent = "Disconnect";
+  disconnectBtn.onclick = () => disconnect("slack");
+  actions.appendChild(disconnectBtn);
+}
+
+async function disconnect(provider) {
+  await fetch(`/auth/${provider}/disconnect`, { method: "POST", credentials: "include" });
+  loadConnections();
+}
+
+async function logout() {
+  await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  window.location.href = "/login.html";
+}
+
+(async () => {
+  const manager = await loadWhoAmI();
+  if (manager) await loadConnections();
+})();
+</script>
+</body>
+</html>

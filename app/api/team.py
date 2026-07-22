@@ -1,19 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.database import get_db, TeamMember
+from app.database import TeamMember
+from app.tenancy.db import get_manager_db
 from app.kb.schemas import TeamMemberCreate, TeamMemberResponse
 from typing import List
 
 router = APIRouter(prefix="/api/team", tags=["Team"])
 
 @router.get("", response_model=List[TeamMemberResponse])
-def get_team_members(db: Session = Depends(get_db)):
+def get_team_members(db: Session = Depends(get_manager_db)):
     result = db.scalars(select(TeamMember)).all()
     return result
 
 @router.post("", response_model=TeamMemberResponse, status_code=status.HTTP_201_CREATED)
-def create_or_update_team_member(member: TeamMemberCreate, db: Session = Depends(get_db)):
+def create_or_update_team_member(member: TeamMemberCreate, db: Session = Depends(get_manager_db)):
     # Check if team member already exists
     existing = db.get(TeamMember, member.id)
     if existing:
@@ -52,7 +53,7 @@ def create_or_update_team_member(member: TeamMemberCreate, db: Session = Depends
     return new_member
 
 @router.delete("/{member_id}", status_code=status.HTTP_200_OK)
-def delete_team_member(member_id: str, db: Session = Depends(get_db)):
+def delete_team_member(member_id: str, db: Session = Depends(get_manager_db)):
     member = db.get(TeamMember, member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Team member not found")

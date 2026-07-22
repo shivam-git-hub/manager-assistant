@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, Mapped, mapped_column
 from sqlalchemy import select, and_
 
-from app.database import Base, get_db
+from app.database import Base
+from app.tenancy.db import get_manager_db
 from app import timeservice
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ def tick(db: Session) -> dict:
 router = APIRouter(prefix="/api/scheduler", tags=["Virtual Scheduler"])
 
 @router.post("/tick")
-def trigger_tick(db: Session = Depends(get_db)):
+def trigger_tick(db: Session = Depends(get_manager_db)):
     """
     Manually triggers the virtual scheduler loop.
     """

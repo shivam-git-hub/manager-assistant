@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, func
 
-from app.database import get_db, Meeting, ActionItem, Task, Project, TeamMember, UnifiedMessage
+from app.database import Meeting, ActionItem, Task, Project, TeamMember, UnifiedMessage
+from app.tenancy.db import get_manager_db
 from app.kb.models import Entity, TimelineEntry, AttributedClaim, get_or_create_entity, slugify
 from app.kb.schemas import UnifiedMessageResponse
 from app.agent.gemini_client import get_client, GeminiClient
@@ -78,7 +79,7 @@ class MomRequest(BaseModel):
 # -----------------------------------------------------------------------------
 
 @router.post("", response_model=MeetingResponse, status_code=status.HTTP_201_CREATED)
-def create_meeting(payload: MeetingCreate, db: Session = Depends(get_db)):
+def create_meeting(payload: MeetingCreate, db: Session = Depends(get_manager_db)):
     """
     Creates a scheduled meeting, registers its Entity, and schedules its pre-meeting brief.
     """
@@ -142,7 +143,7 @@ def create_meeting(payload: MeetingCreate, db: Session = Depends(get_db)):
 def get_meetings(
     from_date: Optional[str] = Query(None, alias="from", description="Start date YYYY-MM-DD"),
     to_date: Optional[str] = Query(None, alias="to", description="End date YYYY-MM-DD"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_manager_db)
 ):
     """
     Retrieves all scheduled/completed meetings filtered by an optional date range.
@@ -188,7 +189,7 @@ def get_meetings(
 
 
 @router.get("/{id}", response_model=MeetingDetailPageResponse)
-def get_meeting_detail(id: int, db: Session = Depends(get_db)):
+def get_meeting_detail(id: int, db: Session = Depends(get_manager_db)):
     """
     Fetches a specific meeting, its actions list, and entity slug.
     """
@@ -241,7 +242,7 @@ def get_meeting_detail(id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/{id}", response_model=MeetingResponse)
-def update_meeting(id: int, payload: MeetingUpdate, db: Session = Depends(get_db)):
+def update_meeting(id: int, payload: MeetingUpdate, db: Session = Depends(get_manager_db)):
     """
     Modifies scheduled dates, times, or statuses, adapting the pre-meeting brief.
     """
@@ -299,7 +300,7 @@ def update_meeting(id: int, payload: MeetingUpdate, db: Session = Depends(get_db
 # -----------------------------------------------------------------------------
 
 @router.post("/{id}/mom", response_model=MeetingDetailPageResponse)
-def ingest_mom(id: int, payload: MomRequest, db: Session = Depends(get_db)):
+def ingest_mom(id: int, payload: MomRequest, db: Session = Depends(get_manager_db)):
     """
     POSTs minutes of meeting text, runs structured LLM extraction, seeds action items
     as real tasks, DMs owners, and propagates decisions into relevant project timelines & claims.

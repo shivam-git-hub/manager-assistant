@@ -14,6 +14,19 @@ dist/
 build/
 *.egg-info/
 config.json
+job_schedule.json
+agents_pool.json
+employees.json
+.env
+# Repo-root only (leading slash) -- must not shadow app/projects/, the
+# step-18 source package (see prompts/step_18_registry_and_scaffold.md).
+/projects/
+
+# Per-manager runtime data (db.sqlite is caught by *.sqlite, but the json
+# state + md files must not be committed either)
+/managers/
+
+.DS_Store
 
 
 # editor swap files

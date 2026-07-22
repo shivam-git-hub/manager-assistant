@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Harry -- Login</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f5f6f8;
+    height: 100vh;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .box {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    padding: 40px 36px;
+    width: 320px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 22px;
+    letter-spacing: 0.05em;
+    margin: 0 0 28px;
+    color: #1a1a1a;
+  }
+  a.btn {
+    display: block;
+    padding: 12px 16px;
+    background: #0f6cbd;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  a.btn:hover { background: #0a5aa0; }
+  #status { margin-top: 16px; font-size: 13px; color: #888; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>LOGIN</h1>
+    <a class="btn" href="/auth/outlook/login">Sign in with Outlook</a>
+    <div id="status"></div>
+  </div>
+
+<script>
+async function checkExistingSession() {
+  const statusEl = document.getElementById("status");
+  try {
+    const res = await fetch("/api/auth/me", { credentials: "include" });
+    if (res.ok) {
+      window.location.href = "/connect.html";
+    }
+  } catch (e) {
+    statusEl.textContent = "";
+  }
+}
+checkExistingSession();
+</script>
+</body>
+</html>

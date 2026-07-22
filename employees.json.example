@@ -1,0 +1,29 @@
+[
+  {
+    "email": "alice@example.com",
+    "name": "Alice Chen",
+    "slack_id": "U0000001",
+    "role": "Backend Engineer",
+    "skills": ["python", "postgres", "api-design"]
+  },
+  {
+    "email": "bob@example.com",
+    "name": "Bob Iyer",
+    "slack_id": "U0000002",
+    "role": "Frontend Engineer",
+    "skills": ["react", "typescript"]
+  },
+  {
+    "email": "carol@example.com",
+    "name": "Carol Fernandes",
+    "role": "Product Designer",
+    "skills": ["figma", "user-research"]
+  },
+  {
+    "email": "dave@example.com",
+    "name": "Dave Menon",
+    "slack_id": "U0000004",
+    "role": "QA Engineer",
+    "skills": ["testing", "automation"]
+  }
+]

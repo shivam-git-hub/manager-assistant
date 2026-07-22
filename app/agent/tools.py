@@ -762,7 +762,7 @@ WRITE_FILE_SCHEMA = {
 
 PATCH_SCHEMA = {
     "name": "patch",
-    "description": "Targeted find-and-replace edits in files. Use this instead of sed/awk in terminal. Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. Returns a unified diff.",
+    "description": "Targeted find-and-replace edits in files. Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. Returns a unified diff.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -827,48 +827,6 @@ SEND_MESSAGE_SCHEMA = {
     }
 }
 
-TERMINAL_SCHEMA = {
-    "name": "terminal",
-    "description": "Execute shell commands on a Linux environment. Filesystem usually persists between calls.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "command": {
-                "type": "string",
-                "description": "The command to execute on the VM"
-            },
-            "background": {
-                "type": "boolean",
-                "default": False,
-                "description": "Run the command in the background."
-            },
-            "notify_on_complete": {
-                "type": "boolean",
-                "default": False,
-                "description": "When true (and background=true), you'll be automatically notified exactly once when the process finishes."
-            },
-            "pty": {
-                "type": "boolean",
-                "default": False,
-                "description": "Run in pseudo-terminal (PTY) mode for interactive CLI tools."
-            },
-            "timeout": {
-                "type": "integer",
-                "description": "Max seconds to wait."
-            },
-            "watch_patterns": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Strings to watch for in background process output."
-            },
-            "workdir": {
-                "type": "string",
-                "description": "Working directory for this command (absolute path)."
-            }
-        },
-        "required": ["command"]
-    }
-}
 
 CRONJOB_SCHEMA = {
     "name": "cronjob",
@@ -999,7 +957,6 @@ def register_tools() -> None:
     registry.register("write_file", WRITE_FILE_SCHEMA, write_file_handler)
     registry.register("patch", PATCH_SCHEMA, patch_handler)
     registry.register("send_message", SEND_MESSAGE_SCHEMA, send_message_handler)
-    registry.register("terminal", TERMINAL_SCHEMA, terminal_handler)
     registry.register("cronjob", CRONJOB_SCHEMA, cronjob_handler)
     registry.register("delegate_task", DELEGATE_TASK_SCHEMA, delegate_task_handler)
 

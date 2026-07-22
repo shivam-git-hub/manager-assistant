@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, func, or_
 from pydantic import BaseModel
 
-from app.database import get_db, Leave, ReassignmentSuggestion, Digest, Task, TeamMember, Project
+from app.database import Leave, ReassignmentSuggestion, Digest, Task, TeamMember, Project
+from app.tenancy.db import get_manager_db
 from app.kb.models import get_or_create_entity, slugify, TimelineEntry
 from app.agent.gemini_client import get_client
 from app.config import FLASH_MODEL
@@ -69,7 +70,7 @@ class DigestResponse(BaseModel):
 # -----------------------------------------------------------------------------
 
 @router.post("/leaves", response_model=LeaveResponse, status_code=status.HTTP_201_CREATED)
-def create_leave(payload: LeaveCreate, db: Session = Depends(get_db)):
+def create_leave(payload: LeaveCreate, db: Session = Depends(get_manager_db)):
     # Validate member
     member = db.scalars(select(TeamMember).where(TeamMember.id == payload.member_id)).first()
     if not member:
@@ -206,7 +207,7 @@ def create_leave(payload: LeaveCreate, db: Session = Depends(get_db)):
     return new_leave
 
 @router.get("/leaves", response_model=List[LeaveResponse])
-def list_leaves(active: Optional[bool] = Query(None), db: Session = Depends(get_db)):
+def list_leaves(active: Optional[bool] = Query(None), db: Session = Depends(get_manager_db)):
     stmt = select(Leave)
     if active:
         today = timeservice.now_ist().date()
@@ -214,7 +215,7 @@ def list_leaves(active: Optional[bool] = Query(None), db: Session = Depends(get_
     return list(db.scalars(stmt).all())
 
 @router.delete("/leaves/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_leave(id: int, db: Session = Depends(get_db)):
+def delete_leave(id: int, db: Session = Depends(get_manager_db)):
     leave = db.scalars(select(Leave).where(Leave.id == id)).first()
     if not leave:
         raise HTTPException(status_code=404, detail="Leave not found")
@@ -227,14 +228,14 @@ def delete_leave(id: int, db: Session = Depends(get_db)):
     db.commit()
 
 @router.get("/reassignments", response_model=List[ReassignmentSuggestionResponse])
-def list_reassignments(status: Optional[str] = Query(None), db: Session = Depends(get_db)):
+def list_reassignments(status: Optional[str] = Query(None), db: Session = Depends(get_manager_db)):
     stmt = select(ReassignmentSuggestion)
     if status:
         stmt = stmt.where(ReassignmentSuggestion.status == status)
     return list(db.scalars(stmt).all())
 
 @router.post("/reassignments/{id}/approve", response_model=ReassignmentSuggestionResponse)
-def approve_reassignment(id: int, db: Session = Depends(get_db)):
+def approve_reassignment(id: int, db: Session = Depends(get_manager_db)):
     sugg = db.scalars(select(ReassignmentSuggestion).where(ReassignmentSuggestion.id == id)).first()
     if not sugg:
         raise HTTPException(status_code=404, detail="Suggestion not found")
@@ -289,7 +290,7 @@ def approve_reassignment(id: int, db: Session = Depends(get_db)):
     return sugg
 
 @router.post("/reassignments/{id}/reject", response_model=ReassignmentSuggestionResponse)
-def reject_reassignment(id: int, db: Session = Depends(get_db)):
+def reject_reassignment(id: int, db: Session = Depends(get_manager_db)):
     sugg = db.scalars(select(ReassignmentSuggestion).where(ReassignmentSuggestion.id == id)).first()
     if not sugg:
         raise HTTPException(status_code=404, detail="Suggestion not found")
@@ -304,7 +305,7 @@ def reject_reassignment(id: int, db: Session = Depends(get_db)):
     return sugg
 
 @router.get("/digests", response_model=List[DigestResponse])
-def list_digests(limit: int = Query(4), db: Session = Depends(get_db)):
+def list_digests(limit: int = Query(4), db: Session = Depends(get_manager_db)):
     stmt = select(Digest).order_by(Digest.week_start.desc()).limit(limit)
     digests = list(db.scalars(stmt).all())
     

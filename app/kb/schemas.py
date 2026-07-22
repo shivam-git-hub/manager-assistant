@@ -74,11 +74,14 @@ class UnifiedMessageBase(BaseModel):
     direction: str = "inbound"
     sender_raw_id: str
     sender_mapped_name: Optional[str] = None
+    receiver_raw_id: Optional[str] = None
+    receiver_mapped_name: Optional[str] = None
     channel_raw_id: str
     thread_id: Optional[str] = None
     subject: Optional[str] = None
     content: str
     timestamp: datetime
+    created_at: Optional[datetime] = None
     is_processed: bool = False
     processed_at: Optional[datetime] = None
     raw_metadata: Optional[str] = None

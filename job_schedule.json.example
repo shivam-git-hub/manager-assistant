@@ -1,0 +1,7 @@
+{
+  "ingestion": {"interval_minutes": 15, "message_threshold": 10},
+  "heartbeat": {"interval_minutes": 60},
+  "dream": {"interval_minutes": 1440},
+  "lint": {"interval_minutes": 10080},
+  "outlook_poll": {"interval_minutes": 5}
+}

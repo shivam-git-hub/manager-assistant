@@ -1,15 +1,15 @@
 from datetime import datetime, timedelta
 import json
 from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, status, Response, HTTPException
+from fastapi import APIRouter, Depends, Query, status, Response
 from sqlalchemy import select, String, Text, DateTime, Integer
 from sqlalchemy.orm import Mapped, mapped_column, Session
 
-from app.database import Base, get_db, UnifiedMessage
+from app.database import Base, UnifiedMessage
+from app.tenancy.db import get_manager_db
 from app import timeservice
 from app.config import WORK_HOURS_START, WORK_HOURS_END
-from app.integrations.slack import send_slack_message_internal
-from app.integrations.outlook import send_outlook_message_internal
+from app.integrations.registry import get_connector
 
 class OutboundQueue(Base):
     __tablename__ = "outbound_queue"
@@ -55,9 +55,13 @@ def _dispatch(channel_type: str, payload: dict, db: Session) -> Optional[str]:
     Sends a queued/immediate payload through the matching transport.
     Returns the resulting platform_msg_id, or None if the send failed.
     """
+    connector = get_connector(channel_type)
+    if not connector:
+        return None
+
     if channel_type == "slack":
-        res = send_slack_message_internal(payload.get("channel"), payload.get("text"), db)
-        return res.get("message_id") if res.get("ok") else None
+        result = connector.send(db, payload.get("channel"), payload.get("text"))
+        return result.platform_msg_id if result.ok else None
     elif channel_type == "outlook":
         # Extract from the Graph sendMail schema
         msg_payload = payload.get("message", {})
@@ -66,12 +70,10 @@ def _dispatch(channel_type: str, payload: dict, db: Session) -> Optional[str]:
         body_html = body_payload.get("content", "")
         recipients_list = msg_payload.get("toRecipients", [])
         to_emails = [r.get("emailAddress", {}).get("address") for r in recipients_list if r.get("emailAddress", {}).get("address")]
-
-        try:
-            res = send_outlook_message_internal(subject, body_html, to_emails, db)
-        except HTTPException:
+        if not to_emails or not body_html:
             return None
-        return res.get("message_id")
+        result = connector.send(db, to_emails[0], body_html, subject)
+        return result.platform_msg_id if result.ok else None
     return None
 
 def send_or_hold(channel_type: str, payload: dict, db: Session) -> dict:
@@ -127,11 +129,11 @@ def release_queued_messages_sync(db: Session) -> dict:
     return {"released": count, "remaining_held": remaining}
 
 @router.post("/release")
-async def release_queued_messages(db: Session = Depends(get_db)):
+async def release_queued_messages(db: Session = Depends(get_manager_db)):
     return release_queued_messages_sync(db)
 
 @router.get("/queue")
-async def list_outbound_queue(status: Optional[str] = Query(None), db: Session = Depends(get_db)):
+async def list_outbound_queue(status: Optional[str] = Query(None), db: Session = Depends(get_manager_db)):
     """
     Lists outbound queue rows filtered by status.
     """

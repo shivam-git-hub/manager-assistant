@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, Query, status, HTTPException
 from sqlalchemy.orm import Session, Mapped, mapped_column
 from sqlalchemy import select, and_, or_, Integer, String, Text, DateTime
 
-from app.database import Base, get_db, TeamMember, Project, Task
+from app.database import Base, TeamMember, Project, Task
+from app.tenancy.db import get_manager_db
 from app.kb.models import Entity, Conflict
 from app.followups import Followup, get_dm_channel_id
 from app.outbound import release_queued_messages_sync, send_or_hold
@@ -198,12 +199,12 @@ class BriefResponse(BaseModel):
 router = APIRouter(prefix="/api/briefs", tags=["Morning Brief Service"])
 
 @router.get("", response_model=List[BriefResponse])
-def get_briefs(limit: int = Query(7), db: Session = Depends(get_db)):
+def get_briefs(limit: int = Query(7), db: Session = Depends(get_manager_db)):
     stmt = select(Brief).order_by(Brief.brief_date.desc()).limit(limit)
     return list(db.scalars(stmt).all())
 
 @router.get("/{date}", response_model=BriefResponse)
-def get_brief_by_date(date: str, db: Session = Depends(get_db)):
+def get_brief_by_date(date: str, db: Session = Depends(get_manager_db)):
     brief = db.scalars(select(Brief).where(Brief.brief_date == date)).first()
     if not brief:
         raise HTTPException(status_code=404, detail=f"No brief found for date {date}")

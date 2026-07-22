@@ -1,0 +1,18 @@
+[
+  {
+    "id": "atlas",
+    "name": "Atlas",
+    "slack_app_id": "A0000000001",
+    "slack_client_id": "0000000000.0000000000",
+    "slack_client_secret": "REPLACE_ME",
+    "slack_signing_secret": "REPLACE_ME"
+  },
+  {
+    "id": "nova",
+    "name": "Nova",
+    "slack_app_id": "A0000000002",
+    "slack_client_id": "0000000000.0000000001",
+    "slack_client_secret": "REPLACE_ME",
+    "slack_signing_secret": "REPLACE_ME"
+  }
+]

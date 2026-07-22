@@ -1,6 +1,22 @@
 import pytest
 from app.integrations.outlook import clean_html
 
+
+def _seed_slack_installation(client, team_id="T_TEST", app_id="A_TEST"):
+    """An installed Agent is required for webhook routing (step 17 piece 2b)
+    to resolve which manager's db.sqlite an event belongs to -- routed by
+    api_app_id, not team_id (see slack_payload fixtures below)."""
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
+
+    db = ControlPlaneSessionLocal()
+    db.add(Agent(
+        id=f"agent-{client.manager_id}", name="Test Agent", slack_app_id=app_id,
+        slack_client_id="cid", slack_client_secret="csecret", slack_signing_secret="ssecret",
+        manager_id=client.manager_id, team_id=team_id, bot_token="xoxb-fake",
+    ))
+    db.commit()
+    db.close()
+
 def test_html_cleaner():
     # Test basic stripping
     html = "<div><p>Hello World</p><br>This is a new line.</div>"
@@ -58,7 +74,17 @@ def test_slack_webhook_verification(client):
 
 
 def test_slack_webhook_ingestion(client):
-    # 1. Create a matching team member first
+    # 0. A manager and a tracked contact are required now: only DMs to/from
+    # the manager, with a tracked counterpart, get stored at all.
+    client.post("/api/team", json={
+        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
+    })
+    client.post("/api/projectkb/tracked-contacts", json={
+        "label": "Alice Developer", "slack_pattern": "U_ALICE_123"
+    })
+    _seed_slack_installation(client)
+
+    # 1. Create a matching team member
     member_payload = {
         "id": "USLACK_ALICE",
         "name": "Alice Developer",
@@ -68,19 +94,24 @@ def test_slack_webhook_ingestion(client):
     }
     client.post("/api/team", json=member_payload)
 
-    # 2. Mock a slack event message
+    # 2. Mock a real Slack DM event (channel_type "im" is how Slack marks a
+    # 1:1 DM; a public/private channel post never involves the manager the
+    # way a DM does, so it wouldn't be stored)
     slack_payload = {
+        "team_id": "T_TEST",
+        "api_app_id": "A_TEST",
         "type": "event_callback",
         "event": {
             "type": "message",
             "client_msg_id": "client_msg_abc_123",
             "user": "U_ALICE_123",
-            "channel": "C_DEV_CHANNEL",
+            "channel": "D_ALICE_MANAGER",
+            "channel_type": "im",
             "text": "Finished the SQLite schema setup!",
             "ts": "1789025345.000000"
         }
     }
-    
+
     response = client.post("/api/integrations/slack/webhook", json=slack_payload)
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -102,7 +133,72 @@ def test_slack_webhook_ingestion(client):
     assert "duplicate" in dup_response.json()["detail"]
 
 
+def test_slack_webhook_untracked_counterpart_not_stored(client):
+    """A DM to the manager from someone NOT on the tracked-contacts list is
+    not stored at all."""
+    client.post("/api/team", json={
+        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
+    })
+    _seed_slack_installation(client)
+    slack_payload = {
+        "team_id": "T_TEST",
+        "api_app_id": "A_TEST",
+        "type": "event_callback",
+        "event": {
+            "type": "message",
+            "client_msg_id": "client_msg_untracked_1",
+            "user": "U_RANDOM",
+            "channel": "D_RANDOM_MANAGER",
+            "channel_type": "im",
+            "text": "hello",
+            "ts": "1789025999.000000"
+        }
+    }
+    response = client.post("/api/integrations/slack/webhook", json=slack_payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+    msg_response = client.get("/api/messages?source=slack")
+    assert msg_response.json() == []
+
+
+def test_slack_webhook_channel_message_not_stored(client):
+    """A message in a regular (non-DM) channel never involves the manager
+    the way a DM does, so it's never stored, even from a tracked contact."""
+    client.post("/api/team", json={
+        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
+    })
+    client.post("/api/projectkb/tracked-contacts", json={
+        "label": "Alice Developer", "slack_pattern": "U_ALICE_123"
+    })
+    _seed_slack_installation(client)
+    slack_payload = {
+        "team_id": "T_TEST",
+        "api_app_id": "A_TEST",
+        "type": "event_callback",
+        "event": {
+            "type": "message",
+            "client_msg_id": "client_msg_channel_1",
+            "user": "U_ALICE_123",
+            "channel": "C_DEV_CHANNEL",
+            "text": "posted in a public channel",
+            "ts": "1789026111.000000"
+        }
+    }
+    response = client.post("/api/integrations/slack/webhook", json=slack_payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+
+
 def test_outlook_ingestion(client):
+    # 0. Manager + tracked sender are required now.
+    client.post("/api/team", json={
+        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "outlook_email": "shivam@company.com"
+    })
+    client.post("/api/projectkb/tracked-contacts", json={
+        "label": "Bob Product", "email_pattern": "bob@company.com"
+    })
+
     # 1. Create matching team member
     member_payload = {
         "id": "UOUTLOOK_BOB",
@@ -113,7 +209,7 @@ def test_outlook_ingestion(client):
     }
     client.post("/api/team", json=member_payload)
 
-    # 2. Mock Outlook HTML email payload
+    # 2. Mock Outlook HTML email payload, addressed to the manager
     outlook_payload = {
         "id": "outlook_email_xyz_999",
         "sender": {
@@ -122,6 +218,9 @@ def test_outlook_ingestion(client):
                 "name": "Bob Product"
             }
         },
+        "toRecipients": [
+            {"emailAddress": {"address": "shivam@company.com", "name": "Shivam"}}
+        ],
         "subject": "Weekly Status Update",
         "body": {
             "contentType": "html",
