@@ -239,6 +239,16 @@ export function getProject(id: string): Promise<ProjectDetail> {
   return request(`/api/projects/${id}`);
 }
 
+export function patchProjectMembers(
+  id: string,
+  payload: {
+    add_member_employee_ids?: { employee_id: string; role?: string }[];
+    remove_member_employee_ids?: string[];
+  }
+): Promise<ProjectDetail> {
+  return request(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
 export function deleteProject(id: string): Promise<void> {
   return request(`/api/projects/${id}`, { method: "DELETE" });
 }

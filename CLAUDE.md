@@ -281,6 +281,29 @@ implementations). The v1 architecture below is being superseded per-piece.
   still describes v1-era concepts (timeline.md tiers, todos/conflicts) in
   its docstring — step 26 replaces that docstring along with the code,
   don't preserve the stale wording.
+- **Live-testing fixes 2026-07-23** (found by Shivam testing the real
+  frontend, out of step-sequence — not part of step 26/27): (a) Outlook
+  login (`app/controlplane/outlook_auth.py::_handle_login_callback`) now
+  also upserts an `Employee` row (by lowercase email, same convention as
+  `scripts/seed_employees.py`) for every signing-in manager — previously
+  only a `Manager` row was created, so no manager ever showed up in the
+  employee directory / was addable as a project teammate, and the Team
+  panel looked permanently empty regardless of seeding. Existing
+  `Employee` rows (e.g. hand-seeded via `employees.json`) are updated
+  in place (name refreshed), not duplicated. (b) `ProjectOverview.tsx`'s
+  Team dialog was read-only (list members, no way to add any) — added an
+  employee picker + Add button (manager-only, team-kind-only, filters out
+  existing members) and a per-member Remove button, both wired to the
+  already-existing but previously frontend-unused
+  `PATCH /api/projects/{id}` `add_member_employee_ids`/
+  `remove_member_employee_ids` fields (`patchProjectMembers` added to
+  `frontend/src/lib/api.ts`) — the backend for this was already complete
+  from step 18, only the UI was missing. (c) `employees.json` (gitignored,
+  dev-only) seeded with the two real logged-in managers plus the four
+  example fake employees, via `scripts/seed_employees.py` — needed since
+  the directory was empty (no admin had run the seed script yet).
+  `tests/test_outlook_auth.py` +2 (Employee-created-on-login,
+  Employee-row-reused-and-name-updated-on-repeat-login).
 
 ## Architecture (v1, agreed 2026-07-12 — being superseded)
 

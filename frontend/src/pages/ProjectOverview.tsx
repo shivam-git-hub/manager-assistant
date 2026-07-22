@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   addManualMessage,
+  getEmployees,
   getProjectDoc,
   getProject,
   getVaultFiles,
+  patchProjectMembers,
   putProjectDoc,
   uploadVaultFile,
   vaultDownloadUrl,
+  type Employee,
   type ProjectDetail,
   type VaultFile,
 } from "@/lib/api";
@@ -78,6 +81,9 @@ export default function ProjectOverview() {
   const [momText, setMomText] = useState("");
   const [momSubject, setMomSubject] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [addingId, setAddingId] = useState("");
+  const [memberBusy, setMemberBusy] = useState(false);
 
   const load = useCallback(() => {
     getProject(id).then(setProject).catch(() => navigate("/projects"));
@@ -89,7 +95,10 @@ export default function ProjectOverview() {
     if (dialog === "vault") {
       getVaultFiles(id).then((r) => setVaultFiles(r.files)).catch(() => setVaultFiles([]));
     }
-  }, [dialog, id]);
+    if (dialog === "team" && project?.is_manager && project.kind === "team") {
+      getEmployees().then(setEmployees).catch(() => setEmployees([]));
+    }
+  }, [dialog, id, project?.is_manager, project?.kind]);
 
   if (!project) return null;
 
@@ -115,6 +124,28 @@ export default function ProjectOverview() {
     setMomSubject("");
     setDialog(null);
     setNotice("Added. It flows into the knowledge pipeline with this project as its tag.");
+  }
+
+  async function addMember() {
+    if (!addingId) return;
+    setMemberBusy(true);
+    try {
+      const updated = await patchProjectMembers(id, { add_member_employee_ids: [{ employee_id: addingId }] });
+      setProject(updated);
+      setAddingId("");
+    } finally {
+      setMemberBusy(false);
+    }
+  }
+
+  async function removeMember(employeeId: string) {
+    setMemberBusy(true);
+    try {
+      const updated = await patchProjectMembers(id, { remove_member_employee_ids: [employeeId] });
+      setProject(updated);
+    } finally {
+      setMemberBusy(false);
+    }
   }
 
   return (
@@ -247,12 +278,57 @@ export default function ProjectOverview() {
           ) : (
             <ul className="divide-y divide-cardline/60">
               {project.members.map((m) => (
-                <li key={m.employee_id} className="py-2 flex justify-between gap-3 text-sm">
-                  <span className="font-semibold text-ink">{m.name}</span>
-                  <span className="text-inksoft truncate">{m.role || m.email}</span>
+                <li key={m.employee_id} className="py-2 flex justify-between items-center gap-3 text-sm">
+                  <div className="min-w-0">
+                    <span className="font-semibold text-ink">{m.name}</span>{" "}
+                    <span className="text-inksoft truncate">{m.role || m.email}</span>
+                  </div>
+                  {project.is_manager && (
+                    <button
+                      onClick={() => removeMember(m.employee_id)}
+                      disabled={memberBusy}
+                      className="text-inksoft hover:text-[#DD5454] text-xs font-semibold disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
+          )}
+
+          {project.is_manager && project.kind === "team" && (
+            <div className="mt-4 pt-4 border-t border-cardline/60">
+              {employees.filter((e) => !project.members.some((m) => m.employee_id === e.id)).length === 0 ? (
+                <p className="text-xs text-inksoft">
+                  Everyone in the directory is already on this project.
+                </p>
+              ) : (
+                <div className="flex gap-2">
+                  <select
+                    value={addingId}
+                    onChange={(e) => setAddingId(e.target.value)}
+                    className="flex-1 min-w-0 rounded-md border border-cardline px-3 py-2 text-sm text-ink focus:outline-none focus:border-nav"
+                  >
+                    <option value="">Add a teammate…</option>
+                    {employees
+                      .filter((e) => !project.members.some((m) => m.employee_id === e.id))
+                      .map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name} ({e.email})
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    onClick={addMember}
+                    disabled={!addingId || memberBusy}
+                    className="rounded-md bg-nav text-white text-sm font-semibold px-4 py-2 hover:bg-navdeep disabled:opacity-60"
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </Dialog>
       )}

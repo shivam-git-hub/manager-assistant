@@ -2,7 +2,7 @@ import msal
 import msal.authority
 import pytest
 
-from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, OutlookInstallation
+from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, OutlookInstallation, Employee
 from app.controlplane.outlook_auth import _sign_state, _verify_state
 
 
@@ -117,6 +117,45 @@ def test_callback_creates_manager_and_installation(client, monkeypatch):
         assert installation.mailbox_email == "alice@company.com"
         assert installation.token_cache_json is not None
         assert installation.granted_scopes == "Mail.Read,User.Read"
+    finally:
+        db.close()
+
+
+def test_callback_mirrors_manager_into_employee_directory(client, monkeypatch):
+    _mock_successful_exchange(monkeypatch, email="alice@company.com", name="Alice")
+
+    client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
+
+    db = ControlPlaneSessionLocal()
+    try:
+        employee = db.query(Employee).filter(Employee.email == "alice@company.com").first()
+        assert employee is not None
+        assert employee.name == "Alice"
+    finally:
+        db.close()
+
+
+def test_callback_reuses_existing_employee_row_and_updates_name(client, monkeypatch):
+    db = ControlPlaneSessionLocal()
+    try:
+        import uuid
+        pre_existing = Employee(id=uuid.uuid4().hex, email="alice@company.com", name="Old Name", role="Backend Engineer")
+        db.add(pre_existing)
+        db.commit()
+        pre_existing_id = pre_existing.id
+    finally:
+        db.close()
+
+    _mock_successful_exchange(monkeypatch, email="alice@company.com", name="Alice New Name")
+    client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
+
+    db = ControlPlaneSessionLocal()
+    try:
+        matches = db.query(Employee).filter(Employee.email == "alice@company.com").all()
+        assert len(matches) == 1
+        assert matches[0].id == pre_existing_id
+        assert matches[0].name == "Alice New Name"
+        assert matches[0].role == "Backend Engineer"
     finally:
         db.close()
 

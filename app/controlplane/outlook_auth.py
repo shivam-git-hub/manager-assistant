@@ -42,7 +42,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 
 from app.config import MS_GRAPH_REDIRECT_URI, FRONTEND_URL
-from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, OutlookInstallation
+from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, OutlookInstallation, Employee
 from app.controlplane.auth import create_session, get_current_manager, SESSION_COOKIE_NAME, SESSION_TTL_DAYS
 from app.integrations.outlook import connector as outlook_connector, load_token_cache_for_manager
 
@@ -232,6 +232,21 @@ def _handle_login_callback(code: str):
             ensure_manager_scaffold(manager.id)
         else:
             logger.info(f"[outlook-auth] existing manager {manager.id} ({email}) signed in")
+
+        # Every signed-in manager is also an org member and must be
+        # addable as a project teammate -- mirror them into the Employee
+        # directory (upsert by lowercase email, same convention as
+        # scripts/seed_employees.py) rather than requiring the admin to
+        # hand-seed managers separately. Existing Employee rows (e.g. from
+        # the admin's employees.json) are updated, not duplicated.
+        employee_email = email.lower()
+        employee = db.query(Employee).filter(Employee.email == employee_email).first()
+        if employee is None:
+            employee = Employee(id=uuid.uuid4().hex, email=employee_email, name=name)
+            db.add(employee)
+            logger.info(f"[outlook-auth] created employee directory entry for {employee_email}")
+        else:
+            employee.name = name
 
         installation = db.get(OutlookInstallation, manager.id)
         cache_json = app_msal.token_cache.serialize()
