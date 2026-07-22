@@ -137,12 +137,46 @@ implementations). The v1 architecture below is being superseded per-piece.
   permanently stalling that batch's retry — now explicitly guarded.
   `tests/test_ingest_job.py` (10 tests). `count_pending_tracked_messages`
   (dead stub, zero callers, referenced a v1 allowlist concept) deleted.
+  Shared `app/projectkb/llm_json.py::parse_json_list_field()` factored out
+  (added in step 23's review) — both ingest and heartbeat's "parse the
+  model's `{"<field>": [...]}` JSON, tolerate malformed shapes" logic was
+  identical.
+- **Step 23 DONE 2026-07-23** (`prompts/step_23_heartbeat_user.md`):
+  heartbeat, user-level half. `app/projectkb/jobs/heartbeat.py::run(db,
+  manager_id, client=None)` — per manager: unprocessed `Claim` rows (cap
+  `HEARTBEAT_CLAIM_BATCH_SIZE`, default 40, `app/config.py`) + context
+  (this manager's owned/member projects from the control-plane registry,
+  last 10 `Event` rows, `memory.md` if it exists — none of step 25's md
+  files exist yet, read-if-exists) go into ONE non-tool-calling
+  `SMART_MODEL` call (deliberate scope cut — full tool-based KB
+  inspection is deferred alongside agent context-engineering, per the
+  user's own sequencing; don't "fix" this into a tool loop without that
+  design conversation). Output: typed/tagged/severity `Event` rows.
+  Code-enforced severity floor (doctrine can't be trusted to the model
+  alone): `blocker`/`clarification` always ≥1 regardless of what the
+  model returns. `general` is DERIVED (`not project_ids`), never read
+  from the model's own `general` field — fixed in review after the
+  reviewer caught that trusting the model's field let `general=true`
+  coexist with populated `project_ids`, a state `Event.general`'s own
+  docstring rules out. project_ids/claim_ids are filtered to only ids
+  actually handed to the model (owned/member projects, this run's claim
+  batch) — a hallucinated id silently drops. All batch claims marked
+  `processed=True` in the same commit as the event inserts (some claims
+  legitimately produce zero events — that's fine, they're still
+  "consumed"). Context assembly (control-plane query, md read) was moved
+  inside the same try/except as the LLM call in review — a control-plane
+  hiccup now fails the run safe (claims stay unprocessed) instead of
+  raising out of `run()` uncaught. New `manager_memory_md_path()` helper
+  in `app/tenancy/paths.py` (step 25 owns writing it). `task_ids` is
+  deliberately left unpopulated here — task-level tagging needs direct
+  Task-table access, which belongs to step 24's project fan-out.
+  `tests/test_heartbeat_user.py` (13 tests) — do not confuse with the
+  still-failing v1 `tests/test_heartbeat.py`.
 - **Pending steps, prompts pre-written 2026-07-23** (spec §7 implementation
-  order items 5-9, not yet implemented): `prompts/step_23_heartbeat_user.md`
-  (claims → typed/tagged/severity events, user-level half of heartbeat),
-  `prompts/step_24_heartbeat_project_fanout.md` (project-scoped fan-out:
-  task status transitions, pending_approval task drafts, archive writes,
-  plus a small frontend Approve/Reject addition to ProjectDashboard),
+  order items 6-9, not yet implemented): `prompts/
+  step_24_heartbeat_project_fanout.md` (project-scoped fan-out: task
+  status transitions, pending_approval task drafts, archive writes, plus
+  a small frontend Approve/Reject addition to ProjectDashboard),
   `prompts/step_25_dream_job.md` (memory.md/events.md/dump.md per user;
   summary.md/events.md/suggestions/concerns/health rubric per managed
   project), `prompts/step_26_lint_job.md` (deterministic integrity checks
@@ -150,11 +184,11 @@ implementations). The v1 architecture below is being superseded per-piece.
   step_27_frontend_remaining_gaps.md` (blocklist settings UI, full
   Create-Project form per wireframe 5.png, Portfolios pages 4/8.png —
   needs a design/spec check first, workload view, grab-bag not
-  sequentially dependent on the others). The three remaining job stubs
-  (`app/projectkb/jobs/{heartbeat,dream,lint}.py`) still describe v1-era
-  concepts (timeline.md tiers, todos/conflicts) in their docstrings —
-  steps 23-26 replace those docstrings along with the code, don't
-  preserve the stale wording.
+  sequentially dependent on the others). The two remaining job stubs
+  (`app/projectkb/jobs/{dream,lint}.py`) still describe v1-era concepts
+  (timeline.md tiers, todos/conflicts) in their docstrings — steps 25-26
+  replace those docstrings along with the code, don't preserve the stale
+  wording.
 
 ## Architecture (v1, agreed 2026-07-12 — being superseded)
 

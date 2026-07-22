@@ -83,6 +83,10 @@ INGESTION_MESSAGE_THRESHOLD = int(os.getenv("INGESTION_MESSAGE_THRESHOLD", "10")
 # run, not whether a run happens). Overflow waits for the next tick.
 INGESTION_BATCH_SIZE = int(os.getenv("INGESTION_BATCH_SIZE", "30"))
 HEARTBEAT_INTERVAL_MINUTES = int(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "60"))
+# Max unprocessed claims the heartbeat job (step 23) will judge into events
+# in a single run -- overflow waits for next tick, same shape as
+# INGESTION_BATCH_SIZE above.
+HEARTBEAT_CLAIM_BATCH_SIZE = int(os.getenv("HEARTBEAT_CLAIM_BATCH_SIZE", "40"))
 DREAM_INTERVAL_MINUTES = int(os.getenv("DREAM_INTERVAL_MINUTES", "1440"))
 LINT_INTERVAL_MINUTES = int(os.getenv("LINT_INTERVAL_MINUTES", "10080"))
 OUTLOOK_POLL_INTERVAL_MINUTES = int(os.getenv("OUTLOOK_POLL_INTERVAL_MINUTES", "5"))

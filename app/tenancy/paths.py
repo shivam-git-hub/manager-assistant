@@ -35,6 +35,13 @@ def manager_blocklist_path(manager_id: str) -> Path:
     return manager_dir(manager_id) / "blocklist.json"
 
 
+def manager_memory_md_path(manager_id: str) -> Path:
+    """Step 25 (dream job) owns writing this -- durable per-user facts,
+    Hermes-style long-term memory (spec §3). Step 23 (heartbeat) only
+    reads it as optional context and must not error before it exists."""
+    return manager_dir(manager_id) / "memory.md"
+
+
 def ensure_manager_scaffold(manager_id: str) -> Path:
     """Create this manager's home directory and initialize db.sqlite
     (idempotent). Called at provisioning time -- dev-login (step 12) or

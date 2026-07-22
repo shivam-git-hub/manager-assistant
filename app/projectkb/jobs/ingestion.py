@@ -16,7 +16,6 @@ and-suspenders guard (checked before insert) since it carries no unique
 DB constraint of its own.
 """
 import hashlib
-import json
 import logging
 import uuid
 from collections import OrderedDict
@@ -30,6 +29,7 @@ from app.config import FLASH_MODEL, INGESTION_BATCH_SIZE
 from app.database import Claim, ClaimSource, UnifiedMessage
 from app.agent.gemini_client import GeminiClient, get_client
 from app.projectkb.blocklist import classify_message
+from app.projectkb.llm_json import parse_json_list_field
 
 logger = logging.getLogger(__name__)
 
@@ -87,17 +87,7 @@ def _extract_claims_for_batch(client: GeminiClient, messages: List[UnifiedMessag
         ],
         json_mode=True,
     )
-    content_str = res.get("content") or "{}"
-    try:
-        parsed = json.loads(content_str)
-    except json.JSONDecodeError:
-        logger.warning(f"[projectkb.ingestion] failed to parse LLM response as JSON: {content_str!r}")
-        return []
-    if not isinstance(parsed, dict):
-        logger.warning(f"[projectkb.ingestion] LLM response was valid JSON but not an object: {content_str!r}")
-        return []
-    claims = parsed.get("claims", [])
-    return claims if isinstance(claims, list) else []
+    return parse_json_list_field(res, "claims", "[projectkb.ingestion]")
 
 
 def run(db: Session, manager_id: str, client: Optional[GeminiClient] = None) -> Dict:
