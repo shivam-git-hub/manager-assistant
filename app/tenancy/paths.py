@@ -29,12 +29,10 @@ def manager_job_state_path(manager_id: str) -> Path:
     return manager_dir(manager_id) / "job_state.json"
 
 
-def manager_tracked_contacts_path(manager_id: str) -> Path:
-    return manager_dir(manager_id) / "tracked_contacts.json"
-
-
-def manager_tracked_channels_path(manager_id: str) -> Path:
-    return manager_dir(manager_id) / "tracked_channels.json"
+def manager_blocklist_path(manager_id: str) -> Path:
+    """Step 20: the track-everything inversion -- blocklist.json replaces
+    the old tracked_contacts.json/tracked_channels.json allowlists."""
+    return manager_dir(manager_id) / "blocklist.json"
 
 
 def ensure_manager_scaffold(manager_id: str) -> Path:

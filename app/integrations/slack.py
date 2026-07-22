@@ -237,6 +237,10 @@ class SlackConnector(ChannelConnector):
             timestamp=timestamp_ist,
             raw_metadata=json.dumps(raw),
             conversation_type=conversation_type,
+            # A threaded reply carries thread_ts (the parent's ts); a
+            # top-level message is its own thread root (ts). Channel id
+            # prefixed because ts values are only unique per channel.
+            thread_key=f"{channel_id}:{raw.get('thread_ts') or ts_val}" if ts_val else None,
         )
 
     @staticmethod
@@ -250,7 +254,7 @@ class SlackConnector(ChannelConnector):
         exercised under pytest, but this shaping logic can and must be."""
         if msg.get("type") != "message" or "user" not in msg or msg.get("subtype"):
             return None
-        return {
+        event = {
             "type": "message",
             "user": msg["user"],
             "channel": channel_id,
@@ -259,6 +263,11 @@ class SlackConnector(ChannelConnector):
             "ts": msg.get("ts"),
             "client_msg_id": msg.get("client_msg_id"),
         }
+        # Threaded replies carry the parent's ts -- normalize() folds it
+        # into thread_key (step 20), so it must survive this reshaping.
+        if msg.get("thread_ts"):
+            event["thread_ts"] = msg["thread_ts"]
+        return event
 
     def fetch_since(self, since: datetime, manager_id: str) -> list:
         """User-token polling (step 17 piece 1) for a manager's own DMs --
@@ -280,12 +289,27 @@ class SlackConnector(ChannelConnector):
 
         raw_messages = []
         try:
-            convos = self._api_call("conversations.list", {"types": "im", "limit": 200}, token=agent.user_token)
+            # Step 20: DMs AND every group/channel the user is in (spec
+            # §4.1 -- track everything; the blocklist decides what not to
+            # PROCESS, not what to fetch). Requires the broader user scopes
+            # (groups:history, channels:history, mpim:history) on the pool
+            # app -- conversations the token can't read just error per-
+            # channel and are skipped, so partial grants degrade gracefully.
+            convos = self._api_call(
+                "conversations.list",
+                {"types": "im,mpim,private_channel,public_channel", "limit": 200},
+                token=agent.user_token,
+            )
             if not convos.get("ok"):
                 logger.warning(f"[slack] fetch_since: conversations.list failed for manager={manager_id}: {convos.get('error')}")
                 return []
             for channel in convos.get("channels", []):
                 channel_id = channel.get("id")
+                channel_type = self._conversation_object_type(channel)
+                # Public channels the user merely CAN see (not a member of)
+                # would fail history anyway; skip explicit non-membership.
+                if channel_type == "channel" and channel.get("is_member") is False:
+                    continue
                 try:
                     history = self._api_call(
                         "conversations.history",
@@ -299,17 +323,25 @@ class SlackConnector(ChannelConnector):
                     logger.warning(f"[slack] fetch_since: conversations.history error for channel={channel_id}: {history.get('error')}")
                     continue
                 for msg in history.get("messages", []):
-                    # DM-only for now (types="im" above) -- channel/group
-                    # polling is deferred (needs the broader user_scope +
-                    # re-consent, unverifiable without a live pool app; see
-                    # prompts/step_17_agent_pool.md).
-                    event = self._history_message_to_event(msg, channel_id, "im")
+                    event = self._history_message_to_event(msg, channel_id, channel_type)
                     if event is not None:
                         raw_messages.append(event)
         except Exception:
             logger.exception(f"[slack] fetch_since: polling failed for manager={manager_id}")
 
         return raw_messages
+
+    @staticmethod
+    def _conversation_object_type(channel: dict) -> str:
+        """conversations.list object flags -> the Events-API channel_type
+        string normalize()'s _CHANNEL_TYPE_MAP expects."""
+        if channel.get("is_im"):
+            return "im"
+        if channel.get("is_mpim"):
+            return "mpim"
+        if channel.get("is_group") or channel.get("is_private"):
+            return "group"
+        return "channel"
 
     def send(self, db: Session, to: str, content: str, subject: Optional[str] = None) -> SendResult:
         if not to or not content:

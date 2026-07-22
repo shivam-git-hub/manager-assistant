@@ -62,6 +62,23 @@ implementations). The v1 architecture below is being superseded per-piece.
   promoted, minus dismissed, `max_severity` aggregate) +
   `POST /api/events/{id}/dismiss|promote`. No create-event API by design —
   only jobs write events.
+- **Step 20 DONE 2026-07-22** (`prompts/step_20_poll_completion.md`):
+  track-everything inversion — `ingest()` (app/integrations/base.py) is
+  now normalize→dedup→store, no allowlist/manager-involvement gates;
+  `app/projectkb/tracked.py`+`tracked_channels.py` DELETED, replaced by
+  `app/projectkb/blocklist.py` (blocklist.json per manager: contacts +
+  channels, fnmatch) + `/api/blocklist` CRUD (old
+  `/api/projectkb/tracked-contacts` router gone).
+  `classify_message()` = the future ingest job's pre-LLM selection filter
+  ("blocked"|"noise"|None; noise = no-reply senders, calendar-stub
+  subjects, List-Unsubscribe). `NormalizedMessage.thread_key` →
+  `unified_messages.thread_id` (Outlook `conversationId`; Slack
+  `"<channel>:<thread_ts or ts>"`); `skip_reason` column added. Slack
+  polling now covers im+mpim+private/public channels
+  (`_conversation_object_type` maps list-object flags; needs
+  groups:/channels:/mpim:history user scopes on the pool app — degrades
+  per-channel if unconsented). `POST /api/messages/manual` = MoM/notes
+  input (`source="manual"`, same pipeline).
 - **Known failing tests (pre-existing, NOT v2 regressions):**
   `test_heartbeat.py` (2) + `test_scheduler.py::test_04_followup_lifecycle`
   — v1 followups/heartbeat code sits mid-refactor uncommitted; these get

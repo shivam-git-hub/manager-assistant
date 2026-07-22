@@ -77,6 +77,11 @@ class UnifiedMessage(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_processed: Mapped[bool] = mapped_column(Boolean, default=False)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Step 20 (spec §4.2): why the ingest job skipped this row without an
+    # LLM call -- "blocked" (user blocklist) or "noise" (built-in filter).
+    # NULL for rows that were (or will be) genuinely processed. Auditable,
+    # never re-scanned.
+    skip_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     raw_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 class ChatMessage(Base):

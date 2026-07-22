@@ -74,13 +74,11 @@ def test_slack_webhook_verification(client):
 
 
 def test_slack_webhook_ingestion(client):
-    # 0. A manager and a tracked contact are required now: only DMs to/from
-    # the manager, with a tracked counterpart, get stored at all.
+    # 0. A manager TeamMember is still needed for DM counterpart resolution
+    # (normalize's short-circuit); the tracked-contacts allowlist is gone
+    # (step 20 -- everything gets stored).
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
-    client.post("/api/projectkb/tracked-contacts", json={
-        "label": "Alice Developer", "slack_pattern": "U_ALICE_123"
     })
     _seed_slack_installation(client)
 
@@ -133,9 +131,10 @@ def test_slack_webhook_ingestion(client):
     assert "duplicate" in dup_response.json()["detail"]
 
 
-def test_slack_webhook_untracked_counterpart_not_stored(client):
-    """A DM to the manager from someone NOT on the tracked-contacts list is
-    not stored at all."""
+def test_slack_webhook_unknown_counterpart_now_stored(client):
+    """Step 20 inversion proof: a DM from someone with no TeamMember row
+    and (in v1 terms) no allowlist entry IS stored now -- track everything,
+    the blocklist decides what not to process later."""
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
     })
@@ -156,20 +155,18 @@ def test_slack_webhook_untracked_counterpart_not_stored(client):
     }
     response = client.post("/api/integrations/slack/webhook", json=slack_payload)
     assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
+    assert response.json()["status"] == "ok"
 
-    msg_response = client.get("/api/messages?source=slack")
-    assert msg_response.json() == []
+    messages = client.get("/api/messages?source=slack").json()
+    assert len(messages) == 1
+    assert messages[0]["content"] == "hello"
 
 
-def test_slack_webhook_channel_message_not_stored(client):
-    """A message in a regular (non-DM) channel never involves the manager
-    the way a DM does, so it's never stored, even from a tracked contact."""
+def test_slack_webhook_channel_message_now_stored(client):
+    """Step 20: channel/group messages are stored too (v1 dropped them
+    unless the channel was on an allowlist)."""
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
-    client.post("/api/projectkb/tracked-contacts", json={
-        "label": "Alice Developer", "slack_pattern": "U_ALICE_123"
     })
     _seed_slack_installation(client)
     slack_payload = {
@@ -181,22 +178,24 @@ def test_slack_webhook_channel_message_not_stored(client):
             "client_msg_id": "client_msg_channel_1",
             "user": "U_ALICE_123",
             "channel": "C_DEV_CHANNEL",
+            "channel_type": "channel",
             "text": "posted in a public channel",
             "ts": "1789026111.000000"
         }
     }
     response = client.post("/api/integrations/slack/webhook", json=slack_payload)
     assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
+    assert response.json()["status"] == "ok"
+
+    messages = client.get("/api/messages?source=slack").json()
+    assert len(messages) == 1
+    assert messages[0]["content"] == "posted in a public channel"
 
 
 def test_outlook_ingestion(client):
-    # 0. Manager + tracked sender are required now.
+    # 0. Manager TeamMember (name mapping only -- no allowlist since step 20).
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "outlook_email": "shivam@company.com"
-    })
-    client.post("/api/projectkb/tracked-contacts", json={
-        "label": "Bob Product", "email_pattern": "bob@company.com"
     })
 
     # 1. Create matching team member

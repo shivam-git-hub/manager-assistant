@@ -8,9 +8,12 @@ Split of responsibilities:
     Returns None only if the payload isn't a real message at all (e.g.
     Slack's url_verification, a bot message).
   - ingest() (below) is the one shared policy step every source goes
-    through afterwards: is the manager one of sender/receiver, is the OTHER
-    party on the tracked-contacts list, is it a duplicate, then insert.
-    This is fully generic -- no channel-specific logic here.
+    through afterwards: dedup, then insert. Step 20 inverted the old
+    allowlist philosophy (spec/architecture_v2_kb.md §4.2): everything the
+    pollers fetch is stored (the user's own mailbox/DMs/channels belong to
+    them by construction); blocklist + noise filtering happens at
+    ingest-JOB selection time via app.projectkb.blocklist.classify_message,
+    marking rows with skip_reason instead of dropping them.
 
 This module intentionally has no direct-chat-with-Harry routing -- that
 existed before (handle_direct_contact) and has been removed; messages are
@@ -26,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import timeservice
 from app.database import TeamMember, UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -45,10 +49,12 @@ class NormalizedMessage:
     raw_metadata: str
     # "dm" | "channel" | "group" (step 17 piece 3). Defaults to "dm" so
     # every existing connector (Outlook is inherently one-counterpart) needs
-    # no changes. A DM has exactly one counterpart -> ingest() gates it on
-    # tracked-contacts; channel/group has N participants -> gated on
-    # tracked-channels instead (see ingest() below).
+    # no changes.
     conversation_type: str = "dm"
+    # Groups messages belonging to one conversation (step 20): Outlook's
+    # conversationId; Slack's "<channel>:<thread_ts or ts>". The ingest
+    # job batches per thread_key so claims get thread context (spec §4.2).
+    thread_key: Optional[str] = None
 
 
 @dataclass
@@ -90,8 +96,8 @@ class ChannelConnector(ABC):
     def normalize(self, db: Session, raw: Dict[str, Any]) -> Optional[NormalizedMessage]:
         """raw channel payload -> common shape, or None if this payload
         isn't a real message at all (bot message, non-message event, etc).
-        Does NOT check manager-involvement or the tracked list -- ingest()
-        does that generically."""
+        Purely descriptive -- storage policy (dedup, step 20's
+        store-everything) lives in ingest()."""
         ...
 
     @abstractmethod
@@ -110,57 +116,21 @@ class PollableConnector(Protocol):
 
 
 def ingest(connector: ChannelConnector, raw: Dict[str, Any], db: Session, manager_id: str) -> Tuple[Optional[UnifiedMessage], str]:
-    """Shared policy step: manager-involvement check, tracked-list gate,
-    dedup, insert. `manager_id` is the control-plane Manager.id whose
-    tracked-contacts list (and db.sqlite, via `db`) this message belongs to
-    -- NOT the same thing as the per-source manager_addr resolved below
-    (that's the manager's Slack handle / email address, used only to decide
-    sender-vs-receiver). Returns (row_or_None, status) where status is one of:
-      "ok"                            -- newly inserted
-      "ignored_duplicate"             -- already existed
-      "ignored_not_a_message"         -- normalize() returned None
-      "ignored_no_manager_configured" -- no TeamMember has role="manager"
-      "ignored_not_manager_message"   -- neither sender nor receiver is the manager
-      "ignored_untracked"             -- the other party isn't on the tracked-contacts list
-      "ignored_untracked_channel"     -- the channel/group isn't on the tracked-channels list
+    """Shared policy step: normalize, dedup, insert. Stores EVERYTHING
+    (step 20's track-everything inversion, spec §4.2) -- what NOT to
+    process is decided later, at ingest-job selection time
+    (app.projectkb.blocklist.classify_message), by marking rows with a
+    skip_reason rather than never storing them, so blocklist edits never
+    lose history. `manager_id` names whose db.sqlite (via `db`) and whose
+    blocklist this message belongs to. Returns (row_or_None, status):
+      "ok"                    -- newly inserted
+      "ignored_duplicate"     -- already existed
+      "ignored_not_a_message" -- normalize() returned None
     """
-    from app.projectkb.tracked import is_tracked
-    from app.projectkb.tracked_channels import is_channel_tracked
-
     normalized = connector.normalize(db, raw)
     if normalized is None:
         logger.debug(f"[{connector.source}] ingest: not a real message, skipping")
         return None, "ignored_not_a_message"
-
-    manager = get_manager(db)
-    if manager is None:
-        logger.warning(f"[{connector.source}] ingest: no TeamMember with role='manager' configured")
-        return None, "ignored_no_manager_configured"
-
-    if normalized.conversation_type != "dm":
-        # Channel/group: no single counterpart to check against the
-        # manager's own identity (everyone in the channel structurally
-        # "receives" it) -- gated purely on the channel's own tracked-list
-        # membership instead. See app/projectkb/tracked_channels.py.
-        if not is_channel_tracked(manager_id, connector.source, normalized.channel):
-            logger.debug(f"[{connector.source}] ingest: channel {normalized.channel} not on tracked-channels list, skipping")
-            return None, "ignored_untracked_channel"
-    else:
-        manager_addr = manager_identifier(manager, connector.source)
-        if manager_addr and normalized.sender_id == manager_addr:
-            counterpart = normalized.receiver_id
-        elif manager_addr and normalized.receiver_id == manager_addr:
-            counterpart = normalized.sender_id
-        else:
-            logger.debug(
-                f"[{connector.source}] ingest: neither sender={normalized.sender_id} nor "
-                f"receiver={normalized.receiver_id} is the manager ({manager_addr}), skipping"
-            )
-            return None, "ignored_not_manager_message"
-
-        if not is_tracked(manager_id, connector.source, counterpart):
-            logger.debug(f"[{connector.source}] ingest: counterpart {counterpart} not on tracked list, skipping")
-            return None, "ignored_untracked"
 
     existing = db.scalars(
         select(UnifiedMessage).where(UnifiedMessage.platform_msg_id == normalized.platform_msg_id)
@@ -177,10 +147,11 @@ def ingest(connector: ChannelConnector, raw: Dict[str, Any], db: Session, manage
         receiver_raw_id=normalized.receiver_id,
         receiver_mapped_name=normalized.receiver_name,
         channel_raw_id=normalized.channel,
+        thread_id=normalized.thread_key,
         subject=normalized.subject,
         content=normalized.content,
         timestamp=normalized.timestamp,
-        created_at=datetime.now(),
+        created_at=timeservice.now_ist(),
         raw_metadata=normalized.raw_metadata,
         is_processed=False,
     )

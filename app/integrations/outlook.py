@@ -340,6 +340,9 @@ class OutlookConnector(ChannelConnector):
             content=content,
             timestamp=dt_ist,
             raw_metadata=json.dumps(raw),
+            # Graph's conversationId groups a whole mail thread (step 20) --
+            # the ingest job batches per thread_key for claim context.
+            thread_key=raw.get("conversationId"),
         )
 
     def fetch_since(self, since: datetime, manager_id: Optional[str] = None) -> List[Dict[str, Any]]:

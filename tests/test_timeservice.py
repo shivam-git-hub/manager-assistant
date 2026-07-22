@@ -176,9 +176,6 @@ def test_06_ingestion_stamping(client, db_session, setup_tmp_clock):
     db_session.add(alice)
     db_session.commit()
 
-    from app.projectkb.tracked import add_tracked_contact
-    add_tracked_contact(client.manager_id, "Alice", slack_pattern="U_ALICE")
-
     # An installed Agent for api_app_id "A_TEST" is required now: webhook
     # routing (step 17 piece 2b) ignores events from an unknown api_app_id.
     from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent

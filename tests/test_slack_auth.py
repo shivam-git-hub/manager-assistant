@@ -218,9 +218,6 @@ def test_webhook_routes_by_api_app_id(client, monkeypatch):
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
     })
-    client.post("/api/projectkb/tracked-contacts", json={
-        "label": "Alice Developer", "slack_pattern": "U_ALICE_123"
-    })
 
     payload = {
         "team_id": "T_KNOWN",

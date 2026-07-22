@@ -244,12 +244,10 @@ def test_09_slack_ingest_direction_default(client, db_session):
     """
     9. direction defaults to "inbound" for a normal Slack webhook ingest.
     """
-    # 1. Manager + tracked sender, then a matching team member
+    # 1. Manager, then a matching team member (step 20: no tracked-contacts
+    # setup needed anymore -- everything gets stored)
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
-    client.post("/api/projectkb/tracked-contacts", json={
-        "label": "Alice Developer", "slack_pattern": "U_ALICE_MEMBER"
     })
     member_payload = {
         "id": "U_ALICE_MEMBER",

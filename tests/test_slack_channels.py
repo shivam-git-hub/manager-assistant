@@ -1,14 +1,10 @@
-"""Step 17 piece 3: conversation_type on NormalizedMessage, the
-tracked-channels gate, and the pure conversations.history -> event-dict
-transform. See prompts/step_17_agent_pool.md."""
+"""Slack conversation handling: conversation_type on NormalizedMessage,
+the pure conversations.history -> event-dict transform (now thread_ts-
+preserving), the conversations.list object -> channel_type mapping, and
+step 20's store-everything ingest behavior. Blocklist/noise selection
+itself is covered in tests/test_poll_completion.py."""
 from app.integrations.slack import SlackConnector
 from app.integrations.base import ingest
-from app.projectkb.tracked_channels import (
-    add_tracked_channel,
-    is_channel_tracked,
-    delete_tracked_channel,
-    load_tracked_channels,
-)
 
 
 # --- _history_message_to_event (pure, no live API calls) -----------------
@@ -35,6 +31,17 @@ def test_history_to_event_group_and_mpim():
     assert SlackConnector._history_message_to_event(msg, "M_TEAM", "mpim")["channel_type"] == "mpim"
 
 
+def test_history_to_event_preserves_thread_ts():
+    """Step 20: threaded replies carry the parent's ts -- it must survive
+    the reshaping so normalize() can fold it into thread_key."""
+    msg = {"type": "message", "user": "U_ALICE", "text": "reply", "ts": "445.000000", "thread_ts": "444.000000"}
+    event = SlackConnector._history_message_to_event(msg, "C_ENG", "channel")
+    assert event["thread_ts"] == "444.000000"
+
+    top_level = {"type": "message", "user": "U_ALICE", "text": "root", "ts": "446.000000"}
+    assert "thread_ts" not in SlackConnector._history_message_to_event(top_level, "C_ENG", "channel")
+
+
 def test_history_to_event_skips_subtype_messages():
     """channel_join / message edits etc. carry a subtype -- not a real
     authored message, must not be forwarded into normalize()/ingest()."""
@@ -50,6 +57,16 @@ def test_history_to_event_skips_non_message_type():
 def test_history_to_event_skips_missing_user():
     msg = {"type": "message", "text": "no user field", "ts": "666.000000"}
     assert SlackConnector._history_message_to_event(msg, "C_ENG", "channel") is None
+
+
+# --- conversations.list object -> channel_type (step 20) ------------------
+
+def test_conversation_object_type_mapping():
+    assert SlackConnector._conversation_object_type({"is_im": True}) == "im"
+    assert SlackConnector._conversation_object_type({"is_mpim": True}) == "mpim"
+    assert SlackConnector._conversation_object_type({"is_group": True}) == "group"
+    assert SlackConnector._conversation_object_type({"is_channel": True, "is_private": True}) == "group"
+    assert SlackConnector._conversation_object_type({"is_channel": True, "is_private": False}) == "channel"
 
 
 # --- normalize() conversation_type mapping --------------------------------
@@ -103,33 +120,10 @@ def test_normalize_unrecognized_channel_type_returns_none(client, db_session):
     assert connector.normalize(db_session, event) is None
 
 
-# --- tracked_channels module -----------------------------------------------
+# --- ingest(): store-everything (step 20) ---------------------------------
 
-def test_is_channel_tracked_exact_and_glob(client):
-    manager_id = client.manager_id
-    add_tracked_channel(manager_id, "Eng standup", "C_ENG_STANDUP")
-    add_tracked_channel(manager_id, "All project channels", "C_PROJ_*")
-
-    assert is_channel_tracked(manager_id, "slack", "C_ENG_STANDUP") is True
-    assert is_channel_tracked(manager_id, "slack", "C_PROJ_ALPHA") is True
-    assert is_channel_tracked(manager_id, "slack", "C_RANDOM") is False
-
-
-def test_is_channel_tracked_empty_list_is_false(client):
-    assert is_channel_tracked(client.manager_id, "slack", "C_ANYTHING") is False
-
-
-def test_delete_tracked_channel(client):
-    manager_id = client.manager_id
-    entry = add_tracked_channel(manager_id, "Temp", "C_TEMP")
-    assert delete_tracked_channel(manager_id, entry["id"]) is True
-    assert load_tracked_channels(manager_id) == []
-    assert delete_tracked_channel(manager_id, entry["id"]) is False
-
-
-# --- ingest() branch: channel/group gated on tracked-channels -------------
-
-def test_ingest_channel_message_untracked_is_ignored(client, db_session):
+def test_ingest_channel_message_stored_without_any_list(client, db_session):
+    """v1 required the channel on an allowlist; step 20 stores everything."""
     from app.database import TeamMember
 
     db_session.add_all([
@@ -141,32 +135,12 @@ def test_ingest_channel_message_untracked_is_ignored(client, db_session):
     connector = SlackConnector()
     event = {"type": "message", "client_msg_id": "c1", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "standup", "ts": "10.0"}
     msg, status = ingest(connector, event, db_session, client.manager_id)
-    assert status == "ignored_untracked_channel"
-    assert msg is None
-
-
-def test_ingest_channel_message_tracked_is_stored(client, db_session):
-    from app.database import TeamMember
-
-    db_session.add_all([
-        TeamMember(id="U_MANAGER", name="Shivam", role="Manager", slack_handle="U_MANAGER"),
-        TeamMember(id="U_ALICE", name="Alice", role="Developer", slack_handle="U_ALICE"),
-    ])
-    db_session.commit()
-    add_tracked_channel(client.manager_id, "Eng standup", "C_ENG")
-
-    connector = SlackConnector()
-    event = {"type": "message", "client_msg_id": "c2", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "standup notes", "ts": "11.0"}
-    msg, status = ingest(connector, event, db_session, client.manager_id)
     assert status == "ok"
-    assert msg is not None
-    assert msg.content == "standup notes"
+    assert msg.content == "standup"
+    assert msg.thread_id == "C_ENG:10.0"
 
 
-def test_ingest_channel_tracked_does_not_require_manager_involvement(client, db_session):
-    """A channel message between two non-manager participants still stores
-    (gated purely on the channel, not on manager-sender/receiver identity --
-    unlike DMs, which require the manager to literally be sender or receiver)."""
+def test_ingest_channel_message_between_non_managers_stored(client, db_session):
     from app.database import TeamMember
 
     db_session.add_all([
@@ -174,19 +148,15 @@ def test_ingest_channel_tracked_does_not_require_manager_involvement(client, db_
         TeamMember(id="U_BOB", name="Bob", role="Developer", slack_handle="U_BOB"),
     ])
     db_session.commit()
-    add_tracked_channel(client.manager_id, "Eng standup", "C_ENG")
 
     connector = SlackConnector()
     event = {"type": "message", "client_msg_id": "c3", "user": "U_BOB", "channel": "C_ENG", "channel_type": "channel", "text": "no manager here", "ts": "12.0"}
-    msg, status = ingest(connector, event, db_session, client.manager_id)
+    _, status = ingest(connector, event, db_session, client.manager_id)
     assert status == "ok"
 
 
-def test_ingest_dm_behavior_unchanged_by_channel_gate(client, db_session):
-    """Regression guard: the conversation_type branch must not disturb the
-    existing DM path (single-counterpart, tracked-contacts gate)."""
+def test_ingest_threaded_reply_shares_thread_key_with_parent(client, db_session):
     from app.database import TeamMember
-    from app.projectkb.tracked import add_tracked_contact
 
     db_session.add_all([
         TeamMember(id="U_MANAGER", name="Shivam", role="Manager", slack_handle="U_MANAGER"),
@@ -195,12 +165,8 @@ def test_ingest_dm_behavior_unchanged_by_channel_gate(client, db_session):
     db_session.commit()
 
     connector = SlackConnector()
-    event = {"type": "message", "client_msg_id": "d1", "user": "U_ALICE", "channel": "D_1", "channel_type": "im", "text": "untracked dm", "ts": "13.0"}
-    _, status = ingest(connector, event, db_session, client.manager_id)
-    assert status == "ignored_untracked"
-
-    add_tracked_contact(client.manager_id, "Alice", slack_pattern="U_ALICE")
-    event2 = {"type": "message", "client_msg_id": "d2", "user": "U_ALICE", "channel": "D_1", "channel_type": "im", "text": "tracked dm", "ts": "14.0"}
-    msg, status2 = ingest(connector, event2, db_session, client.manager_id)
-    assert status2 == "ok"
-    assert msg.content == "tracked dm"
+    parent = {"type": "message", "client_msg_id": "p1", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "root", "ts": "20.0"}
+    reply = {"type": "message", "client_msg_id": "r1", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "reply", "ts": "21.0", "thread_ts": "20.0"}
+    p_msg, _ = ingest(connector, parent, db_session, client.manager_id)
+    r_msg, _ = ingest(connector, reply, db_session, client.manager_id)
+    assert p_msg.thread_id == r_msg.thread_id == "C_ENG:20.0"

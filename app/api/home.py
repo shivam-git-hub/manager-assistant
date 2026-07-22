@@ -19,7 +19,9 @@ from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
 from app import timeservice
-from app.database import Event, Todo
+from app.controlplane.auth import get_current_manager
+from app.controlplane.models import Manager
+from app.database import Event, Todo, UnifiedMessage
 from app.tenancy.db import get_manager_db
 
 router = APIRouter(prefix="/api", tags=["Home Dashboard"])
@@ -146,6 +148,49 @@ def list_events(
         "total_matching": len(matching),
         "max_severity": max((e.severity for e in returned), default=None),
     }
+
+
+# ────────────────────────────────────────────────────────
+# Manual inputs (MoMs, pasted notes) -- spec §3.2
+# ────────────────────────────────────────────────────────
+
+class ManualMessageIn(BaseModel):
+    content: str
+    subject: Optional[str] = None
+
+
+@router.post("/messages/manual", status_code=status.HTTP_201_CREATED)
+def add_manual_message(
+    payload: ManualMessageIn,
+    manager: Manager = Depends(get_current_manager),
+    db: Session = Depends(get_manager_db),
+) -> dict:
+    """Minutes of meetings and pasted notes enter as unified_messages rows
+    with source="manual" and flow through the exact same claim -> event
+    pipeline as mail/Slack -- no side channel, same citations (spec §3.2).
+    The project page's "Add MoM" box posts here."""
+    if not payload.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+    now = timeservice.now_ist()
+    msg = UnifiedMessage(
+        platform_msg_id=f"manual_{uuid.uuid4().hex}",
+        source="manual",
+        direction="inbound",
+        sender_raw_id=manager.email,
+        sender_mapped_name=manager.name,
+        receiver_raw_id="pulse",
+        channel_raw_id="manual",
+        thread_id=None,
+        subject=payload.subject,
+        content=payload.content,
+        timestamp=now,
+        created_at=now,
+        is_processed=False,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return {"id": msg.id, "platform_msg_id": msg.platform_msg_id, "source": msg.source}
 
 
 def _set_event_state(db: Session, event_id: str, ui_state: str) -> dict:

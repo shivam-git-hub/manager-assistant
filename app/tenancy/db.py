@@ -78,6 +78,9 @@ def init_manager_db(manager_id: str) -> None:
         if "created_at" not in columns:
             db.execute(text("ALTER TABLE unified_messages ADD COLUMN created_at DATETIME"))
             db.commit()
+        if "skip_reason" not in columns:
+            db.execute(text("ALTER TABLE unified_messages ADD COLUMN skip_reason VARCHAR(20)"))
+            db.commit()
 
         res_proj = db.execute(text("PRAGMA table_info(projects)")).fetchall()
         proj_cols = [row[1] for row in res_proj]
