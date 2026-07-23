@@ -55,6 +55,7 @@ export const TASK_STATE_META: Record<string, { label: string; bg: string; fg: st
 export const NAV_TABS: { label: string; path?: string }[] = [
   { label: "Dashboard", path: "/" },
   { label: "Ask Harry", path: "/chat" },
+  { label: "Agents", path: "/agents" },
 ];
 
 export const SIDEBAR_ITEMS: { label: string; path?: string }[] = [
