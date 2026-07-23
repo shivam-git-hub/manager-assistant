@@ -36,11 +36,6 @@
 <body>
   <h1>Pipeline Debug</h1>
   <div id="whoami">Loading...</div>
-  <div id="login-box" style="display:none;">
-    <input id="login-email" placeholder="email" value="debug@test.local">
-    <input id="login-name" placeholder="name" value="Debug User">
-    <button onclick="devLogin()">Dev login</button>
-  </div>
 
   <div id="app" style="display:none;">
     <section>
@@ -96,23 +91,14 @@ async function api(path, opts) {
   return res.json();
 }
 
-async function devLogin() {
-  const email = document.getElementById("login-email").value;
-  const name = document.getElementById("login-name").value;
-  await api("/api/auth/dev-login", { method: "POST", body: JSON.stringify({ email, name }) });
-  init();
-}
-
 async function checkAuth() {
   try {
     const me = await api("/api/auth/me");
     document.getElementById("whoami").textContent = `${me.name} <${me.email}>`;
-    document.getElementById("login-box").style.display = "none";
     document.getElementById("app").style.display = "block";
     return true;
   } catch (e) {
-    document.getElementById("whoami").textContent = "Not logged in.";
-    document.getElementById("login-box").style.display = "block";
+    document.getElementById("whoami").innerHTML = 'Not logged in. Please <a href="/api/manager-assistant-dashboard/" style="color:#0f6cbd; font-weight:600; text-decoration:underline;">Log in here</a> first.';
     document.getElementById("app").style.display = "none";
     return false;
   }
