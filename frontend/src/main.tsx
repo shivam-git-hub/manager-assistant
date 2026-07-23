@@ -6,7 +6,7 @@ import App from "./App";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename="/api/manager-assistant-dashboard">
       <Routes>
         <Route path="/*" element={<App />} />
       </Routes>

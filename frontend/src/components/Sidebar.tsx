@@ -9,7 +9,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
     try {
       await logout();
     } finally {
-      window.location.href = "/";
+      window.location.href = window.location.port === "3000" ? "/manager-assistant/" : "/";
     }
   }
 

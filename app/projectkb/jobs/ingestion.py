@@ -70,6 +70,10 @@ _SYSTEM_INSTRUCTION = (
     "a batch of messages that belong to the same conversation thread, extract "
     "short, atomic, verifiable claims -- factual statements, commitments, "
     "blockers, requests, decisions. Ignore pleasantries and irrelevant chatter.\n\n"
+    "Crucial: Always treat requests, suggestions, or invitations to schedule, "
+    "hold, or connect over meetings, syncs, calls, or chats (e.g., 'lets connect over a call', "
+    "'can we sync up at 2pm') as actionable claims (requests or commitments) and extract them. "
+    "They are high work-relevance items for our agent-inferred meeting scheduler.\n\n"
     "Also ignore, and extract nothing from, automated/system-generated content: "
     "account security alerts, sign-up/welcome/confirmation emails, marketing or "
     "promotional copy, free-credit or trial offers, and other notifications a "
@@ -163,7 +167,7 @@ def run(db: Session, manager_id: str, client: Optional[GeminiClient] = None) -> 
         batch_created = 0
         for raw_claim in raw_claims:
             text = (raw_claim.get("text") or "").strip()
-            message_ids = [mid for mid in (raw_claim.get("message_ids") or []) if mid in batch_ids]
+            message_ids = [int(mid) for mid in (raw_claim.get("message_ids") or []) if str(mid).isdigit() and int(mid) in batch_ids]
             if not text or not message_ids:
                 continue
 

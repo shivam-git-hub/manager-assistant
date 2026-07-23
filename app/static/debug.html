@@ -90,8 +90,12 @@ const JOB_LABELS = {
   agent_heartbeat: "Agent heartbeat",
 };
 
+const pathParts = window.location.pathname.split("/debug.html");
+const API_PREFIX = pathParts[0] === "/" ? "" : pathParts[0];
+
 async function api(path, opts) {
-  const res = await fetch(path, { credentials: "include", headers: { "Content-Type": "application/json" }, ...opts });
+  const fullPath = `${API_PREFIX}${path}`;
+  const res = await fetch(fullPath, { credentials: "include", headers: { "Content-Type": "application/json" }, ...opts });
   if (!res.ok) throw new Error(`${path} -> ${res.status}: ${await res.text()}`);
   return res.json();
 }

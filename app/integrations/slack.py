@@ -359,7 +359,7 @@ class SlackConnector(ChannelConnector):
         if reader is None or not reader.user_token:
             return []
 
-        since_ts = f"{since.replace(tzinfo=pytz.UTC).timestamp():.6f}" if since.tzinfo is None else f"{since.timestamp():.6f}"
+        since_ts = f"{IST.localize(since).timestamp():.6f}" if since.tzinfo is None else f"{since.timestamp():.6f}"
 
         raw_messages = []
         try:
