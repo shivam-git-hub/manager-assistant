@@ -207,7 +207,11 @@ def classify_message(manager_id: str, msg) -> Optional[str]:
     # Layer 2: built-in noise rules.
     sender = (msg.sender_raw_id or "").lower()
     local_part = sender.split("@", 1)[0]
-    if any(local_part.startswith(p) for p in NOISE_SENDER_LOCAL_PARTS):
+    # Substring, not just prefix: real automated senders routinely put the
+    # marker mid-local-part (account-security-noreply@..., azure-noreply@...,
+    # no-reply-<random-token>@slack.com) -- a startswith-only check let
+    # those straight through to the LLM in live testing (2026-07-23).
+    if any(p in local_part for p in NOISE_SENDER_LOCAL_PARTS):
         return "noise"
     subject = (msg.subject or "").lower()
     if any(subject.startswith(p) for p in NOISE_SUBJECT_PREFIXES):

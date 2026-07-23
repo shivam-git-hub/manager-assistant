@@ -118,6 +118,15 @@ def test_classify_noise_rules(client):
     assert blocklist.classify_message(mid, _msg(raw_metadata=json.dumps({"internetMessageHeaders": [{"name": "List-Unsubscribe", "value": "<mailto:x>"}]}))) == "noise"
 
 
+def test_classify_noise_rules_match_mid_local_part(client):
+    """Real automated senders routinely put the noise marker mid-local-part,
+    not at the start (found live 2026-07-23: account-security-noreply@... and
+    azure-noreply@... both sailed past a startswith-only check)."""
+    mid = client.manager_id
+    assert blocklist.classify_message(mid, _msg(sender_raw_id="account-security-noreply@accountprotection.microsoft.com")) == "noise"
+    assert blocklist.classify_message(mid, _msg(sender_raw_id="azure-noreply@microsoft.com")) == "noise"
+
+
 def test_classify_clean_message_passes(client):
     assert blocklist.classify_message(client.manager_id, _msg()) is None
 

@@ -42,7 +42,7 @@ VALID_EVENT_TYPES = {
 # Severity doctrine floor (spec §4.3): these types are never allowed to
 # round down to a silent 0, even if the model under-scores them -- code-
 # enforced, not left to the prompt alone.
-FLOOR_SEVERITY_TYPES = {"blocker", "clarification"}
+FLOOR_SEVERITY_TYPES = {"blocker", "clarification", "conflict"}
 RECENT_EVENTS_CONTEXT_LIMIT = 10
 
 
@@ -104,6 +104,16 @@ _SYSTEM_INSTRUCTION = (
     '"claim_ids": [...]}]}.\n\n'
     "type must be exactly one of: status_update, blocker, clarification, "
     "commitment, request, conflict, fyi.\n"
+    "conflict vs blocker -- a common judgment call, get this right: if two "
+    "different people's claims contradict each other about the same fact "
+    "(one says they sent/did/confirmed something, another says they never "
+    "received it / it never happened / it wasn't confirmed), that is ALWAYS "
+    "type=conflict, even though it also happens to be blocking someone's "
+    "work -- never downgrade a genuine claim-vs-claim contradiction to a "
+    "plain blocker just because one side frames it as being stuck. Reserve "
+    "blocker for a single-sided obstacle with no contradicting claim on the "
+    "other side (e.g. waiting on an external approval, a missing scope "
+    "grant, a dependency that hasn't shipped).\n"
     "project_ids: only use ids from the Candidate Projects list given below, "
     "verbatim -- never invent an id. If a claim isn't clearly about one of "
     "those projects, leave project_ids empty and set general=true.\n"

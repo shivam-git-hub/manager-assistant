@@ -647,6 +647,78 @@ surface.
   `lib/api.ts`. `tests/test_agents.py` +4 (401 without session, 404
   without a claim, frees the agent + removes the mirror + is re-claimable,
   install-derived fields survive release).
+- **Demo data + live pipeline verification 2026-07-23**
+  (`scripts/seed_demo_projects.py`, `scripts/seed_demo_messages.py`, both
+  one-off/re-runnable, not part of boot/tests): 6 team projects (2 demo-
+  ready — "AI chief of Staff", "Pulse.ai Frontend Rebuild" — with full
+  project.md/notes.md/summary.md/events.md, tasks+subtasks across every
+  status, archive/suggestions/concerns/health seed rows, and both real
+  employees — Shivam, Ally K — as members; 4 lighter projects) + 3
+  personal tasks + ~18 seeded `unified_messages` mixing real signal
+  (blockers, clarifications, two deliberate "deadlock" pairs — one person
+  claims X, another claims the opposite in the same thread — a task-
+  completion request, routine progress) with deterministic noise
+  (no-reply sender, calendar-accept stub, List-Unsubscribe bulk mail) and
+  LLM-layer noise (off-topic banter with zero business content). Then ran
+  the real ingest→heartbeat→dream pipeline live end to end against the
+  dev server (fast job intervals via a **temporary** `job_schedule.json`
+  — deleted after — see below on why that's the right override point,
+  not a hack) and inspected every stage's output. Two real prompt/filter
+  bugs found and fixed from what came back:
+  1. **Noise filter was prefix-only** (`app/projectkb/blocklist.py`
+     `classify_message`): `local_part.startswith(p)` let real automated
+     senders straight through to the LLM whenever the noise marker wasn't
+     at the very start of the local part — `account-security-noreply@
+     accountprotection.microsoft.com` and `azure-noreply@microsoft.com`
+     (both genuine mail Shivam's real Outlook had already ingested) both
+     slipped past and the flash model dutifully extracted claims from
+     Microsoft security-alert/Azure-signup boilerplate. Changed to `p in
+     local_part` (substring). `tests/test_poll_completion.py` +1.
+  2. **Ingestion extraction prompt was too lenient on automated content
+     in general** (`app/projectkb/jobs/ingestion.py`
+     `_SYSTEM_INSTRUCTION`): even sender-pattern fixes can't catch every
+     automated sender (e.g. Slack's own `feedback@slack.com` "X just
+     joined your workspace" mail carries no noise-pattern in its
+     address). Added an explicit instruction to judge by CONTENT — ignore
+     templated system notices/security alerts/marketing/sign-up
+     confirmations even when they survive the deterministic filter,
+     with a narrow carve-out for genuinely actionable security content.
+     Live-reverified after the fix: that exact Slack join-notification
+     message now correctly produces zero claims.
+  3. **heartbeat's conflict-vs-blocker doctrine was inconsistent**
+     (`app/projectkb/jobs/heartbeat.py` `_SYSTEM_INSTRUCTION`): of the two
+     planted "deadlock" pairs (contradicting claims from two people), one
+     got correctly typed `conflict`, the other got typed `blocker` —
+     the model was allowing the "blocked" framing on one side to
+     override the fact that it's a claim-vs-claim contradiction. Added an
+     explicit rule: any claim-vs-claim contradiction is ALWAYS
+     `type=conflict` even when it's also blocking someone, `blocker` is
+     reserved for single-sided obstacles with no contradicting claim.
+     Also added `conflict` to the code-enforced `FLOOR_SEVERITY_TYPES`
+     (alongside `blocker`/`clarification`) — a genuine contradiction
+     should never round down to severity 0 regardless of what the model
+     scores it. Live-reverified: the previously-mistyped pair now comes
+     back as `conflict` after the fix, matching its sibling.
+  After both fixes, live-verified the full downstream chain worked
+  correctly on real (fixed) data: severity floors applied, project
+  fan-out transitioned real tasks (e.g. two tasks flipped to `blocked`
+  citing the conflict/blocker events as evidence, one new
+  `pending_approval` task drafted), archive entries written
+  deterministically, and the dream job produced a sensible rewritten
+  `summary.md` (with project.md milestones the events implied were done
+  now checked off), non-redundant suggestions/concerns, and a
+  correctly-clamped health-score nudge with a real cited reason. Full
+  `pytest tests/` still at the same 3 pre-existing failures, no
+  regressions from any of the three prompt/filter changes.
+  **On `job_schedule.json`:** this is NOT a workaround — it's the
+  documented override layer purpose-built for exactly this
+  (`app/projectkb/job_schedule.py`'s own docstring: env defaults →
+  `job_schedule.json` deployment-wide override → per-manager override).
+  It was used instead of `.env` only because `app/config.py` `int()`-casts
+  the env vars, which can't express sub-minute intervals — `job_schedule.
+  json`'s values skip that cast. It's gitignored (same as `.env`), so it
+  never reaches deployment; deleted after this verification pass, restoring
+  the normal 15min/60min/24h/7d cadence from `app/config.py` defaults.
 
 ## Critical bugs (prevent regressions)
 
