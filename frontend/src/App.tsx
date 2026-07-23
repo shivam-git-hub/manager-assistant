@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Login from "@/pages/Login";
 import Home from "@/pages/Home";
-import Projects from "@/pages/Projects";
-import Tasks from "@/pages/Tasks";
+import Chat from "@/pages/Chat";
 import ProjectOverview from "@/pages/ProjectOverview";
 import ProjectDashboard from "@/pages/ProjectDashboard";
 import PortfolioDetail from "@/pages/PortfolioDetail";
@@ -11,15 +10,12 @@ import Connectors from "@/pages/Connectors";
 import Agents from "@/pages/Agents";
 import TopNav from "@/components/TopNav";
 import Sidebar from "@/components/Sidebar";
-import QuickAddTodoModal from "@/components/QuickAddTodoModal";
-import ChatWidget from "@/components/ChatWidget";
 import { getMe, type Manager } from "@/lib/api";
 
 export default function App() {
   const [manager, setManager] = useState<Manager | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [quickAddTodoOpen, setQuickAddTodoOpen] = useState(false);
 
   useEffect(() => {
     getMe()
@@ -40,14 +36,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-surface text-ink font-sans">
-      <TopNav onMenuClick={() => setSidebarOpen(true)} onTodoClick={() => setQuickAddTodoOpen(true)} />
+      <TopNav onMenuClick={() => setSidebarOpen(true)} />
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      {quickAddTodoOpen && <QuickAddTodoModal onClose={() => setQuickAddTodoOpen(false)} />}
-      <ChatWidget />
       <Routes>
         <Route path="/" element={<Home manager={manager} />} />
-        <Route path="/projects" element={<Projects />} />
-        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/projects" element={<Home manager={manager} />} />
+        <Route path="/tasks" element={<Home manager={manager} />} />
         <Route path="/projects/:id" element={<ProjectOverview />} />
         <Route path="/projects/:id/dashboard" element={<ProjectDashboard />} />
         <Route path="/portfolios/:id" element={<PortfolioDetail />} />

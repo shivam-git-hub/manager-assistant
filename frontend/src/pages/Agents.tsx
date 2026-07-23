@@ -23,11 +23,11 @@ function AgentGlyph() {
   // Basic shape drawn inline: a friendly bot head (no agent icon in /assets).
   return (
     <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
-      <rect x="8" y="14" width="28" height="20" rx="6" fill="#2E77DD" />
+      <rect x="8" y="14" width="28" height="20" rx="6" fill="#18181b" />
       <circle cx="17" cy="24" r="3" fill="white" />
       <circle cx="27" cy="24" r="3" fill="white" />
-      <rect x="20" y="6" width="4" height="6" rx="2" fill="#2E77DD" />
-      <circle cx="22" cy="5" r="2.5" fill="#67C05B" />
+      <rect x="20" y="6" width="4" height="6" rx="2" fill="#18181b" />
+      <circle cx="22" cy="5" r="2.5" fill="#10b981" />
     </svg>
   );
 }

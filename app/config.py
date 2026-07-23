@@ -83,14 +83,14 @@ WORK_HOURS_END = 19
 # projectkb job cadence defaults -- job_schedule.json (per-deployment
 # override) wins over these when present; see app/projectkb/job_schedule.py.
 PROJECTKB_POLL_SECONDS = int(os.getenv("PROJECTKB_POLL_SECONDS", "60"))
-INGESTION_INTERVAL_MINUTES = int(os.getenv("INGESTION_INTERVAL_MINUTES", "15"))
+INGESTION_INTERVAL_MINUTES = float(os.getenv("INGESTION_INTERVAL_MINUTES", "15"))
 INGESTION_MESSAGE_THRESHOLD = int(os.getenv("INGESTION_MESSAGE_THRESHOLD", "10"))
 # Max messages the ingest job (step 22) will send to the LLM in a single
 # run -- distinct from INGESTION_MESSAGE_THRESHOLD above (which the
 # scheduler doesn't currently read at all; this one gates work done PER
 # run, not whether a run happens). Overflow waits for the next tick.
 INGESTION_BATCH_SIZE = int(os.getenv("INGESTION_BATCH_SIZE", "30"))
-HEARTBEAT_INTERVAL_MINUTES = int(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "60"))
+HEARTBEAT_INTERVAL_MINUTES = float(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "60"))
 # Max unprocessed claims the heartbeat job (step 23) will judge into events
 # in a single run -- overflow waits for next tick, same shape as
 # INGESTION_BATCH_SIZE above.
@@ -108,7 +108,7 @@ SLACK_POLL_INTERVAL_MINUTES = int(os.getenv("SLACK_POLL_INTERVAL_MINUTES", "5"))
 # enough to catch the 2h pre-meeting-brief window without drifting; most
 # ticks have zero candidates (see app/agent/select.py) so the cost of a
 # short interval is just a DB scan, not an LLM call.
-AGENT_HEARTBEAT_INTERVAL_MINUTES = int(os.getenv("AGENT_HEARTBEAT_INTERVAL_MINUTES", "30"))
+AGENT_HEARTBEAT_INTERVAL_MINUTES = float(os.getenv("AGENT_HEARTBEAT_INTERVAL_MINUTES", "30"))
 # How far ahead a scheduled meeting must be to become a pre-meeting-brief
 # candidate.
 PRE_MEETING_BRIEF_WINDOW_HOURS = int(os.getenv("PRE_MEETING_BRIEF_WINDOW_HOURS", "2"))

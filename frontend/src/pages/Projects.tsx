@@ -1,111 +1,102 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import ProjectCard from "@/components/ProjectCard";
 import CreateProjectModal from "@/components/CreateProjectModal";
-import CreatePortfolioModal from "@/components/CreatePortfolioModal";
-import { getPortfolios, getProjects, type Portfolio, type ProjectSummary } from "@/lib/api";
+import { getProjects, type ProjectSummary } from "@/lib/api";
 
-// Health bands, worst-first (a project with no data yet sorts last, not
-// first -- an unscored project isn't "healthier" than a red one).
-const HEALTH_RANK: Record<string, number> = { red: 0, yellow: 1, green: 2 };
+const HEALTH_LABEL: Record<string, { text: string; bg: string; textCol: string }> = {
+  green: { text: "Healthy", bg: "bg-emerald-500", textCol: "text-emerald-700" },
+  yellow: { text: "Attention", bg: "bg-amber-500", textCol: "text-amber-700" },
+  red: { text: "Critical", bg: "bg-rose-500", textCol: "text-rose-700" },
+};
 
-// Projects/Portfolios grid (wireframes 3.png / 4.png): toggle, sort
-// control, card grid, floating "+" to create. Sort-by-health now live --
-// GET /api/projects carries a real health band per project (dream job's
-// HealthLog), so this no longer needs the disabled placeholder.
 export default function Projects() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"projects" | "portfolios">("projects");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [creating, setCreating] = useState(false);
-  const [sort, setSort] = useState<"name" | "health">("name");
 
   const load = useCallback(() => {
     getProjects()
       .then((all) => setProjects(all.filter((p) => p.kind === "team")))
       .catch(() => setProjects([]));
-    getPortfolios()
-      .then(setPortfolios)
-      .catch(() => setPortfolios([]));
   }, []);
   useEffect(load, [load]);
 
-  const sortedProjects = [...projects].sort((a, b) =>
-    sort === "name"
-      ? a.name.localeCompare(b.name)
-      : (HEALTH_RANK[a.health ?? ""] ?? 3) - (HEALTH_RANK[b.health ?? ""] ?? 3),
-  );
-  const sortedPortfolios = [...portfolios].sort((a, b) => a.name.localeCompare(b.name));
-
   return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div className="inline-flex rounded-lg overflow-hidden border border-cardline">
-          <button
-            onClick={() => setTab("portfolios")}
-            className={`px-5 py-2 text-sm font-bold ${tab === "portfolios" ? "bg-nav text-white" : "bg-card text-inksoft"}`}
-          >
-            Portfolios
-          </button>
-          <button
-            onClick={() => setTab("projects")}
-            className={`px-5 py-2 text-sm font-bold ${tab === "projects" ? "bg-nav text-white" : "bg-card text-inksoft"}`}
-          >
-            Projects
-          </button>
+    <main className="mx-auto max-w-5xl px-6 py-10">
+      <div className="flex items-center justify-between border-b border-zinc-200 pb-5 mb-8">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-zinc-900">Projects</h1>
+          <p className="mt-1.5 text-sm text-zinc-500">
+            Monitor and coordinate active workspace workstreams.
+          </p>
         </div>
-
-        <label className="text-sm font-semibold text-ink">
-          Sort by:{" "}
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as "name" | "health")}
-            className="ml-1 rounded-md border border-cardline bg-white px-2 py-1 focus:outline-none focus:border-nav"
-          >
-            <option value="name">name</option>
-            <option value="health">health (worst first)</option>
-          </select>
-        </label>
+        <button
+          onClick={() => setCreating(true)}
+          className="rounded-lg bg-zinc-950 hover:bg-zinc-900 text-white font-medium text-xs px-4 py-2.5 transition-colors shadow-sm"
+        >
+          New Project
+        </button>
       </div>
 
-      {tab === "projects" ? (
-        sortedProjects.length === 0 ? (
-          <div className="mt-16 text-center text-inksoft">
-            <p className="text-lg font-semibold text-ink">No projects yet</p>
-            <p className="mt-1 text-sm">
-              Create your first project and Pulse starts tracking it end to end.
-            </p>
-          </div>
-        ) : (
-          <div className="mt-6 grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
-            {sortedProjects.map((p) => (
-              <ProjectCard key={p.id} project={p} onClick={() => navigate(`/projects/${p.id}/dashboard`)} />
-            ))}
-          </div>
-        )
-      ) : sortedPortfolios.length === 0 ? (
-        <div className="mt-16 text-center text-inksoft">
-          <p className="text-lg font-semibold text-ink">No portfolios yet</p>
-          <p className="mt-1 text-sm">Group related projects into a portfolio to track them together.</p>
+      {projects.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-zinc-200 bg-white p-12 text-center">
+          <p className="text-sm font-semibold text-zinc-900">No active projects</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Create a new team project to get started tracking context end-to-end.
+          </p>
         </div>
       ) : (
-        <div className="mt-6 grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
-          {sortedPortfolios.map((p) => (
-            <PortfolioCard key={p.id} portfolio={p} onClick={() => navigate(`/portfolios/${p.id}`)} />
-          ))}
+        <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm divide-y divide-zinc-100">
+          {projects.map((p) => {
+            const hInfo = p.health ? HEALTH_LABEL[p.health] : { text: "No Data", bg: "bg-zinc-400", textCol: "text-zinc-500" };
+            return (
+              <div
+                key={p.id}
+                onClick={() => navigate(`/projects/${p.id}/dashboard`)}
+                className="flex items-center justify-between p-6 hover:bg-zinc-50 transition-colors cursor-pointer group"
+              >
+                <div className="flex-1 min-w-0 pr-6">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-bold text-zinc-900 text-base group-hover:text-zinc-950">
+                      {p.name}
+                    </h3>
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-100 border border-zinc-200">
+                      <span className={`h-1.5 w-1.5 rounded-full ${hInfo.bg}`} />
+                      <span className={`text-[10px] font-semibold tracking-wide uppercase ${hInfo.textCol}`}>
+                        {hInfo.text}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-xs text-zinc-500 max-w-2xl leading-relaxed">
+                    {p.description || "No project description provided."}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4 text-xs font-medium text-zinc-400 shrink-0">
+                  <span className={p.blockers_count > 0 ? "text-rose-600 font-semibold" : ""}>
+                    {p.blockers_count} blocker{p.blockers_count === 1 ? "" : "s"}
+                  </span>
+                  <span className="text-zinc-300">•</span>
+                  <span className={p.actions_count > 0 ? "text-amber-600 font-semibold" : ""}>
+                    {p.actions_count} action{p.actions_count === 1 ? "" : "s"}
+                  </span>
+                  <svg
+                    className="w-4 h-4 text-zinc-400 group-hover:text-zinc-600 transition-colors ml-2"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      <button
-        onClick={() => setCreating(true)}
-        aria-label={tab === "projects" ? "New project" : "New portfolio"}
-        className="fixed bottom-8 left-8 h-14 w-14 rounded-full bg-nav text-white text-3xl leading-none shadow-lg hover:bg-navdeep focus-visible:outline focus-visible:outline-2 focus-visible:outline-navdeep flex items-center justify-center"
-      >
-        +
-      </button>
-
-      {creating && tab === "projects" && (
+      {creating && (
         <CreateProjectModal
           kind="team"
           onClose={() => setCreating(false)}
@@ -115,42 +106,6 @@ export default function Projects() {
           }}
         />
       )}
-      {creating && tab === "portfolios" && (
-        <CreatePortfolioModal
-          onClose={() => setCreating(false)}
-          onCreated={(p) => {
-            setCreating(false);
-            load();
-            navigate(`/portfolios/${p.id}`);
-          }}
-        />
-      )}
     </main>
-  );
-}
-
-// Portfolio cards are a distinct card shape from ProjectCard (name +
-// member-project list, no per-portfolio flower row -- there's no single
-// "portfolio health," each member project carries its own).
-function PortfolioCard({ portfolio, onClick }: { portfolio: Portfolio; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-64 shrink-0 rounded-xl border border-cardline bg-card px-5 py-4 text-center shadow-sm hover:shadow-md hover:border-nav/50 transition-shadow text-left"
-    >
-      <h3 className="font-bold text-ink text-lg text-center truncate" title={portfolio.name}>
-        {portfolio.name}
-      </h3>
-      <p className="mt-2 text-xs text-inksoft min-h-8 text-center">
-        {portfolio.projects.length === 0 ? (
-          "No projects yet"
-        ) : (
-          <span className="line-clamp-2">{portfolio.projects.map((p) => p.name).join(", ")}</span>
-        )}
-      </p>
-      <div className="mt-3 text-[11px] tracking-wide text-inksoft text-center">
-        {portfolio.projects.length} project{portfolio.projects.length === 1 ? "" : "s"}
-      </div>
-    </button>
   );
 }

@@ -51,20 +51,12 @@ export const TASK_STATE_META: Record<string, { label: string; bg: string; fg: st
 };
 
 // ── Navigation ───────────────────────────────────────────
-// Tabs without a path render as plain text until their pages exist.
+// Navigation links for active, production-ready modules.
 export const NAV_TABS: { label: string; path?: string }[] = [
-  { label: "Team" },
-  { label: "Notes" },
-  { label: "Plan My Day" },
-  { label: "Workflows" },
-  { label: "Projects", path: "/projects" }, // added on Shivam's ask -- missing from the wireframe
-  { label: "Tasks", path: "/tasks" }, // added on Shivam's ask -- missing from the wireframe
+  { label: "Dashboard", path: "/" },
+  { label: "Ask Harry", path: "/chat" },
 ];
 
 export const SIDEBAR_ITEMS: { label: string; path?: string }[] = [
-  { label: "Settings" },
-  { label: "Preferences" },
   { label: "Connectors", path: "/connectors" },
-  { label: "Agents", path: "/agents" },
-  { label: "Report Issue" },
 ];

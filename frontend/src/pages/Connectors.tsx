@@ -234,14 +234,6 @@ export default function Connectors() {
         Want a bot that chats with you and your teammates? That's a separate agent -- see{" "}
         <a href="/agents" className="text-nav font-semibold hover:underline">Agents</a>.
       </p>
-
-      <section className="mt-8 rounded-lg bg-card/60 border border-cardline px-6 py-5">
-        <h2 className="font-bold text-ink">Coming Soon ..</h2>
-        <ConnectorRow icon={teamsLogo} name="Teams">
-          <PermissionRow name="Read" pill={<Pill enabled={false} />} action={<ActionButton label="Grant" disabled />} />
-          <PermissionRow name="Send" pill={<Pill enabled={false} />} action={<ActionButton label="Grant" disabled />} />
-        </ConnectorRow>
-      </section>
     </main>
   );
 }

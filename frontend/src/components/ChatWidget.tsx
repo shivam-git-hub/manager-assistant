@@ -243,22 +243,22 @@ export default function ChatWidget() {
           position: absolute;
           inset: 0;
           border-radius: 9999px;
-          background: conic-gradient(from 0deg, #8B0000, #DC143C, #FF4D6D, #DC143C, #8B0000);
-          animation: orb-spin 6s linear infinite;
+          background: conic-gradient(from 0deg, #09090b, #3f3f46, #71717a, #d4d4d8, #71717a, #3f3f46, #09090b);
+          animation: orb-spin 8s linear infinite;
         }
         .orb-highlight {
           position: absolute;
           inset: 3px;
           border-radius: 9999px;
-          background: radial-gradient(circle at 35% 30%, #ffffffcc, #ffffff00 55%), #DC143C;
+          background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.15), rgba(255,255,255,0) 60%), #18181b;
         }
         .orb-mini {
           display: inline-block;
           width: 14px;
           height: 14px;
           border-radius: 9999px;
-          background: conic-gradient(from 0deg, #8B0000, #DC143C, #FF4D6D, #DC143C, #8B0000);
-          animation: orb-spin 6s linear infinite;
+          background: conic-gradient(from 0deg, #09090b, #3f3f46, #71717a, #d4d4d8, #71717a, #3f3f46, #09090b);
+          animation: orb-spin 8s linear infinite;
         }
         @keyframes orb-spin {
           to { transform: rotate(360deg); }

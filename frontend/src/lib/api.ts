@@ -6,8 +6,12 @@ export class ApiError extends Error {
   }
 }
 
+const isProductionGateway = window.location.port === "3000" || window.location.pathname.includes("/manager-assistant");
+const API_PREFIX = isProductionGateway ? "/api/manager-assistant" : "";
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const fullPath = path.startsWith("http") ? path : `${API_PREFIX}${path}`;
+  const res = await fetch(fullPath, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     ...init,
@@ -39,15 +43,15 @@ export function logout(): Promise<void> {
 // Full-page navigations, not fetches -- these kick off an OAuth redirect
 // round trip, so the browser itself needs to leave the SPA.
 export function goToOutlookLogin() {
-  window.location.href = "/auth/outlook/login";
+  window.location.href = `${API_PREFIX}/auth/outlook/login`;
 }
 
 export function goToOutlookEnableSend() {
-  window.location.href = "/auth/outlook/enable-send";
+  window.location.href = `${API_PREFIX}/auth/outlook/enable-send`;
 }
 
 export function goToSlackInstall() {
-  window.location.href = "/auth/slack/install";
+  window.location.href = `${API_PREFIX}/auth/slack/install`;
 }
 
 // ── Connections (Connectors page) ────────────────────────

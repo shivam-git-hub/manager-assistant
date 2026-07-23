@@ -9,7 +9,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
     try {
       await logout();
     } finally {
-      window.location.href = "/";
+      window.location.href = "/api/manager-assistant-dashboard/";
     }
   }
 
@@ -40,7 +40,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
           </button>
         </div>
 
-        <nav className="flex-1 flex flex-col gap-4 px-6 pt-8">
+        <nav className="flex-1 flex flex-col gap-3 px-6 pt-8">
           {SIDEBAR_ITEMS.map((item) =>
             item.path ? (
               <button
@@ -49,7 +49,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
                   onClose();
                   navigate(item.path!);
                 }}
-                className="rounded-full bg-sidebarbtn text-white font-bold py-3 px-6 text-left hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+                className="rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 font-medium py-2.5 px-4 text-sm text-left hover:bg-zinc-800 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
               >
                 {item.label}
               </button>
@@ -58,7 +58,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
                 key={item.label}
                 disabled
                 title="Coming soon"
-                className="rounded-full bg-sidebarbtn/60 text-white/80 font-bold py-3 px-6 text-left cursor-not-allowed"
+                className="rounded-lg bg-zinc-900/40 border border-zinc-900 text-zinc-500 font-medium py-2.5 px-4 text-sm text-left cursor-not-allowed opacity-50"
               >
                 {item.label}
               </button>
@@ -69,9 +69,9 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
         <div className="px-6 pb-8">
           <button
             onClick={handleLogout}
-            className="w-full rounded-full bg-sidebarbtn text-white font-bold py-3 tracking-wide hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+            className="w-full rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 font-medium py-2.5 text-sm hover:bg-zinc-800 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
           >
-            LOGOUT
+            Logout
           </button>
         </div>
       </aside>

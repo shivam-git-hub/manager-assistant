@@ -18,10 +18,8 @@ function HomeIcon() {
 
 export default function TopNav({
   onMenuClick,
-  onTodoClick,
 }: {
   onMenuClick: () => void;
-  onTodoClick: () => void;
 }) {
   return (
     <header className="sticky top-0 z-30 bg-nav text-white shadow-md">
@@ -65,25 +63,14 @@ export default function TopNav({
         </nav>
 
         <div className="flex-1 flex justify-center">
-          <Link to="/" className="font-extrabold tracking-tight text-2xl select-none">
-            <span className="text-wordmark">PULSE</span>
-            <span
-              className="ml-0.5"
-              style={{ WebkitTextStroke: "1.2px #BFE6FB", color: "transparent" }}
-            >
-              .ai
-            </span>
+          <Link to="/" className="font-extrabold tracking-tight text-xl select-none flex items-center">
+            <span className="text-white font-black">PULSE</span>
+            <span className="text-zinc-400 font-light ml-0.5">.ai</span>
           </Link>
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={onTodoClick}
-            className="rounded-full bg-white text-nav font-bold text-sm px-4 py-1.5 hover:bg-wordmark transition-colors"
-          >
-            Todo
-          </button>
-          <img src={amexLogo} alt="American Express" className="h-9 w-9 rounded" />
+          <img src={amexLogo} alt="American Express" className="h-8 w-8 rounded border border-zinc-800 object-contain" />
         </div>
       </div>
     </header>
