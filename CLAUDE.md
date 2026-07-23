@@ -1217,6 +1217,29 @@ surface.
   never reaches deployment; deleted after this verification pass, restoring
   the normal 15min/60min/24h/7d cadence from `app/config.py` defaults.
 
+- **Agent couldn't act on ad hoc "check blockers and follow up with owners" chat requests
+  2026-07-23** (Shivam, live demo: asked the agent, as Sam, to look at pending tasks/blockers
+  in a project and follow up with responsible people -- it flatly refused). Root cause was two
+  gaps, not a hard-coded refusal: (1) no tool existed for the chat agent to discover which tasks
+  are blocked/overdue -- the only task tool was `get_task(project_id, task_id)`, which needs an
+  ID you already know; the actual blocked/overdue-detection logic
+  (`app/agent/select.py::_select_followups`) is deterministic Python that only runs inside the
+  scheduled heartbeat job, never exposed to chat. (2) `HEARTBEAT_INSTRUCTIONS`
+  (`app/agent/prompts.py`), the only prompt block that explicitly authorizes proactive
+  `send_message` to a task's assignee, is only appended when `candidates` is truthy -- chat calls
+  (`app/agent/api.py`'s `/api/chat`) never pass any, so chat-mode Harry never saw that
+  authorization at all. `send_message` itself was never gated on candidates for the actual send
+  (`candidate_kind`/`candidate_ref_key` are optional, a mismatch only appends a warning string --
+  see `_log_candidate_resolution`) -- so this was a capability + prompt-authorization gap, not a
+  code-level block. Fixed: new `list_tasks(project_id, status?)` tool
+  (`app/agent/tools.py::list_tasks_handler`, excludes `done` by default, optional status filter)
+  registered alongside the other read tools; `STABLE_PROMPT` extended with an explicit paragraph
+  authorizing the agent to use `list_tasks`/`get_task`/`list_team` + `send_message` for in-
+  conversation owner requests like "follow up with whoever owns the blockers", independent of the
+  candidate/heartbeat mechanism (still must look up real tasks/people first, never invent them).
+  `tests/test_agent_tools.py` +1 (`list_tasks` excludes done, status filter). Full suite still at
+  the one pre-existing unrelated failure.
+
 ## Critical bugs (prevent regressions)
 
 1. **Gemini schema sanitizer** — never strip dict key names under `properties`; stripping `title` deletes the property definition while `required` still lists it → Gemini 400. See `app/agent/gemini_client.py`.

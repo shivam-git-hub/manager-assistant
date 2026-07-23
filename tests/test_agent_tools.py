@@ -136,6 +136,28 @@ def test_dashboard_action_create_meeting_dedups(db_session, client):
     assert db_session.query(Meeting).count() == 1
 
 
+def test_list_tasks_excludes_done_and_filters_by_status(db_session, client, team_project):
+    created = []
+    for title, status in [("A", "todo"), ("B", "blocked"), ("C", "done")]:
+        res = agent_tools.dashboard_action_handler(
+            db=db_session, manager_id=client.manager_id, run_context={}, action="create_task",
+            project_id=team_project, title=title,
+        )
+        created.append(res["task_id"])
+        if status != "todo":
+            agent_tools.dashboard_action_handler(
+                db=db_session, manager_id=client.manager_id, run_context={}, action="update_task_status",
+                project_id=team_project, task_id=res["task_id"], status=status,
+            )
+
+    all_open = agent_tools.list_tasks_handler(db=db_session, manager_id=client.manager_id, run_context={}, project_id=team_project)
+    titles = {t["title"] for t in all_open}
+    assert titles == {"A", "B"}
+
+    blocked_only = agent_tools.list_tasks_handler(db=db_session, manager_id=client.manager_id, run_context={}, project_id=team_project, status="blocked")
+    assert [t["title"] for t in blocked_only] == ["B"]
+
+
 def test_todo_tool_scoped_to_run_context(db_session, client):
     run_context = {}
     res = agent_tools.todo_handler(db=db_session, manager_id=client.manager_id, run_context=run_context, todos=[

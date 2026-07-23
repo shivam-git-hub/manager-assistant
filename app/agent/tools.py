@@ -469,6 +469,50 @@ GET_TASK_SCHEMA = {
 }
 
 
+def list_tasks_handler(db: Session, manager_id: str, run_context: Optional[Dict[str, Any]], project_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    from app.projects.db import get_project_session
+    from app.projects.models import Task
+
+    pdb = get_project_session(project_id)
+    try:
+        stmt = pdb.query(Task).filter(Task.status != "done")
+        if status:
+            stmt = stmt.filter(Task.status == status)
+        rows = stmt.order_by(Task.due.asc().nulls_last()).all()
+        out = []
+        for t in rows:
+            out.append({
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "priority": t.priority,
+                "assignee_employee_id": t.assignee_employee_id,
+                "due": str(t.due) if t.due else None,
+                "parent_task_id": t.parent_task_id,
+            })
+        return out
+    finally:
+        pdb.close()
+
+
+LIST_TASKS_SCHEMA = {
+    "name": "list_tasks",
+    "description": (
+        "Lists a project's open tasks (excludes done), optionally filtered by status ('todo', "
+        "'in_progress', 'blocked', 'pending_approval'). Use this to find blocked/overdue tasks and "
+        "their assignee_employee_id before following up with the responsible person via send_message."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "project_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["todo", "in_progress", "blocked", "pending_approval"]},
+        },
+        "required": ["project_id"],
+    },
+}
+
+
 def list_open_conflicts_handler(db: Session, manager_id: str, run_context: Optional[Dict[str, Any]], project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     from app.database import Event
 
@@ -556,6 +600,7 @@ def register_tools() -> None:
     registry.register("get_project_doc", GET_PROJECT_DOC_SCHEMA, get_project_doc_handler)
     registry.register("list_team", LIST_TEAM_SCHEMA, list_team_handler)
     registry.register("get_task", GET_TASK_SCHEMA, get_task_handler)
+    registry.register("list_tasks", LIST_TASKS_SCHEMA, list_tasks_handler)
     registry.register("list_open_conflicts", LIST_OPEN_CONFLICTS_SCHEMA, list_open_conflicts_handler)
     registry.register("todo", TODO_SCHEMA, todo_handler)
 
