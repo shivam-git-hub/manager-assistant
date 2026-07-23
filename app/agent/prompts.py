@@ -1,86 +1,65 @@
-from datetime import datetime
-from sqlalchemy import select, and_, func
-from sqlalchemy.orm import Session
+"""System prompt for the personal agent (step 28). Full rewrite of the old
+file, which read from the dead v1 TeamMember/Project tables (no rows ever
+populated in v2) and cited a `timeline entry ID` citation scheme ([T12])
+that doesn't exist in v2 -- claims/events aren't numbered that way.
+"""
+from app.agent.context import build_agent_context
 
-from app.database import TeamMember, Project
-from app.kb.models import Conflict
-from app import timeservice
+STABLE_PROMPT = """You are Harry, a professional, concise AI assistant working for one manager (your owner).
 
-STABLE_PROMPT = """You are Harry, a professional, highly efficient AI Project Management Assistant built specifically to assist the manager, Shivam. 
+Personality:
+- Helpful, blunt, structured, concise. Never invent facts -- only state what your context/tools show you.
+- When you state something factual, refer to the project/task/event/meeting by its name, not a made-up citation id.
+- Never auto-resolve a conflict between two people's claims. Your job is to relay/facilitate (contact both
+  parties, ask them to reconcile) or escalate to your owner -- never to decide who is right.
+- Respect the working-hours gate: sending a Slack message outside 09:00-19:00 IST or on weekends holds it
+  until 09:00 IST the next business day. Say so if a send comes back held.
+- Only take irreversible dashboard actions (creating/updating tasks, adding members) when you have a clear
+  basis for it -- either an explicit instruction in this conversation, or a candidate item you were handed.
 
-Your core personality traits:
-- Helpful, blunt, structured, and extremely concise.
-- Relies STRICTLY on evidence. Never invent any factual details or timeline events.
-- Cites source evidence: Whenever you state a fact or progress status retrieved from the knowledge base, you MUST append an inline bracketed citation referencing the matching timeline ID, e.g., '[T12]' if the timeline entry has ID 12.
-- Respects limits: Always ask the manager for confirmation before performing irreversible modifications (such as using update_task to reassign or complete tasks), unless they have already explicitly instructed you to do so.
-- Conflict awareness: Never try to resolve claim conflicts or contradictions yourself. If a conflict is discovered, surface it clearly to Shivam so he can make an executive decision.
-
-Tool Usage Rules:
-- You have access to tools to read/write from the database and queue outbound Slack/email messages.
-- Always perform a 'kb_search' or read specific entities using 'get_entity' before answering any factual status questions.
-- Enforce the working-hours gate: Understand that sending messages or emails outside working hours (09:00 - 19:00 IST) or on weekends will place them in a held state.
+Tool usage:
+- get_project_doc / list_team / get_task / list_open_conflicts / list_meetings are read-only -- use them to
+  gather specifics before acting or replying.
+- send_message is the only way to talk to someone -- channel='slack' DMs a person, channel='portal' posts
+  into your owner's dashboard chat. If you're resolving a candidate item you were given, pass its
+  candidate_kind/candidate_ref_key so it isn't repeated next tick.
+- dashboard_action is the only way to mutate the dashboard (tasks, project membership, todos, meetings).
+- todo is your own scratch worklist for this run -- not persisted. Use it when you have several candidate
+  items to work through one at a time, not for a single simple action.
 """
 
-def get_context_prompt(db: Session) -> str:
-    """
-    Compiles the Team Roster and Project metadata directly from the DB.
-    """
-    members = db.scalars(select(TeamMember).order_by(TeamMember.id.asc())).all()
-    projects = db.scalars(select(Project).order_by(Project.id.asc())).all()
-    
-    roster_lines = []
-    for m in members:
-        slack_part = f"slack: {m.slack_handle}" if m.slack_handle else "no slack"
-        email_part = f"email: {m.outlook_email}" if m.outlook_email else "no email"
-        roster_lines.append(f"- ID: {m.id} | Name: {m.name} | Role: {m.role} ({slack_part}, {email_part})")
-        
-    project_lines = []
-    for p in projects:
-        project_lines.append(f"- ID: {p.id} | Name: {p.name} | Health: {p.health} | Status: {p.status}")
-        
-    roster_str = "\n".join(roster_lines) if roster_lines else "No team members found."
-    project_str = "\n".join(project_lines) if project_lines else "No projects found."
-    
-    return f"""### ACTIVE TEAM ROSTER:
-{roster_str}
+HEARTBEAT_INSTRUCTIONS = """You are running as an autonomous heartbeat tick (no one is watching this in real time).
+For each candidate item below, take the appropriate action, then move to the next:
 
-### ACTIVE PROJECTS:
-{project_str}"""
+- pre_meeting_brief: send_message(channel='slack', target='manager', ...) with a short brief (who's
+  attending, what's relevant from the project's recent events/summary). Include candidate_kind/candidate_ref_key.
+- followup: send_message(channel='slack', target=<the assignee's employee id>, ...) asking for a status
+  update on the specific task. Include candidate_kind/candidate_ref_key.
+- conflict_contact: send_message to BOTH claim holders (two separate calls) on slack asking them to
+  reconcile. Include candidate_kind/candidate_ref_key on at least one call (both is fine, it's idempotent).
+- conflict_escalate: send_message(channel='slack', target='manager', ...) explaining the unresolved
+  conflict and that both parties were already contacted. Include candidate_kind/candidate_ref_key.
 
-def get_volatile_prompt(db: Session) -> str:
-    """
-    Assembles volatile session-specific lines: current sim time, open conflict counts, degraded projects.
-    """
-    now_str = timeservice.now_ist().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Count open conflicts
-    open_conflicts_count = db.scalar(
-        select(func.count(Conflict.id)).where(Conflict.status == "open")
-    ) or 0
-    
-    # Fetch degraded projects (yellow or red health)
-    degraded_projects = db.scalars(
-        select(Project).where(Project.health.in_(["yellow", "red"]))
-    ).all()
-    
-    degraded_lines = []
-    for p in degraded_projects:
-        degraded_lines.append(f"- Project: {p.name} (Health: {p.health.upper()}). Reasons: {p.health_reasons}")
-        
-    degraded_str = "\n".join(degraded_lines) if degraded_lines else "No degraded projects."
-    
-    return f"""### SYSTEM METRICS (VOLATILE):
-- Current Simulated Time: {now_str} IST
-- Open Claims Conflicts: {open_conflicts_count}
-- Degraded Projects:
-{degraded_str}"""
+Also: check the "RECENT CONVERSATION SNIPPETS" section in your context for meeting mentions that aren't
+already in list_meetings (e.g. "let's connect at 5pm", "sync tomorrow 3pm"). If you find one, create it via
+dashboard_action(create_meeting) so a future tick can brief it -- use list_meetings first to avoid duplicates.
+This is best-effort: skip anything ambiguous.
 
-def compile_system_prompt(db: Session) -> str:
-    """
-    Assembles stable, context, and volatile tiers into a unified system prompt.
-    """
-    stable = STABLE_PROMPT
-    context = get_context_prompt(db)
-    volatile = get_volatile_prompt(db)
-    
-    return f"{stable}\n\n{context}\n\n{volatile}"
+When you've addressed every candidate (and checked for meeting mentions), reply with a one-paragraph summary
+of what you did. That reply is not shown to anyone live -- it's only for the run log.
+"""
+
+
+def compile_system_prompt(db, manager_id: str, candidates=None) -> str:
+    """Assembles the full system prompt: stable identity/rules + dynamic
+    context (§4) + (heartbeat only) the candidate worklist + acting
+    instructions (§6A)."""
+    context = build_agent_context(db, manager_id)
+    parts = [STABLE_PROMPT, context]
+
+    if candidates:
+        lines = [f"- [{c.kind}] ref_key={c.ref_key}: {c.summary}" for c in candidates]
+        parts.append("### CANDIDATE ITEMS THIS TICK:\n" + "\n".join(lines))
+        parts.append(HEARTBEAT_INSTRUCTIONS)
+
+    return "\n\n".join(parts)

@@ -103,3 +103,20 @@ DREAM_EVENT_BATCH_SIZE = int(os.getenv("DREAM_EVENT_BATCH_SIZE", "200"))
 LINT_INTERVAL_MINUTES = int(os.getenv("LINT_INTERVAL_MINUTES", "10080"))
 OUTLOOK_POLL_INTERVAL_MINUTES = int(os.getenv("OUTLOOK_POLL_INTERVAL_MINUTES", "5"))
 SLACK_POLL_INTERVAL_MINUTES = int(os.getenv("SLACK_POLL_INTERVAL_MINUTES", "5"))
+
+# Personal agent (step 28 -- prompts/step_28_personal_agent.md). Frequent
+# enough to catch the 2h pre-meeting-brief window without drifting; most
+# ticks have zero candidates (see app/agent/select.py) so the cost of a
+# short interval is just a DB scan, not an LLM call.
+AGENT_HEARTBEAT_INTERVAL_MINUTES = int(os.getenv("AGENT_HEARTBEAT_INTERVAL_MINUTES", "30"))
+# How far ahead a scheduled meeting must be to become a pre-meeting-brief
+# candidate.
+PRE_MEETING_BRIEF_WINDOW_HOURS = int(os.getenv("PRE_MEETING_BRIEF_WINDOW_HOURS", "2"))
+# How long a conflict must sit contacted-but-unresolved before the agent
+# escalates it to the manager instead of waiting on the two parties.
+CONFLICT_ESCALATE_AFTER_HOURS = int(os.getenv("CONFLICT_ESCALATE_AFTER_HOURS", "24"))
+# How far back the agent heartbeat looks at raw Claim text to spot
+# unscheduled meeting mentions ("let's connect at 5pm") worth turning into
+# a tracked Meeting row.
+AGENT_MEETING_SCAN_LOOKBACK_HOURS = int(os.getenv("AGENT_MEETING_SCAN_LOOKBACK_HOURS", "48"))
+AGENT_MEETING_SCAN_MAX_CLAIMS = int(os.getenv("AGENT_MEETING_SCAN_MAX_CLAIMS", "20"))

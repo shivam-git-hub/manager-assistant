@@ -121,7 +121,7 @@ def test_02_synthesis_dirty_check(db_session):
     assert res == "Current state"
     assert transport.call_count == 0
 
-def test_03_synthesis_happy_path_citations_check(db_session):
+def test_03_synthesis_happy_path_citations_check(db_session, set_sim_time):
     """
     3. Synthesis happy path: fake returns text citing [T{real_id}] and
        [T99999] -> stored truth keeps the real marker, bogus one stripped,
@@ -138,7 +138,7 @@ def test_03_synthesis_happy_path_citations_check(db_session):
     
     # Anchor sim time
     anchor_time = datetime(2026, 7, 16, 10, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     response_payload = {
         "candidates": [{

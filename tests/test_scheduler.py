@@ -50,13 +50,13 @@ class FakeTransport:
             raise res
         return res
 
-def test_01_tick_orchestration(db_session):
+def test_01_tick_orchestration(db_session, set_sim_time):
     """
     1. Tick runs a due job, skips a future one, disables a one-shot, reschedules
        a recurring into the future.
     """
     now = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(now)
+    set_sim_time(now)
     
     # Register dummy handlers
     run_log = []
@@ -88,15 +88,22 @@ def test_01_tick_orchestration(db_session):
     assert job_rec.next_due_at == datetime(2026, 7, 15, 12, 55, 0)
     assert job_fut.next_due_at == now + timedelta(minutes=5)  # unchanged
 
-def test_02_scheduler_catchup(client, db_session, monkeypatch):
+def test_02_scheduler_catchup(client, db_session, monkeypatch, set_sim_time):
     """
     2. Catchup: set clock, create hourly job (catchup "once") + daily brief job
-       (catchup "every"); advance 3 days via the API -> hourly handler ran once,
-       brief handler ran 3 times (assert 3 briefs rows with distinct dates,
-       fake LLM). Verify the time-change hook fired tick automatically.
+       (catchup "every"); jump the (mocked) clock forward 3 days -> hourly
+       handler ran once, brief handler ran 3 times (assert 3 briefs rows with
+       distinct dates, fake LLM).
+
+    2026-07-23: previously drove the jump via POST /api/time/advance -- now
+    inert for now_ist() (sim time retired, see app/timeservice.py), so this
+    jumps set_sim_time directly instead. Nothing currently subscribes to
+    on_time_change/fire_time_change to auto-tick on a time jump (that hook
+    is unused dead wiring already, not something this test ever exercised --
+    tick() below is always called manually).
     """
     start_time = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(start_time)
+    set_sim_time(start_time)
     
     # Mock LLM response for morning brief (echoes input)
     response_payload = {
@@ -130,10 +137,9 @@ def test_02_scheduler_catchup(client, db_session, monkeypatch):
     brief_job.next_due_at = datetime(2026, 7, 16, 9, 0, 0)  # Next morning
     db_session.commit()
     
-    # Advance simulated time by 3 days via API endpoint
-    resp = client.post("/api/time/advance", json={"days": 3})
-    assert resp.status_code == 200
-    
+    # Jump the (mocked) clock forward 3 days
+    set_sim_time(start_time + timedelta(days=3))
+
     # Trigger tick manually inside test context (lifespan hooks isolated during tests)
     stats = tick(db_session)
     
@@ -147,12 +153,12 @@ def test_02_scheduler_catchup(client, db_session, monkeypatch):
     assert briefs[1].brief_date == "2026-07-17"
     assert briefs[2].brief_date == "2026-07-18"
 
-def test_03_handler_raises_exception_continues(db_session):
+def test_03_handler_raises_exception_continues(db_session, set_sim_time):
     """
     3. Handler that raises -> tick continues to the next job.
     """
     now = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(now)
+    set_sim_time(now)
     
     run_log = []
     register_handler("job_raiser", lambda db, vt=None: exec('raise ValueError("Broken!")'))
@@ -171,7 +177,7 @@ def test_03_handler_raises_exception_continues(db_session):
     assert job_raise.enabled is False
     assert job_after.enabled is False
 
-def test_04_followup_lifecycle(client, db_session):
+def test_04_followup_lifecycle(client, db_session, set_sim_time):
     """
     4. Followups: create one due yesterday -> check pings once (queue/DB has
        Harry's DM), 24h later pings again, 24h after that escalates (manager DM
@@ -185,7 +191,7 @@ def test_04_followup_lifecycle(client, db_session):
     db_session.commit()
     
     now = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(now)
+    set_sim_time(now)
     
     # Create followup due yesterday
     followup = Followup(
@@ -216,7 +222,7 @@ def test_04_followup_lifecycle(client, db_session):
     
     # Advance time 24h later
     now_24h = now + timedelta(hours=24, minutes=5)
-    timeservice.set_time(now_24h)
+    set_sim_time(now_24h)
     
     # Check again: pings again (2nd ping)
     res = run_followup_check(db_session)
@@ -229,7 +235,7 @@ def test_04_followup_lifecycle(client, db_session):
     
     # Advance time another 24h later
     now_48h = now_24h + timedelta(hours=24, minutes=5)
-    timeservice.set_time(now_48h)
+    set_sim_time(now_48h)
     
     # Check again: escalates (manager DM exists)
     res = run_followup_check(db_session)
@@ -272,13 +278,13 @@ def test_04_followup_lifecycle(client, db_session):
     assert followup.status == "answered"
     assert followup.answer_message_id == reply.id
 
-def test_05_health_degrade(db_session):
+def test_05_health_degrade(db_session, set_sim_time):
     """
     5. Health: project with 2 overdue tasks + 1 open conflict -> red/yellow;
        assert manager DM on degrade, silence on repeat eval (no change).
     """
     now = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(now)
+    set_sim_time(now)
     
     manager = TeamMember(id="U_SHIVAM", name="Shivam Manager", role="Manager", slack_handle="U_SHIVAM")
     project = Project(name="Project Phoenix", status="active", health="green")
@@ -315,7 +321,7 @@ def test_05_health_degrade(db_session):
     manager_msg_repeat = db_session.query(UnifiedMessage).filter(UnifiedMessage.channel_raw_id == "DM_U_HARRY_U_SHIVAM").first()
     assert manager_msg_repeat is None
 
-def test_06_morning_brief_assembly(db_session, monkeypatch):
+def test_06_morning_brief_assembly(db_session, monkeypatch, set_sim_time):
     """
     6. Morning brief content: seed a held 23:00 ping, an open conflict, an
        overdue task; run brief handler at 09:00 -> held ping released, brief
@@ -360,7 +366,7 @@ def test_06_morning_brief_assembly(db_session, monkeypatch):
     
     # Anchor simulated time to Jul 16 09:00 IST
     anchor_time = datetime(2026, 7, 16, 9, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     # Mock LLM synthesis
     response_payload = {

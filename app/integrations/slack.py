@@ -89,16 +89,34 @@ class SlackConnector(ChannelConnector):
         finally:
             db.close()
 
-    def _resolve_active_agent(self):
-        """Single-tenant convenience for outbound sends: use whichever
-        agent was most recently installed. send()/is_configured() don't
-        carry a manager_id today (see app.outbound) -- genuinely
-        manager_id-scoped sending is a later refactor, same concession
-        OutlookConnector's _resolve_active_manager_id already makes."""
+    def _resolve_active_agent(self, manager_id: Optional[str] = None):
+        """Which installed Agent's bot token to send as. Prefers the agent
+        actually CLAIMED by `manager_id` when given; falls back to
+        whichever agent was most recently installed (the old single-tenant
+        behavior) when no manager_id is available -- send()/is_configured()
+        still don't carry one everywhere (see app.outbound), same
+        concession OutlookConnector's _resolve_active_manager_id already
+        makes.
+
+        Bug found live 2026-07-23: with no manager scoping at all, this
+        picked whichever pool bot was installed most recently, full stop
+        -- an UNCLAIMED bot (e.g. kettle-bot, installed after Atlas but
+        never claimed by anyone) could and did win over the agent the
+        calling manager actually owns, silently sending as the wrong bot
+        identity (and, since only Atlas had the im:write scope fix
+        applied, surfacing as a `missing_scope` error that looked
+        unrelated). Callers that DO have a manager_id (open_dm, so far)
+        must pass it."""
         from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
 
         db = ControlPlaneSessionLocal()
         try:
+            if manager_id:
+                claimed = db.query(Agent).filter(
+                    Agent.manager_id == manager_id, Agent.bot_token.isnot(None)
+                ).first()
+                if claimed:
+                    return claimed
             return db.query(Agent).filter(Agent.bot_token.isnot(None)).order_by(Agent.installed_at.desc()).first()
         finally:
             db.close()
@@ -125,6 +143,32 @@ class SlackConnector(ChannelConnector):
         data = resp.json()
         logger.debug(f"[slack] API response: {method} ok={data.get('ok')}")
         return data
+
+    def open_dm(self, slack_user_id: str, manager_id: Optional[str] = None) -> Optional[str]:
+        """Resolves a Slack user id to a DM channel id via conversations.open
+        (idempotent on Slack's side -- reopening an existing DM just returns
+        its channel id). Used by the personal agent's send_message tool
+        (step 28) to message a teammate/manager by their Employee.slack_id
+        rather than a pre-known channel id. `manager_id`, when given,
+        resolves the calling manager's own claimed bot rather than
+        whichever pool bot happened to be installed most recently -- see
+        _resolve_active_agent's docstring for the bug this fixes."""
+        if not slack_user_id:
+            return None
+        agent = self._resolve_active_agent(manager_id)
+        token = agent.bot_token if agent else None
+        if "pytest" in sys.modules or not token:
+            logger.debug(f"[slack] open_dm: skipping live call for user={slack_user_id} (no bot token)")
+            return f"DM_{slack_user_id}"
+        try:
+            resp = self._api_call("conversations.open", json_body={"users": slack_user_id}, token=token)
+            if not resp.get("ok"):
+                logger.error(f"[slack] conversations.open failed: {resp.get('error')}")
+                return None
+            return resp.get("channel", {}).get("id")
+        except Exception:
+            logger.exception(f"[slack] open_dm failed for user={slack_user_id}")
+            return None
 
     def verify_signature(self, body: bytes, timestamp: str, signature: str, signing_secret: str) -> bool:
         """Slack's HMAC-SHA256 webhook signature scheme, checked against
@@ -154,7 +198,7 @@ class SlackConnector(ChannelConnector):
             (TeamMember.slack_handle == slack_id) | (TeamMember.id == slack_id)
         )).first()
 
-    def _resolve_dm_other_participant(self, db: Session, channel_id: str, known_id: str) -> Optional[str]:
+    def _resolve_dm_other_participant(self, db: Session, channel_id: str, known_id: str, manager_id: Optional[str] = None) -> Optional[str]:
         """Given one known participant of a DM channel, find the other one.
 
         normalize() doesn't decide manager-involvement (ingest() does that
@@ -164,18 +208,35 @@ class SlackConnector(ChannelConnector):
         participant is the manager (our token/bot only sees conversations
         it has access to). A real conversations.members call is only
         needed for the less common case of resolving who a
-        manager-initiated DM was with."""
+        manager-initiated DM was with.
+
+        Bug found live 2026-07-23: the manager-outbound case (known_id IS
+        the manager's own slack_handle -- they DMed a teammate) always fell
+        through to the live-call branch below, which defaulted to
+        self.bot_token (a pool agent's bot token). The bot isn't a member of
+        a DM between two humans, so conversations.members came back empty/
+        errored and every message a manager sent to someone else silently
+        vanished (normalize() -> None -> ingest() "ignored_not_a_message",
+        no error surfaced anywhere). Fixed by resolving this manager's own
+        reader user_token (the same token fetch_since already polls with --
+        it's a member of the manager's own DMs by construction) and using
+        THAT for the live call instead of the bot token."""
         from app.integrations.base import get_manager
 
         manager = get_manager(db)
         if manager and manager.slack_handle and known_id != manager.slack_handle:
             return manager.slack_handle
 
-        if self._skip_live_calls():
-            logger.debug(f"[slack] skipping live conversations.members lookup for {channel_id}")
+        token = None
+        if manager_id:
+            reader = self.resolve_reader_by_manager(manager_id)
+            token = reader.user_token if reader else None
+
+        if "pytest" in sys.modules or not token:
+            logger.debug(f"[slack] skipping live conversations.members lookup for {channel_id} (no reader token)")
             return None
         try:
-            resp = self._api_call("conversations.members", {"channel": channel_id})
+            resp = self._api_call("conversations.members", {"channel": channel_id}, token=token)
             members = resp.get("members", [])
             others = [m for m in members if m != known_id]
             return others[0] if others else None
@@ -189,12 +250,16 @@ class SlackConnector(ChannelConnector):
     # ingest()'s conversation_type branch in app/integrations/base.py.
     _CHANNEL_TYPE_MAP = {"im": "dm", "channel": "channel", "group": "group", "mpim": "group"}
 
-    def normalize(self, db: Session, raw: Dict[str, Any]) -> Optional[NormalizedMessage]:
+    def normalize(self, db: Session, raw: Dict[str, Any], manager_id: Optional[str] = None) -> Optional[NormalizedMessage]:
         """`raw` is a Slack Events API `event` object (or the equivalent
         shape built from conversations.history -- see
-        _history_message_to_event). normalize() doesn't know who the
-        manager is, it just describes sender/receiver objectively; ingest()
-        decides manager-involvement and tracked-list membership generically."""
+        _history_message_to_event). normalize() otherwise doesn't know who
+        the manager is, it just describes sender/receiver objectively;
+        ingest() decides manager-involvement and tracked-list membership
+        generically. `manager_id` is threaded through only for the DM
+        counterpart resolution's live-API fallback (see
+        _resolve_dm_other_participant) -- it needs to know whose reader
+        token to use."""
         if raw.get("type") != "message" or "user" not in raw or raw.get("subtype") == "bot_message":
             return None
         user_id = raw["user"]
@@ -209,7 +274,7 @@ class SlackConnector(ChannelConnector):
         channel_id = raw.get("channel", "unknown_channel")
 
         if conversation_type == "dm":
-            receiver_id = self._resolve_dm_other_participant(db, channel_id, user_id)
+            receiver_id = self._resolve_dm_other_participant(db, channel_id, user_id, manager_id)
             if receiver_id is None:
                 logger.debug(f"[slack] normalize: could not resolve DM counterpart for channel {channel_id}")
                 return None
@@ -466,6 +531,39 @@ async def slack_webhook(request: Request):
     db = get_manager_session(agent.manager_id)
     try:
         msg, ingest_status = ingest(connector, event, db, agent.manager_id)
+        # Captured now, before any further commits on this session --
+        # handle_agent_dm below runs its own db.commit() calls (via
+        # run_agent's tool handlers), which -- SQLAlchemy's expire_on_commit
+        # default -- expire EVERY object in the session, not just the ones
+        # those commits touched. Reading msg's fields after that (or after
+        # db.close() below) would raise DetachedInstanceError.
+        message_id = msg.platform_msg_id if ingest_status == "ok" else None
+        sender_mapped = msg.sender_mapped_name if ingest_status == "ok" else None
+
+        if (
+            ingest_status == "ok"
+            and event.get("channel_type") == "im"
+            and not event.get("bot_id")
+            and "pytest" not in sys.modules
+        ):
+            # A human DMed the bot directly -- reply live through the agent
+            # harness (step 28 §6B). `bot_id` is present on any bot/app-
+            # authored message event (including our own replies below), so
+            # this guard is what stops an infinite reply loop -- more
+            # reliable than comparing against Agent.user_id, which the
+            # current install flow (see Agent's docstring) never populates.
+            # Skipped under pytest -- same convention as
+            # SlackConnector._skip_live_calls/verify_signature elsewhere in
+            # this file -- so the general test suite never makes a real
+            # Gemini call; agent-harness behavior for this path is covered
+            # by tests/test_agent_heartbeat_job.py's fake-client pattern
+            # and dedicated direct_contact tests, not a live network call.
+            try:
+                from app.agent.direct_contact import handle_agent_dm
+
+                handle_agent_dm(db, agent.manager_id, event.get("channel"), event.get("text", ""))
+            except Exception:
+                logger.exception(f"[slack] webhook: agent DM reply failed for manager={agent.manager_id}")
     finally:
         db.close()
     logger.debug(f"[slack] webhook ingest result: {ingest_status}")
@@ -477,6 +575,6 @@ async def slack_webhook(request: Request):
 
     return {
         "status": "ok",
-        "message_id": msg.platform_msg_id,
-        "sender_mapped": msg.sender_mapped_name,
+        "message_id": message_id,
+        "sender_mapped": sender_mapped,
     }

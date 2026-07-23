@@ -7,6 +7,8 @@ from sqlalchemy import select, delete
 from pydantic import BaseModel
 
 from app.database import ChatMessage
+from app.controlplane.auth import get_current_manager
+from app.controlplane.models import Manager
 from app.tenancy.db import get_manager_db
 from app.agent.harness import run_agent
 
@@ -39,7 +41,11 @@ class ChatResponse(BaseModel):
 # -----------------------------------------------------------------------------
 
 @router.post("", response_model=ChatResponse)
-def post_chat_message(payload: ChatRequest, db: Session = Depends(get_manager_db)):
+def post_chat_message(
+    payload: ChatRequest,
+    db: Session = Depends(get_manager_db),
+    manager: Manager = Depends(get_current_manager),
+):
     """
     Submits a message to Harry. Loads the last 20 chat messages as conversation history,
     runs the agentic harness loop, persists both user and assistant turns, and returns the response.
@@ -66,7 +72,7 @@ def post_chat_message(payload: ChatRequest, db: Session = Depends(get_manager_db
         })
 
     # 2. Run Agent Harness
-    result = run_agent(db, payload.message, formatted_history)
+    result = run_agent(db, manager.id, payload.message, formatted_history)
 
     # 3. Persist User Message
     user_msg = ChatMessage(
@@ -139,12 +145,16 @@ def clear_chat_history(db: Session = Depends(get_manager_db)):
 heartbeat_router = APIRouter(tags=["Agent Heartbeat"])
 
 @heartbeat_router.post("/api/heartbeat/run")
-def force_heartbeat(db: Session = Depends(get_manager_db)):
+def force_heartbeat(
+    db: Session = Depends(get_manager_db),
+    manager: Manager = Depends(get_current_manager),
+):
     """
-    Manually triggers the agent heartbeat check (Triage and Action loop).
+    Manually triggers the personal agent's heartbeat tick (candidate
+    selection + tool-calling action loop) for the logged-in manager.
     """
-    from app.agent.heartbeat import run_heartbeat
-    return run_heartbeat(db)
+    from app.projectkb.jobs.agent_heartbeat import run as run_agent_heartbeat
+    return run_agent_heartbeat(db, manager.id)
 
 @heartbeat_router.get("/api/agent/notes")
 def get_agent_notes(limit: int = Query(30), db: Session = Depends(get_manager_db)):

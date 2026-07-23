@@ -35,8 +35,14 @@ has connected reading. Neither gates the other.
    - `im:history` -- a manager's own DMs
    - `im:read` -- DM channel metadata
    - `mpim:history` -- group DMs
+   - `mpim:read` -- group DM metadata (`conversations.list` 400s with
+     `missing_scope` without this -- it's required per conversation TYPE
+     requested, separately from `:history`; found live 2026-07-23 when a
+     real DM never showed up in a poll)
    - `groups:history` -- private channels the manager is in
+   - `groups:read` -- private channel metadata (same `:read`-per-type rule)
    - `channels:history` -- public channels the manager is in
+   - `channels:read` -- public channel metadata (same `:read`-per-type rule)
 5. Under **Basic Information -> App Credentials**, copy the **Client ID**
    and **Client Secret**.
 
@@ -71,6 +77,14 @@ This has no effect on any agent the manager has claimed.
 2. Under **OAuth & Permissions -> Bot Token Scopes**, add:
    - `im:history` -- read DMs sent to the bot
    - `im:read` -- DM channel metadata
+   - `im:write` -- open a NEW DM with someone who hasn't messaged the bot
+     yet (`conversations.open`, used by the personal agent's `send_message`
+     tool via `SlackConnector.open_dm`). Missing this makes
+     `conversations.open` 400 with `missing_scope` -- found live
+     2026-07-23 when the agent tried to message a teammate who'd never DMed
+     the bot before. `chat:write` alone is NOT enough: it lets the bot post
+     into a DM that already exists, but opening a brand-new one is a
+     separate permission.
    - `chat:write` -- send messages org-wide
 3. Under **Event Subscriptions**, turn this on, set the Request URL to
    `https://<host>/api/integrations/slack/webhook` (Slack's

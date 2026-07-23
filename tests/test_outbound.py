@@ -43,7 +43,7 @@ def test_01_harry_seeded_automatically(db_session):
     assert harry.slack_handle == "U_HARRY"
     assert harry.outlook_email == "harry.assistant@company.com"
 
-def test_02_slack_send_success(db_session):
+def test_02_slack_send_success(db_session, set_sim_time):
     """
     2. Slack connector.send(): DB row has direction="outbound",
        sender_mapped_name="Harry", correct channel, ok result.
@@ -51,7 +51,7 @@ def test_02_slack_send_success(db_session):
     from app.integrations.slack import connector as slack_connector
 
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
 
     result = slack_connector.send(db_session, "C_GENERAL", "Hi Alice, any update on the schema?")
     assert result.ok is True
@@ -75,7 +75,7 @@ def test_03_slack_send_empty_text(db_session):
     assert result.ok is False
     assert result.error == "invalid_arguments"
 
-def test_04_outlook_send_success(db_session):
+def test_04_outlook_send_success(db_session, set_sim_time):
     """
     4. Outlook connector.send(): DB row outbound, HTML body cleaned (send
        <style>x{color:red}</style><p>Done</p>, stored content must contain
@@ -84,7 +84,7 @@ def test_04_outlook_send_success(db_session):
     from app.integrations.outlook import connector as outlook_connector
 
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
 
     result = outlook_connector.send(
         db_session, "alice@company.com", "<style>x{color:red}</style><p>Done</p>", "Weekly Update"
@@ -152,14 +152,14 @@ def test_06_next_work_morning():
     sat_day = datetime(2026, 7, 18, 11, 0, 0)
     assert next_work_morning(sat_day) == datetime(2026, 7, 20, 9, 0, 0)
 
-def test_07_send_or_hold_work_hours(db_session):
+def test_07_send_or_hold_work_hours(db_session, set_sim_time):
     """
     7. send_or_hold during work hours (set sim time Wed 11:00) -> sent, row NOT queued,
        message in DB.
     """
     # Wed Jul 15 11:00 (work hours)
     anchor_time = datetime(2026, 7, 15, 11, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     payload = {
         "channel": "C_GENERAL",
@@ -180,7 +180,7 @@ def test_07_send_or_hold_work_hours(db_session):
     queue_rows = db_session.query(OutboundQueue).all()
     assert len(queue_rows) == 0
 
-def test_08_send_or_hold_quiet_hours_and_release(client, db_session):
+def test_08_send_or_hold_quiet_hours_and_release(client, db_session, set_sim_time):
     """
     8. send_or_hold at Wed 23:00 -> held with release Thu 09:00; then set sim
        time Thu 09:05, POST /api/outbound/release -> released=1, message now in
@@ -188,7 +188,7 @@ def test_08_send_or_hold_quiet_hours_and_release(client, db_session):
     """
     # Wed Jul 15 23:00 (quiet hours)
     anchor_time = datetime(2026, 7, 15, 23, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     payload = {
         "channel": "C_GENERAL",
@@ -219,7 +219,7 @@ def test_08_send_or_hold_quiet_hours_and_release(client, db_session):
     
     # Advance time to Thu Jul 16 09:05
     new_time = datetime(2026, 7, 16, 9, 5, 0)
-    timeservice.set_time(new_time)
+    set_sim_time(new_time)
     
     # POST /api/outbound/release
     resp_rel = client.post("/api/outbound/release")

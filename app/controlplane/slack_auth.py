@@ -40,7 +40,19 @@ router = APIRouter(prefix="/auth/slack", tags=["Slack Auth"])
 # User-token scope only -- the manager's own Slack identity, polled for DM/
 # channel/group history (see app/integrations/slack.py fetch_since). No bot
 # `scope` is requested at all; this app never gets a bot presence.
-USER_SCOPES = "im:history,im:read,mpim:history,groups:history,channels:history"
+#
+# Bug found live 2026-07-23 (a real DM never showed up in slack_poll's
+# results, "fetched: 0" for everything): fetch_since's conversations.list
+# call asks for types=im,mpim,private_channel,public_channel, and Slack
+# requires the matching `:read` scope for EVERY type included in that
+# call, not just `:history` for reading messages once you have the
+# channel id -- `mpim:read`/`groups:read`/`channels:read` were missing
+# (only `im:read` was ever granted), so conversations.list failed
+# outright with `missing_scope` and fetch_since returned [] before it
+# ever got to fetching a single message. Any manager who connected before
+# this fix needs to disconnect + reconnect (Slack requires re-consent for
+# a scope change, an already-issued token can't silently gain scopes).
+USER_SCOPES = "im:history,im:read,mpim:history,mpim:read,groups:history,groups:read,channels:history,channels:read"
 SLACK_OAUTH_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 SLACK_OAUTH_ACCESS_URL = "https://slack.com/api/oauth.v2.access"
 
@@ -150,14 +162,51 @@ def _sync_manager_slack_handle(manager_id: str, slack_user_id: str) -> None:
     """authed_user.id IS the manager's own Slack user id -- without writing
     it onto their TeamMember row, DM-participant resolution
     (SlackConnector._resolve_dm_other_participant) has no way to recognize
-    the manager in polled events, and reading silently returns nothing."""
+    the manager in polled events, and reading silently returns nothing.
+
+    Bug found live 2026-07-23: this used to only UPDATE an existing
+    role="manager" TeamMember row, but nothing in the v2 provisioning flow
+    (app.tenancy.db.init_manager_db) ever creates one -- only "Harry" gets
+    auto-seeded there. So for every manager who connects Slack reading
+    without a pre-existing TeamMember(role contains "manager") row (i.e.
+    everyone, in practice), this silently no-op'd: get_manager() kept
+    returning None, _resolve_dm_other_participant's fast path never
+    fired, and every real DM's normalize() returned None
+    ("ignored_not_a_message") -- slack_poll reported fetched>0/stored=0
+    with no error anywhere. Now creates the row if missing. Deliberately
+    NOT moved into init_manager_db's provisioning-time seed (like "Harry"
+    is) -- that runs at every dev-login too, including in the test suite's
+    `client` fixture, where many tests manually seed their own manager
+    TeamMember row and expect to be the only role="manager" row
+    get_manager()'s `.first()` can find; scoping this to the real OAuth
+    callback path instead leaves every test that doesn't exercise this
+    exact route (i.e. that never calls this function) untouched."""
     from app.tenancy.db import get_manager_session
     from app.integrations.base import get_manager
 
     db = get_manager_session(manager_id)
     try:
         member = get_manager(db)
-        if member is not None and member.slack_handle != slack_user_id:
+        if member is None:
+            from app.database import TeamMember
+
+            cdb = ControlPlaneSessionLocal()
+            try:
+                manager = cdb.get(Manager, manager_id)
+            finally:
+                cdb.close()
+            member = TeamMember(
+                id=manager_id,
+                name=manager.name if manager else manager_id,
+                role="manager",
+                slack_handle=slack_user_id,
+                outlook_email=manager.email if manager else None,
+                timezone="Asia/Kolkata",
+            )
+            db.add(member)
+            db.commit()
+            logger.info(f"[slack-auth] manager={manager_id} created TeamMember row, slack_handle={slack_user_id}")
+        elif member.slack_handle != slack_user_id:
             member.slack_handle = slack_user_id
             db.commit()
             logger.info(f"[slack-auth] manager={manager_id} TeamMember.slack_handle set to {slack_user_id}")

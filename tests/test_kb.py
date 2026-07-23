@@ -84,7 +84,7 @@ def test_02_auto_creation_entities(client, db_session):
     assert ent_m.type == "person"
     assert ent_m.name == "Charlie Dev"
 
-def test_03_timeline_append(client, db_session):
+def test_03_timeline_append(client, db_session, set_sim_time):
     """
     3. Timeline append with explicit happened_at + one defaulting to sim now
        (set sim time first, assert stamped value); newest-first ordering;
@@ -97,7 +97,7 @@ def test_03_timeline_append(client, db_session):
     
     # Anchor sim time to Wed Jul 15 12:00:00 2026
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     # Timeline entry 1: defaulting to sim now
     payload_default = {
@@ -141,7 +141,7 @@ def test_03_timeline_append(client, db_session):
     res_put = client.put("/api/kb/entities/project:phoenix/timeline", json={"summary": "wrong"})
     assert res_put.status_code in {404, 405}
 
-def test_04_claim_create_validations(client, db_session):
+def test_04_claim_create_validations(client, db_session, set_sim_time):
     """
     4. Claim create with weight 1.2 → 422; kind "vibe" → 422; happy path stores
        defaults (active=True, claimed_at = sim now).
@@ -172,7 +172,7 @@ def test_04_claim_create_validations(client, db_session):
     
     # Happy path
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     payload_good = {
         "claim": "Finished API contract",
@@ -311,7 +311,7 @@ def test_06_conflict_creation(client, db_session):
     assert conflicts[0]["entity_id"] == ent1.id
     assert conflicts[0]["claim_a_id"] == claim1.id
 
-def test_07_conflict_resolution(client, db_session):
+def test_07_conflict_resolution(client, db_session, set_sim_time):
     """
     7. Conflict PATCH resolve → status, resolved_at (sim time), note set;
        entity page payload no longer includes it (open only).
@@ -339,7 +339,7 @@ def test_07_conflict_resolution(client, db_session):
     
     # Anchor sim time
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    timeservice.set_time(anchor_time)
+    set_sim_time(anchor_time)
     
     # Resolve conflict
     payload_patch = {

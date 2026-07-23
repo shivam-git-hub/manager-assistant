@@ -93,11 +93,15 @@ class ChannelConnector(ABC):
         ...
 
     @abstractmethod
-    def normalize(self, db: Session, raw: Dict[str, Any]) -> Optional[NormalizedMessage]:
+    def normalize(self, db: Session, raw: Dict[str, Any], manager_id: Optional[str] = None) -> Optional[NormalizedMessage]:
         """raw channel payload -> common shape, or None if this payload
         isn't a real message at all (bot message, non-message event, etc).
         Purely descriptive -- storage policy (dedup, step 20's
-        store-everything) lives in ingest()."""
+        store-everything) lives in ingest(). `manager_id` is optional and
+        unused by most connectors (Outlook doesn't need it) -- Slack needs
+        it to resolve the reader token for a live conversations.members
+        call when the manager themself is the sender of a DM (see
+        SlackConnector._resolve_dm_other_participant)."""
         ...
 
     @abstractmethod
@@ -127,7 +131,7 @@ def ingest(connector: ChannelConnector, raw: Dict[str, Any], db: Session, manage
       "ignored_duplicate"     -- already existed
       "ignored_not_a_message" -- normalize() returned None
     """
-    normalized = connector.normalize(db, raw)
+    normalized = connector.normalize(db, raw, manager_id)
     if normalized is None:
         logger.debug(f"[{connector.source}] ingest: not a real message, skipping")
         return None, "ignored_not_a_message"

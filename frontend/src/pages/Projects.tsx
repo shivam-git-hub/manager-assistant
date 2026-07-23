@@ -5,17 +5,21 @@ import CreateProjectModal from "@/components/CreateProjectModal";
 import CreatePortfolioModal from "@/components/CreatePortfolioModal";
 import { getPortfolios, getProjects, type Portfolio, type ProjectSummary } from "@/lib/api";
 
+// Health bands, worst-first (a project with no data yet sorts last, not
+// first -- an unscored project isn't "healthier" than a red one).
+const HEALTH_RANK: Record<string, number> = { red: 0, yellow: 1, green: 2 };
+
 // Projects/Portfolios grid (wireframes 3.png / 4.png): toggle, sort
-// control, card grid, floating "+" to create. Sort-by-health waits on its
-// backend (health lands with the dream job) and renders disabled rather
-// than faked.
+// control, card grid, floating "+" to create. Sort-by-health now live --
+// GET /api/projects carries a real health band per project (dream job's
+// HealthLog), so this no longer needs the disabled placeholder.
 export default function Projects() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<"projects" | "portfolios">("projects");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [creating, setCreating] = useState(false);
-  const [sort, setSort] = useState<"name">("name");
+  const [sort, setSort] = useState<"name" | "health">("name");
 
   const load = useCallback(() => {
     getProjects()
@@ -28,7 +32,9 @@ export default function Projects() {
   useEffect(load, [load]);
 
   const sortedProjects = [...projects].sort((a, b) =>
-    sort === "name" ? a.name.localeCompare(b.name) : 0,
+    sort === "name"
+      ? a.name.localeCompare(b.name)
+      : (HEALTH_RANK[a.health ?? ""] ?? 3) - (HEALTH_RANK[b.health ?? ""] ?? 3),
   );
   const sortedPortfolios = [...portfolios].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -54,13 +60,11 @@ export default function Projects() {
           Sort by:{" "}
           <select
             value={sort}
-            onChange={(e) => setSort(e.target.value as "name")}
+            onChange={(e) => setSort(e.target.value as "name" | "health")}
             className="ml-1 rounded-md border border-cardline bg-white px-2 py-1 focus:outline-none focus:border-nav"
           >
             <option value="name">name</option>
-            <option value="health" disabled>
-              health (available once health scoring is live)
-            </option>
+            <option value="health">health (worst first)</option>
           </select>
         </label>
       </div>
@@ -125,9 +129,9 @@ export default function Projects() {
   );
 }
 
-// Portfolio cards reuse ProjectCard's honest-no-data flower row (no
-// aggregate health/blockers/actions computation exists yet) but show the
-// portfolio's own name and its member projects as the activity bullets.
+// Portfolio cards are a distinct card shape from ProjectCard (name +
+// member-project list, no per-portfolio flower row -- there's no single
+// "portfolio health," each member project carries its own).
 function PortfolioCard({ portfolio, onClick }: { portfolio: Portfolio; onClick: () => void }) {
   return (
     <button

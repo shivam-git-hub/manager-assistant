@@ -16,9 +16,9 @@ from app import timeservice
 # -----------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def set_sim_clock():
+def set_sim_clock(set_sim_time):
     # Freeze sim clock at standard datetime
-    timeservice.set_time(datetime(2026, 7, 12, 10, 0, 0))
+    set_sim_time(datetime(2026, 7, 12, 10, 0, 0))
 
 
 # -----------------------------------------------------------------------------

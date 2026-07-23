@@ -9,7 +9,7 @@ import sys
 
 from app.config import PORT, HOST
 from app.integrations import slack, outlook
-from app.api import dashboard, team as team_api, projects_registry as projects_registry_api, home as home_api, project_detail as project_detail_api
+from app.api import dashboard, team as team_api, projects_registry as projects_registry_api, home as home_api, project_detail as project_detail_api, dev_tools as dev_tools_api
 from app import timeservice, outbound, scheduler, followups, brief
 from app.kb import api as kb_api
 from app.kb import meetings as meetings_api
@@ -116,6 +116,7 @@ app.include_router(projectkb_api.router)
 app.include_router(projects_registry_api.router)
 app.include_router(home_api.router)
 app.include_router(project_detail_api.router)
+app.include_router(dev_tools_api.router)
 
 # Ensure static files directory exists
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

@@ -17,22 +17,30 @@ logger = logging.getLogger(__name__)
 
 def run_agent(
     db: Session,
+    manager_id: str,
     user_message: str,
     history: List[Dict[str, Any]],
-    client: Optional[GeminiClient] = None
+    client: Optional[GeminiClient] = None,
+    candidates: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """
     Core Hermes-style converse-and-execute loop for Harry.
-    Compiles dynamic three-tier system prompt, routes history,
-    calls tool handlers via ToolRegistry, and preserves turn symmetry.
+    Compiles the dynamic system prompt (owner/project/team context, plus a
+    candidate worklist when invoked from the agent heartbeat job), routes
+    history, calls tool handlers via ToolRegistry, and preserves turn
+    symmetry. `run_context` is fresh per call -- see app/agent/tools.py's
+    `todo` handler for why (scratch worklist state, never persisted).
     """
     client = client or get_client()
     budget = IterationBudget(limit=20)
     tool_trace = []
-    
+    run_context: Dict[str, Any] = {
+        "candidates": {(c.kind, c.ref_key): c for c in candidates} if candidates else {}
+    }
+
     # 1. Compile System Prompt
-    system_prompt = compile_system_prompt(db)
-    
+    system_prompt = compile_system_prompt(db, manager_id, candidates=candidates)
+
     # 2. Build Message List
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
@@ -94,7 +102,7 @@ def run_agent(
                 tc_args = tc["arguments"]
                 
                 logger.info(f"Harry calling tool '{tc_name}' with args {tc_args}")
-                result_str = registry.execute(tc_name, tc_args, db)
+                result_str = registry.execute(tc_name, tc_args, db, manager_id=manager_id, run_context=run_context)
                 
                 # Append tool result turn
                 tool_result_msg = {

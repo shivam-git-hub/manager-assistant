@@ -82,17 +82,6 @@ def extra_login():
         shutil.rmtree(manager_dir(mid), ignore_errors=True)
 
 
-@pytest.fixture
-def cleanup_projects():
-    """Tracks project ids created during a test and rmtree's their
-    projects/<id>/ dir afterwards -- mirrors how the `client` fixture
-    cleans up managers/<id>/ (real dir, not env-redirected)."""
-    created = []
-    yield created
-    for pid in created:
-        shutil.rmtree(project_dir(pid), ignore_errors=True)
-
-
 # ────────────────────────────────────────────────────────
 # 1. Create team project -> registry row, member rows, scaffold on disk
 # ────────────────────────────────────────────────────────

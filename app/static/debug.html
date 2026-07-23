@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Harry -- Pipeline Debug</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px 32px 60px; color: #1a1a1a; background: #f7f8fa; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  #whoami { color: #888; font-size: 13px; margin-bottom: 20px; }
+  #login-box { max-width: 360px; padding: 16px; background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; }
+  #login-box input { display: block; width: 100%; box-sizing: border-box; margin-bottom: 8px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+  section { background: #fff; border: 1px solid #e2e2e2; border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+  section h2 { font-size: 15px; margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+  th { color: #888; font-weight: 600; text-transform: uppercase; font-size: 10.5px; }
+  tr.highlight { background: #fff4d6; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill.ok { background: #e6f4ea; color: #1e7e34; }
+  .pill.err { background: #fdecea; color: #c62828; }
+  .pill.neutral { background: #f0f0f0; color: #666; }
+  button { padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; border: 1px solid #0f6cbd; background: #fff; color: #0f6cbd; cursor: pointer; }
+  button:hover { background: #eaf2fb; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .job-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+  .job-row .name { width: 160px; font-weight: 600; font-size: 13px; }
+  .job-row .interval { width: 140px; color: #888; font-size: 12px; }
+  .job-row .result { flex: 1; font-size: 11.5px; color: #555; white-space: pre-wrap; font-family: ui-monospace, monospace; max-height: 60px; overflow-y: auto; }
+  .chip { display: inline-block; padding: 1px 6px; margin: 1px 2px 1px 0; border-radius: 5px; background: #eef2f7; font-size: 11px; cursor: pointer; font-family: ui-monospace, monospace; }
+  .chip:hover { background: #dbe6f5; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .toolbar button.secondary { border-color: #ccc; color: #444; }
+  #sim-time { font-family: ui-monospace, monospace; font-size: 13px; background: #eef2f7; padding: 4px 10px; border-radius: 6px; }
+</style>
+</head>
+<body>
+  <h1>Pipeline Debug</h1>
+  <div id="whoami">Loading...</div>
+  <div id="login-box" style="display:none;">
+    <input id="login-email" placeholder="email" value="debug@test.local">
+    <input id="login-name" placeholder="name" value="Debug User">
+    <button onclick="devLogin()">Dev login</button>
+  </div>
+
+  <div id="app" style="display:none;">
+    <section>
+      <div class="toolbar">
+        <h2 style="margin:0;">Jobs</h2>
+        <span>Sim time: <span id="sim-time">--</span></span>
+      </div>
+      <div id="jobs"></div>
+    </section>
+
+    <section>
+      <div class="toolbar">
+        <h2 style="margin:0;">Messages <span id="messages-count" class="pill neutral"></span></h2>
+        <button class="secondary" onclick="loadAll()">Refresh all</button>
+      </div>
+      <table>
+        <thead><tr><th>id</th><th>source</th><th>sender</th><th>content</th><th>thread</th><th>processed</th><th>skip_reason</th><th>timestamp</th></tr></thead>
+        <tbody id="messages-body"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Claims <span id="claims-count" class="pill neutral"></span></h2>
+      <table>
+        <thead><tr><th>id</th><th>text</th><th>thread_key</th><th>processed</th><th>sources (click to trace)</th><th>created_at</th></tr></thead>
+        <tbody id="claims-body"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Events <span id="events-count" class="pill neutral"></span></h2>
+      <table>
+        <thead><tr><th>id</th><th>type</th><th>sev</th><th>title</th><th>body</th><th>project_ids</th><th>claim_ids (click to trace)</th><th>ui_state</th><th>created_at</th></tr></thead>
+        <tbody id="events-body"></tbody>
+      </table>
+    </section>
+  </div>
+
+<script>
+const JOB_LABELS = {
+  outlook_poll: "Outlook poll",
+  slack_poll: "Slack poll",
+  ingestion: "Ingestion",
+  heartbeat: "Heartbeat (KB)",
+  dream: "Dream",
+  lint: "Lint",
+  agent_heartbeat: "Agent heartbeat",
+};
+
+async function api(path, opts) {
+  const res = await fetch(path, { credentials: "include", headers: { "Content-Type": "application/json" }, ...opts });
+  if (!res.ok) throw new Error(`${path} -> ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function devLogin() {
+  const email = document.getElementById("login-email").value;
+  const name = document.getElementById("login-name").value;
+  await api("/api/auth/dev-login", { method: "POST", body: JSON.stringify({ email, name }) });
+  init();
+}
+
+async function checkAuth() {
+  try {
+    const me = await api("/api/auth/me");
+    document.getElementById("whoami").textContent = `${me.name} <${me.email}>`;
+    document.getElementById("login-box").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    return true;
+  } catch (e) {
+    document.getElementById("whoami").textContent = "Not logged in.";
+    document.getElementById("login-box").style.display = "block";
+    document.getElementById("app").style.display = "none";
+    return false;
+  }
+}
+
+async function renderJobs() {
+  const schedule = await api("/api/dev/jobs");
+  const el = document.getElementById("jobs");
+  el.innerHTML = "";
+  for (const name of Object.keys(JOB_LABELS)) {
+    const interval = schedule[name] ? schedule[name].interval_minutes : "?";
+    const row = document.createElement("div");
+    row.className = "job-row";
+    row.innerHTML = `
+      <span class="name">${JOB_LABELS[name]}</span>
+      <span class="interval">every ${interval} min</span>
+      <button data-job="${name}">Run now</button>
+      <span class="result" id="result-${name}"></span>
+    `;
+    row.querySelector("button").onclick = () => runJob(name);
+    el.appendChild(row);
+  }
+}
+
+async function runJob(name) {
+  const btn = document.querySelector(`button[data-job="${name}"]`);
+  const resultEl = document.getElementById(`result-${name}`);
+  btn.disabled = true;
+  resultEl.textContent = "running...";
+  try {
+    const res = await api(`/api/dev/jobs/${name}/run`, { method: "POST" });
+    resultEl.textContent = JSON.stringify(res.result);
+    await loadAll();
+  } catch (e) {
+    resultEl.textContent = "ERROR: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function renderSimTime() {
+  const t = await api("/api/time");
+  document.getElementById("sim-time").textContent = t.sim_time_ist || JSON.stringify(t);
+}
+
+function chip(text, onClick) {
+  const s = document.createElement("span");
+  s.className = "chip";
+  s.textContent = text;
+  s.onclick = onClick;
+  return s;
+}
+
+function highlightRows(prefixId, ids) {
+  document.querySelectorAll(`[id^="${prefixId}-"]`).forEach((r) => r.classList.remove("highlight"));
+  ids.forEach((id) => {
+    const row = document.getElementById(`${prefixId}-${id}`);
+    if (row) { row.classList.add("highlight"); row.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  });
+}
+
+const DEBUG_ROW_LIMIT = 20;
+
+// Newest-first, capped to DEBUG_ROW_LIMIT -- these endpoints return
+// whatever order the DB gives back (insertion order), which buries the
+// rows you actually care about (the ones you just triggered) at the
+// bottom of a growing table.
+function sortDesc(arr, tsField) {
+  return [...arr].sort((a, b) => new Date(b[tsField]) - new Date(a[tsField])).slice(0, DEBUG_ROW_LIMIT);
+}
+
+async function renderMessages() {
+  const all = await api("/api/messages?limit=100");
+  const messages = sortDesc(all, "timestamp");
+  document.getElementById("messages-count").textContent = `${messages.length} of ${all.length}`;
+  const body = document.getElementById("messages-body");
+  body.innerHTML = "";
+  for (const m of messages) {
+    const tr = document.createElement("tr");
+    tr.id = `msg-${m.id}`;
+    tr.innerHTML = `
+      <td>${m.id}</td><td>${m.source}</td><td>${m.sender_mapped_name || m.sender_raw_id}</td>
+      <td>${(m.content || "").slice(0, 80)}</td><td>${m.thread_id || ""}</td>
+      <td>${m.is_processed}</td><td>${m.skip_reason || ""}</td><td>${m.timestamp}</td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+async function renderClaims() {
+  const all = await api("/api/dev/claims?limit=100");
+  const claims = sortDesc(all, "created_at");
+  document.getElementById("claims-count").textContent = `${claims.length} of ${all.length}`;
+  const body = document.getElementById("claims-body");
+  body.innerHTML = "";
+  for (const c of claims) {
+    const tr = document.createElement("tr");
+    tr.id = `claim-${c.id}`;
+    const sourcesCell = document.createElement("td");
+    (c.sources || []).forEach((s) => sourcesCell.appendChild(chip(`#${s.id} ${s.sender}`, () => highlightRows("msg", [s.id]))));
+    tr.innerHTML = `<td>${c.id.slice(0, 8)}</td><td>${c.text}</td><td>${c.thread_key || ""}</td><td>${c.processed}</td>`;
+    tr.appendChild(sourcesCell);
+    const tsTd = document.createElement("td");
+    tsTd.textContent = c.created_at;
+    tr.appendChild(tsTd);
+    body.appendChild(tr);
+  }
+}
+
+async function renderEvents() {
+  const data = await api("/api/events?min_severity=0&include_dismissed=true&limit=200");
+  const events = sortDesc(data.events, "created_at");
+  document.getElementById("events-count").textContent = `${events.length} of ${data.events.length}`;
+  const body = document.getElementById("events-body");
+  body.innerHTML = "";
+  for (const e of events) {
+    const tr = document.createElement("tr");
+    tr.id = `event-${e.id}`;
+    const claimCell = document.createElement("td");
+    (e.claim_ids || []).forEach((cid) => claimCell.appendChild(chip(cid.slice(0, 8), () => highlightRows("claim", [cid]))));
+    tr.innerHTML = `
+      <td>${e.id.slice(0, 8)}</td><td>${e.type}</td><td>${e.severity}</td><td>${e.title}</td>
+      <td>${(e.body || "").slice(0, 80)}</td><td>${(e.project_ids || []).join(", ")}</td>
+    `;
+    tr.appendChild(claimCell);
+    const rest = document.createElement("td");
+    rest.textContent = e.ui_state;
+    tr.appendChild(rest);
+    const ts = document.createElement("td");
+    ts.textContent = e.created_at;
+    tr.appendChild(ts);
+    body.appendChild(tr);
+  }
+}
+
+async function loadAll() {
+  await Promise.all([renderSimTime(), renderMessages(), renderClaims(), renderEvents()]);
+}
+
+async function init() {
+  if (!(await checkAuth())) return;
+  await renderJobs();
+  await loadAll();
+}
+
+init();
+</script>
+</body>
+</html>

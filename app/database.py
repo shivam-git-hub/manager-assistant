@@ -106,6 +106,10 @@ class Meeting(Base):
     mom_message_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("unified_messages.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")  # "scheduled" | "completed" | "cancelled"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+    # Step 28 (personal agent): set the moment the agent sends a pre-meeting
+    # brief, so a later heartbeat tick inside the same 2h window doesn't
+    # re-send it. NULL = not yet briefed.
+    brief_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 class ActionItem(Base):
     __tablename__ = "action_items"
@@ -223,4 +227,28 @@ class AgentAssignment(Base):
     agent_name: Mapped[str] = mapped_column(String(100))
     team_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     assigned_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
+
+class AgentActionLog(Base):
+    """Idempotency ledger for the personal agent's autonomous heartbeat
+    (step 28 -- prompts/step_28_personal_agent.md §2). The deterministic
+    candidate selector (app/agent/select.py) checks this before proposing
+    an action; the tool handlers that actually take an action
+    (app/agent/tools.py) write the matching row afterwards -- never left to
+    the model to remember, same "code enforces the invariant" pattern as
+    the severity floors in the heartbeat/dream jobs.
+
+    ref_key convention: "meeting:<id>" (pre_meeting_brief, once per
+    meeting); "task:<project_id>:<task_id>:<YYYY-MM-DD>" (followup, at most
+    once/day per task); "event:<event_id>" (conflict_contact /
+    conflict_escalate, once each per conflict event)."""
+
+    __tablename__ = "agent_action_log"
+    __table_args__ = (UniqueConstraint("action_type", "ref_key", name="uq_agent_action_log"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # uuid4 hex
+    action_type: Mapped[str] = mapped_column(String(30))  # pre_meeting_brief | followup | conflict_contact | conflict_escalate
+    ref_key: Mapped[str] = mapped_column(String(255))
+    detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
 

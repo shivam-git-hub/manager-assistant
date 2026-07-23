@@ -83,13 +83,6 @@ export default function TopNav({
           >
             Todo
           </button>
-          <button
-            disabled
-            title="Chat with your agent -- coming soon"
-            className="rounded-full bg-white/85 text-nav font-bold text-sm px-4 py-1.5 cursor-not-allowed opacity-80"
-          >
-            Chat!
-          </button>
           <img src={amexLogo} alt="American Express" className="h-9 w-9 rounded" />
         </div>
       </div>

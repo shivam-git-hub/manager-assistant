@@ -82,6 +82,12 @@ def init_manager_db(manager_id: str) -> None:
             db.execute(text("ALTER TABLE unified_messages ADD COLUMN skip_reason VARCHAR(20)"))
             db.commit()
 
+        res_mtg = db.execute(text("PRAGMA table_info(meetings)")).fetchall()
+        mtg_cols = [row[1] for row in res_mtg]
+        if "brief_sent_at" not in mtg_cols:
+            db.execute(text("ALTER TABLE meetings ADD COLUMN brief_sent_at DATETIME"))
+            db.commit()
+
         res_proj = db.execute(text("PRAGMA table_info(projects)")).fetchall()
         proj_cols = [row[1] for row in res_proj]
         if "health" not in proj_cols:

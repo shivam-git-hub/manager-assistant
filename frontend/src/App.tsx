@@ -12,6 +12,7 @@ import Agents from "@/pages/Agents";
 import TopNav from "@/components/TopNav";
 import Sidebar from "@/components/Sidebar";
 import QuickAddTodoModal from "@/components/QuickAddTodoModal";
+import ChatWidget from "@/components/ChatWidget";
 import { getMe, type Manager } from "@/lib/api";
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
       <TopNav onMenuClick={() => setSidebarOpen(true)} onTodoClick={() => setQuickAddTodoOpen(true)} />
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       {quickAddTodoOpen && <QuickAddTodoModal onClose={() => setQuickAddTodoOpen(false)} />}
+      <ChatWidget />
       <Routes>
         <Route path="/" element={<Home manager={manager} />} />
         <Route path="/projects" element={<Projects />} />

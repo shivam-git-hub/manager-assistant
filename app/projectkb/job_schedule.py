@@ -38,6 +38,7 @@ from app.config import (
     LINT_INTERVAL_MINUTES,
     OUTLOOK_POLL_INTERVAL_MINUTES,
     SLACK_POLL_INTERVAL_MINUTES,
+    AGENT_HEARTBEAT_INTERVAL_MINUTES,
 )
 from app.projectkb.enums import JobName
 
@@ -55,6 +56,7 @@ DEFAULT_JOB_SCHEDULE = {
     JobName.LINT.value: {"interval_minutes": LINT_INTERVAL_MINUTES},
     JobName.OUTLOOK_POLL.value: {"interval_minutes": OUTLOOK_POLL_INTERVAL_MINUTES},
     JobName.SLACK_POLL.value: {"interval_minutes": SLACK_POLL_INTERVAL_MINUTES},
+    JobName.AGENT_HEARTBEAT.value: {"interval_minutes": AGENT_HEARTBEAT_INTERVAL_MINUTES},
 }
 
 

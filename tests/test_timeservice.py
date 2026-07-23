@@ -38,57 +38,31 @@ def setup_tmp_clock(monkeypatch, tmp_path):
 
 def test_01_initialization_defaults(setup_tmp_clock):
     """
-    1. Fresh state initializes anchored ≈ real IST now.
+    1. now_ist() tracks real wall-clock IST time (2026-07-23: sim time
+       retired -- see now_ist()'s own docstring). It no longer touches the
+       anchor file at all, so nothing is created just by reading it.
     """
-    assert not os.path.exists(setup_tmp_clock)
-    
-    # Getting now_ist should trigger initialization
     now = timeservice.now_ist()
-    
-    # Check that the file was created
-    assert os.path.exists(setup_tmp_clock)
-    
-    # Check that now is close to real IST now
+
+    assert not os.path.exists(setup_tmp_clock)
+
     real_now = datetime.now(IST).replace(tzinfo=None)
     assert abs((now - real_now).total_seconds()) < 2.0
 
-def test_02_set_time_and_advance_naturally(setup_tmp_clock, monkeypatch):
+def test_02_set_time_and_advance_are_inert_for_now_ist(setup_tmp_clock):
     """
-    2. set_time then now_ist() returns the set time (± a second) and keeps
-       advancing with real time.
+    2. set_time()/advance() still write the anchor file (the simulator UI's
+       clock-jump widget still calls them, see get_state()) but no longer
+       affect now_ist() -- production time reads real wall-clock only now.
     """
     target_time = datetime(2026, 7, 15, 10, 30, 0)
     timeservice.set_time(target_time)
-    
-    # Check that now_ist returns the set time (nearly exactly, within millisecond execution time)
-    now = timeservice.now_ist()
-    assert abs((now - target_time).total_seconds()) < 1.0
-    
-    # Mock real-world time passing to prove simulated time keeps flowing naturally at 1:1
-    real_start_time = time.time()
-    
-    # Instead of actual sleep, we can monkeypatch time.time to simulate 10 seconds of real-world elapsed time
-    monkeypatch.setattr(time, "time", lambda: real_start_time + 10.0)
-    
-    now_after_10s = timeservice.now_ist()
-    expected_time = target_time + timedelta(seconds=10)
-    assert abs((now_after_10s - expected_time).total_seconds()) < 0.1
+    timeservice.advance(3 * 24 * 3600)
 
-def test_03_advance_sim_time(setup_tmp_clock):
-    """
-    3. advance(seconds) or advance_by_timedelta moves now_ist() forward.
-       For timeservice, we have advance(seconds: int).
-    """
-    target_time = datetime(2026, 7, 15, 10, 30, 0)
-    timeservice.set_time(target_time)
-    
-    # Advance by 3 days (3 * 24 * 3600 seconds)
-    three_days_seconds = 3 * 24 * 3600
-    timeservice.advance(three_days_seconds)
-    
     now = timeservice.now_ist()
-    expected = target_time + timedelta(days=3)
-    assert abs((now - expected).total_seconds()) < 1.0
+    real_now = datetime.now(IST).replace(tzinfo=None)
+    assert abs((now - real_now).total_seconds()) < 2.0
+    assert abs((now - target_time).total_seconds()) > 60
 
 def test_04_iso_and_epoch_agreement(setup_tmp_clock):
     """
@@ -117,9 +91,15 @@ def test_04_iso_and_epoch_agreement(setup_tmp_clock):
 
 def test_05_api_endpoints(client, setup_tmp_clock):
     """
-    5. API round-trip: GET/set/advance/reset via FastAPI TestClient; 422 on
-       zero/negative advance.
+    5. API round-trip: GET/set/advance/reset via FastAPI TestClient still
+       succeed (the simulator UI's clock widget still calls these) and
+       still write the anchor file (get_state()'s anchor_sim_time reflects
+       the request), but 2026-07-23 on, `sim_time_ist` in every response is
+       real wall-clock time -- set/advance/reset no longer change it; 422
+       still guards zero/negative advance.
     """
+    real_now_ist = datetime.now(IST).replace(tzinfo=None)
+
     # 1. GET /api/time
     res = client.get("/api/time")
     assert res.status_code == 200
@@ -127,47 +107,42 @@ def test_05_api_endpoints(client, setup_tmp_clock):
     assert "sim_time_ist" in data
     assert "epoch" in data
     assert "utc_iso" in data
-    
-    # 2. POST /api/time/set
+    assert abs((datetime.fromisoformat(data["sim_time_ist"]) - real_now_ist).total_seconds()) < 2.0
+
+    # 2. POST /api/time/set -- anchor is written, but sim_time_ist stays real
     test_dt_str = "2026-07-20T14:45:00"
     res = client.post("/api/time/set", json={"datetime": test_dt_str})
     assert res.status_code == 200
     data = res.json()
-    # Allowing minor execution time difference
-    parsed_res_dt = datetime.fromisoformat(data["sim_time_ist"])
-    expected_res_dt = datetime.fromisoformat(test_dt_str)
-    assert abs((parsed_res_dt - expected_res_dt).total_seconds()) < 2.0
-    
-    # 3. POST /api/time/advance
+    assert data["anchor_sim_time"] == test_dt_str
+    assert abs((datetime.fromisoformat(data["sim_time_ist"]) - real_now_ist).total_seconds()) < 2.0
+
+    # 3. POST /api/time/advance -- same, inert for sim_time_ist
     res = client.post("/api/time/advance", json={"days": 1, "hours": 2, "minutes": 15})
     assert res.status_code == 200
     data = res.json()
-    parsed_advance_dt = datetime.fromisoformat(data["sim_time_ist"])
-    # 1 day, 2 hours, 15 minutes after expected_res_dt
-    expected_advance_dt = expected_res_dt + timedelta(days=1, hours=2, minutes=15)
-    assert abs((parsed_advance_dt - expected_advance_dt).total_seconds()) < 2.0
-    
+    assert abs((datetime.fromisoformat(data["sim_time_ist"]) - real_now_ist).total_seconds()) < 2.0
+
     # 4. POST /api/time/advance validation: negative/zero total
     res = client.post("/api/time/advance", json={"days": 0, "hours": 0, "minutes": 0})
     assert res.status_code == 422
-    
+
     res = client.post("/api/time/advance", json={"days": -1, "hours": 0, "minutes": 0})
     assert res.status_code == 422
-    
+
     # 5. POST /api/time/reset
     res = client.post("/api/time/reset")
     assert res.status_code == 200
     data = res.json()
     parsed_reset_dt = datetime.fromisoformat(data["sim_time_ist"])
-    real_now_ist = datetime.now(IST).replace(tzinfo=None)
     assert abs((parsed_reset_dt - real_now_ist).total_seconds()) < 2.0
 
 def test_06_ingestion_stamping(client, db_session, setup_tmp_clock):
     """
-    6. Ingestion stamping: set sim time to a known value, POST a dashboard
-       message (/api/integrations/dashboard/message) → stored timestamp equals
-       sim time; POST a Slack webhook WITHOUT ts → stored timestamp equals sim
-       time.
+    6. Ingestion stamping tracks real wall-clock time now (sim time
+       retired): POST a dashboard message (/api/integrations/dashboard/
+       message) → stored timestamp ~= real now; POST a Slack webhook
+       WITHOUT ts → stored timestamp ~= real now too.
     """
     # Pre-populate some team members so we resolve them correctly
     manager = TeamMember(id="dashboard_shivam", name="Shivam", role="Manager", slack_handle="U_MANAGER")
@@ -188,10 +163,8 @@ def test_06_ingestion_stamping(client, db_session, setup_tmp_clock):
     cp_db.commit()
     cp_db.close()
 
-    # Set sim time to a known value
-    known_time = datetime(2026, 8, 1, 15, 0, 0)
-    timeservice.set_time(known_time)
-    
+    real_now_ist = datetime.now(IST).replace(tzinfo=None)
+
     # 1. POST a dashboard message (no timestamp in body)
     res = client.post("/api/integrations/dashboard/message", json={
         "user_name": "Shivam",
@@ -200,7 +173,7 @@ def test_06_ingestion_stamping(client, db_session, setup_tmp_clock):
     assert res.status_code == 201
     dash_msg = db_session.query(UnifiedMessage).filter(UnifiedMessage.source == "dashboard").first()
     assert dash_msg is not None
-    assert abs((dash_msg.timestamp - known_time).total_seconds()) < 2.0
+    assert abs((dash_msg.timestamp - real_now_ist).total_seconds()) < 5.0
     
     # 2. POST a Slack webhook without ts
     slack_payload = {
@@ -224,8 +197,8 @@ def test_06_ingestion_stamping(client, db_session, setup_tmp_clock):
     # Retrieve the ingested message
     slack_msg = db_session.query(UnifiedMessage).filter(UnifiedMessage.source == "slack").first()
     assert slack_msg is not None
-    # Timestamp should match the sim time
-    assert abs((slack_msg.timestamp - known_time).total_seconds()) < 2.0
+    # Timestamp should match real wall-clock time (no ts on the payload)
+    assert abs((slack_msg.timestamp - real_now_ist).total_seconds()) < 5.0
 
 def test_07_wall_clock_guard():
     """

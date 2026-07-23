@@ -323,11 +323,12 @@ class OutlookConnector(ChannelConnector):
             (TeamMember.outlook_email == email) | (TeamMember.id == email)
         )).first()
 
-    def normalize(self, db: Session, raw: Dict[str, Any]) -> Optional[NormalizedMessage]:
+    def normalize(self, db: Session, raw: Dict[str, Any], manager_id: Optional[str] = None) -> Optional[NormalizedMessage]:
         """`raw` is a Graph message resource (from a poll fetch, or the
         /mock-ingest payload shape, which mirrors the same resource).
         Doesn't know who the manager is -- just describes sender/receiver
-        objectively; ingest() decides manager-involvement generically."""
+        objectively; ingest() decides manager-involvement generically.
+        `manager_id` is unused here (Slack-only need, see base.py)."""
         sender_email = raw.get("sender", {}).get("emailAddress", {}).get("address")
         if not sender_email:
             return None

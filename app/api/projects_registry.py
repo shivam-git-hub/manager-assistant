@@ -13,7 +13,7 @@ the old Vue dashboard's JS.
 """
 import json
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -30,7 +30,11 @@ from app.controlplane.models import (
     Portfolio,
     PortfolioProject,
 )
-from app.projects.paths import ensure_project_scaffold
+from app.database import Event
+from app.projects.db import get_project_session
+from app.projects.models import HealthLog
+from app.projects.paths import ensure_project_scaffold, project_db_path
+from app.tenancy.db import get_manager_db
 
 router = APIRouter(prefix="/api", tags=["Projects Registry"])
 
@@ -100,6 +104,64 @@ def _project_detail(db: DBSession, project: RegistryProject, manager: Manager) -
         ],
         "created_at": project.created_at,
     }
+
+
+def _health_band(score: int) -> str:
+    """Bands a HealthLog.final_score into the frontend's green/yellow/red
+    glyph -- same thresholds documented in
+    app.projectkb.jobs.dream._compute_base_health_score's docstring
+    (>=70 green, >=40 yellow, else red)."""
+    if score >= 70:
+        return "green"
+    if score >= 40:
+        return "yellow"
+    return "red"
+
+
+def _project_card_stats(db: DBSession, mdb: DBSession, projects: List[RegistryProject]) -> Dict[str, dict]:
+    """health band + open blocker/clarification count + open request count
+    per project, for the Home/Projects card flowers. Health lives in each
+    project's OWN db.sqlite (HealthLog, written by the dream job); blocker/
+    request counts live in the MANAGER's own db (Event.project_ids, written
+    by heartbeat) -- same split every other insights read in this codebase
+    follows (see project_detail.get_insights vs app/api/home.py)."""
+    from app.api.home import RESOLVED_UI_STATES
+
+    stats: Dict[str, dict] = {p.id: {"health": None, "blockers_count": 0, "actions_count": 0} for p in projects}
+
+    events = (
+        mdb.query(Event)
+        .filter(Event.type.in_(["blocker", "clarification", "request"]))
+        .filter(Event.ui_state.notin_(RESOLVED_UI_STATES))
+        .all()
+    )
+    for e in events:
+        event_project_ids = json.loads(e.project_ids) if e.project_ids else []
+        for pid in event_project_ids:
+            if pid not in stats:
+                continue
+            if e.type == "request":
+                stats[pid]["actions_count"] += 1
+            else:
+                stats[pid]["blockers_count"] += 1
+
+    for p in projects:
+        if not project_db_path(p.id).exists():
+            # A registry row with no scaffolded db.sqlite yet -- real code
+            # paths always call ensure_project_scaffold at creation time
+            # (see create_project below), but some test fixtures insert
+            # RegistryProject rows directly. Same "no data yet" outcome as
+            # a project the dream job simply hasn't reached.
+            continue
+        pdb = get_project_session(p.id)
+        try:
+            health = pdb.query(HealthLog).order_by(HealthLog.ts.desc()).first()
+        finally:
+            pdb.close()
+        if health is not None:
+            stats[p.id]["health"] = _health_band(health.final_score)
+
+    return stats
 
 
 def _employee_dict(e: Employee) -> dict:
@@ -173,6 +235,7 @@ def create_project(
 def list_projects(
     manager: Manager = Depends(get_current_manager),
     db: DBSession = Depends(get_controlplane_db),
+    mdb: DBSession = Depends(get_manager_db),
 ):
     owned = db.query(RegistryProject).filter(RegistryProject.manager_user_id == manager.id).all()
     owned_ids = {p.id for p in owned}
@@ -195,8 +258,11 @@ def list_projects(
             .all()
         )
 
+    all_projects = owned + member_projects
+    stats = _project_card_stats(db, mdb, all_projects)
+
     result = []
-    for p in owned + member_projects:
+    for p in all_projects:
         member_count = db.query(ProjectMember).filter(ProjectMember.project_id == p.id).count()
         result.append({
             "id": p.id,
@@ -205,6 +271,9 @@ def list_projects(
             "kind": p.kind,
             "is_manager": p.manager_user_id == manager.id,
             "member_count": member_count,
+            "health": stats[p.id]["health"],
+            "blockers_count": stats[p.id]["blockers_count"],
+            "actions_count": stats[p.id]["actions_count"],
         })
     return result
 
@@ -302,13 +371,14 @@ def _visible_project_ids(db: DBSession, manager: Manager) -> set:
     return owned_ids | member_ids
 
 
-def _portfolio_detail(db: DBSession, portfolio: Portfolio, manager: Manager) -> dict:
+def _portfolio_detail(db: DBSession, mdb: DBSession, portfolio: Portfolio, manager: Manager) -> dict:
     rows = (
         db.query(RegistryProject)
         .join(PortfolioProject, PortfolioProject.project_id == RegistryProject.id)
         .filter(PortfolioProject.portfolio_id == portfolio.id)
         .all()
     )
+    stats = _project_card_stats(db, mdb, rows)
     projects = []
     for p in rows:
         member_count = db.query(ProjectMember).filter(ProjectMember.project_id == p.id).count()
@@ -319,6 +389,9 @@ def _portfolio_detail(db: DBSession, portfolio: Portfolio, manager: Manager) -> 
             "kind": p.kind,
             "is_manager": p.manager_user_id == manager.id,
             "member_count": member_count,
+            "health": stats[p.id]["health"],
+            "blockers_count": stats[p.id]["blockers_count"],
+            "actions_count": stats[p.id]["actions_count"],
         })
     return {
         "id": portfolio.id,
@@ -333,18 +406,20 @@ def create_portfolio(
     payload: PortfolioCreateIn,
     manager: Manager = Depends(get_current_manager),
     db: DBSession = Depends(get_controlplane_db),
+    mdb: DBSession = Depends(get_manager_db),
 ):
     portfolio = Portfolio(id=uuid.uuid4().hex, name=payload.name, manager_user_id=manager.id)
     db.add(portfolio)
     db.commit()
     db.refresh(portfolio)
-    return _portfolio_detail(db, portfolio, manager)
+    return _portfolio_detail(db, mdb, portfolio, manager)
 
 
 @router.get("/portfolios")
 def list_portfolios(
     manager: Manager = Depends(get_current_manager),
     db: DBSession = Depends(get_controlplane_db),
+    mdb: DBSession = Depends(get_manager_db),
 ):
     portfolios = (
         db.query(Portfolio)
@@ -352,7 +427,7 @@ def list_portfolios(
         .order_by(Portfolio.created_at)
         .all()
     )
-    return [_portfolio_detail(db, p, manager) for p in portfolios]
+    return [_portfolio_detail(db, mdb, p, manager) for p in portfolios]
 
 
 @router.get("/portfolios/{portfolio_id}")
@@ -360,11 +435,12 @@ def get_portfolio(
     portfolio_id: str,
     manager: Manager = Depends(get_current_manager),
     db: DBSession = Depends(get_controlplane_db),
+    mdb: DBSession = Depends(get_manager_db),
 ):
     portfolio = db.get(Portfolio, portfolio_id)
     if portfolio is None or portfolio.manager_user_id != manager.id:
         raise HTTPException(status_code=404, detail="Portfolio not found")
-    return _portfolio_detail(db, portfolio, manager)
+    return _portfolio_detail(db, mdb, portfolio, manager)
 
 
 @router.patch("/portfolios/{portfolio_id}")
@@ -373,6 +449,7 @@ def patch_portfolio(
     payload: PortfolioPatchIn,
     manager: Manager = Depends(get_current_manager),
     db: DBSession = Depends(get_controlplane_db),
+    mdb: DBSession = Depends(get_manager_db),
 ):
     portfolio = db.get(Portfolio, portfolio_id)
     if portfolio is None or portfolio.manager_user_id != manager.id:
@@ -401,7 +478,7 @@ def patch_portfolio(
 
     db.commit()
     db.refresh(portfolio)
-    return _portfolio_detail(db, portfolio, manager)
+    return _portfolio_detail(db, mdb, portfolio, manager)
 
 
 @router.delete("/portfolios/{portfolio_id}", status_code=status.HTTP_204_NO_CONTENT)

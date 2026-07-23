@@ -14,6 +14,7 @@ class JobName(str, Enum):
     LINT = "lint"
     OUTLOOK_POLL = "outlook_poll"  # arrival cadence for Outlook (poll, not push) -- distinct from the extraction cadence above
     SLACK_POLL = "slack_poll"  # user-token DM polling (step 17 piece 1) -- distinct from the bot-token webhook
+    AGENT_HEARTBEAT = "agent_heartbeat"  # step 28: acts on events/tasks/meetings already produced by heartbeat/dream
 
 
 class TodoStatus(str, Enum):

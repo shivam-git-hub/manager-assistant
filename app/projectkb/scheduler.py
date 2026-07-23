@@ -26,7 +26,7 @@ from datetime import datetime
 from app.config import PROJECTKB_POLL_SECONDS
 from app.projectkb.job_schedule import load_job_schedule, is_due, set_last_run
 from app.projectkb.enums import JobName
-from app.projectkb.jobs import ingestion, heartbeat, dream, lint, outlook_poll, slack_poll
+from app.projectkb.jobs import ingestion, heartbeat, dream, lint, outlook_poll, slack_poll, agent_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ _JOBS = {
     JobName.LINT.value: lint,
     JobName.OUTLOOK_POLL.value: outlook_poll,
     JobName.SLACK_POLL.value: slack_poll,
+    JobName.AGENT_HEARTBEAT.value: agent_heartbeat,
 }
 
 

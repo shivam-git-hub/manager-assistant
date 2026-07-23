@@ -10,10 +10,13 @@ os.environ["CONTROLPLANE_DB_FILENAME"] = "test_controlplane.sqlite"
 
 import pytest
 import shutil
+import time
 import uuid
+from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.config import IST
 
 
 @pytest.fixture(autouse=True)
@@ -75,3 +78,76 @@ def db_session(client):
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture
+def manager_employee_id(client):
+    """Creates an Employee row matching the logged-in test manager's own
+    email -- needed by any test that exercises the personal agent's
+    target='manager' resolution (app.agent.tools._resolve_target_employee_id),
+    which looks up the manager's own Employee row by email the same way
+    app.api.project_detail._my_employee_ids does. Real logins get this via
+    the Outlook-login Employee-upsert (see CLAUDE.md's 'Live-testing fixes'
+    entry); dev-login does not, so tests that need it create it explicitly."""
+    import uuid as _uuid
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, Employee
+
+    db = ControlPlaneSessionLocal()
+    try:
+        manager = db.get(Manager, client.manager_id)
+        emp = Employee(
+            id=_uuid.uuid4().hex,
+            email=manager.email.lower(),
+            name=manager.name,
+            role="Manager",
+            slack_id="U_TEST_MANAGER",
+        )
+        db.add(emp)
+        db.commit()
+        return emp.id
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def set_sim_time(monkeypatch):
+    """Test-only clock control. Production app.timeservice.now_ist() tracks
+    real wall-clock time only (2026-07-23, sim time removed) -- this fixture
+    exists so time-dependent business logic (quiet hours, meeting briefs,
+    follow-up lifecycles, health decay, etc.) can still be tested
+    deterministically. Call set_sim_time(dt) to freeze now_ist() at dt; it
+    keeps flowing naturally with real elapsed time after that (same anchor
+    behavior the old sim clock had), so a test that sleeps/advances real
+    time mid-test still sees time move forward. Every app module reads
+    `timeservice.now_ist()` off the module object at call time (`from app
+    import timeservice`, never `from app.timeservice import now_ist`), so
+    patching the module attribute here reaches every call site."""
+    from app import timeservice
+
+    anchor = {"sim": None, "real": None}
+
+    def _now():
+        if anchor["sim"] is None:
+            return datetime.now(IST).replace(tzinfo=None)
+        return anchor["sim"] + timedelta(seconds=time.time() - anchor["real"])
+
+    def _set(dt: datetime):
+        anchor["sim"] = dt
+        anchor["real"] = time.time()
+
+    monkeypatch.setattr(timeservice, "now_ist", _now)
+    return _set
+
+
+@pytest.fixture
+def cleanup_projects():
+    """Tracks project ids created during a test and rmtree's their
+    projects/<id>/ dir afterwards -- shared across test modules that create
+    real registry projects (real on-disk dirs, not env-redirected, same as
+    managers/<id>/)."""
+    from app.projects.paths import project_dir
+
+    created = []
+    yield created
+    for pid in created:
+        shutil.rmtree(project_dir(pid), ignore_errors=True)

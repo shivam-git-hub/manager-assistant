@@ -11,8 +11,14 @@ manager updates). Goal: an end-to-end **demoable** product — not scalable infr
   approval before feature code. TDD for all backend logic.
 - No agent frameworks (no LangChain/LangGraph). Harness written from scratch,
   Hermes-inspired (lifting their patterns/snippets is fine).
-- All datetimes: naive IST (Asia/Kolkata). In new code, wall-clock reads are
-  FORBIDDEN — always use the sim-time service (see below).
+- All datetimes: naive IST (Asia/Kolkata). In new code, direct wall-clock
+  reads (`datetime.now()`/`.utcnow()`/`time.time()`) are FORBIDDEN — always
+  go through `app.timeservice.now_ist()`. As of 2026-07-23 that function
+  returns REAL wall-clock IST time, not simulated time (see "Simulated
+  time" below, now retired) — the rule against calling `datetime.now()`
+  directly stands for a different reason now (one call site to swap if
+  this ever changes again, consistent stamping across every table/job),
+  not because there's a sim clock to respect.
 - No heavy installations: SQLite not Postgres. Backend and the simulator UI
   stay CDN/no-build. **Exception (2026-07-22): the manager-facing product
   frontend** (see "Frontend rebuild" below) is React + Vite + build tooling —
@@ -271,6 +277,452 @@ implementations). The v1 architecture below is being superseded per-piece.
   frontend already consumes — suggestions/concerns/health now show real
   data with no frontend changes needed (that endpoint was built ahead of
   this step, in step 21, always-empty until now).
+- **Step 28 DONE 2026-07-23** (`prompts/step_28_personal_agent.md`):
+  personal agent rebuilt from scratch — everything under `app/agent/`
+  (`tools.py`/`situation.py`/`prompts.py`/`heartbeat.py`) was v1-schema
+  dead code (`TeamMember`/`AttributedClaim`/`Conflict`/`Followup`/`Entity`,
+  never populated by any v2 pipeline stage) and is now rewritten against
+  real v2 tables. `situation.py`/`heartbeat.py` deleted outright; `tools.py`/
+  `prompts.py` fully rewritten; `harness.py`/`registry.py`/`budget.py`/
+  `notes.py` kept, with `run_agent`/`ToolRegistry.execute` gaining
+  `manager_id`/`run_context` threading (every tool handler now takes
+  `(db, manager_id, run_context, **args)` — `run_context` is per-call
+  scratch state, currently only the `todo` tool's worklist and the current
+  tick's candidate whitelist).
+
+  **A 5th pipeline stage, not a re-detection pass:** ingest→claims,
+  heartbeat→events+task transitions, dream→synthesis/health, agent
+  (new)→ACTS on what those already produced (messaging people, dashboard
+  mutations, escalation) — never re-derives blockers/conflicts itself.
+  New `app/agent/select.py::build_candidates()` — deterministic (no LLM),
+  same "code decides WHAT's due, LLM only drafts text" rule as every prior
+  job — three candidate kinds: `pre_meeting_brief` (`Meeting` rows,
+  `status=scheduled`, `starts_at` within `PRE_MEETING_BRIEF_WINDOW_HOURS`
+  (default 2), `brief_sent_at IS NULL` — new column + migration in
+  `app/tenancy/db.py`), `followup` (per-owned-project open `Task` rows that
+  are `blocked` or overdue, deduped once/day via ref_key date-bucketing),
+  `conflict_contact`/`conflict_escalate` (`Event.type="conflict"` rows —
+  first sighting → contact both claim holders; still open after
+  `CONFLICT_ESCALATE_AFTER_HOURS` (default 24) since contact → escalate to
+  manager). New `app/database.AgentActionLog` (unique on
+  `action_type, ref_key`) is the idempotency ledger — written by the TOOL
+  HANDLER after a real action, never left to the model to remember (same
+  "code enforces the invariant" pattern as heartbeat/dream's severity
+  floors); `send_message`'s handler validates any `candidate_kind`/
+  `candidate_ref_key` the model claims against `run_context["candidates"]`
+  (this tick's actual whitelist) before trusting it — a hallucinated ref
+  silently no-ops, same discipline as step 23's project_ids/claim_ids
+  filtering.
+
+  **Tools** (`app/agent/tools.py`, all read `db`/`manager_id`/`run_context`):
+  `send_message(channel: slack|portal, target, text, candidate_kind?,
+  candidate_ref_key?)` — `slack` resolves `target` (an Employee id, or the
+  literal `"manager"` → the calling manager's own Employee row by email
+  match) to `Employee.slack_id`, opens a DM via new
+  `SlackConnector.open_dm()` (conversations.open), sends through the
+  existing `send_or_hold` quiet-hours gate unchanged; `portal` inserts a
+  `ChatMessage(role="assistant")` so it shows up in the manager's own
+  dashboard chat thread. `dashboard_action(action: create_task|
+  update_task_status|add_project_member|create_todo|create_meeting, ...)` —
+  one enum-dispatched tool per Shivam's ask; `create_meeting` has a 30-min-
+  window title+time dedup guard (agent-inferred meetings, see below, must
+  not duplicate on every tick). Read-only probes: `list_meetings`,
+  `get_project_doc(project_id, doc: project|summary|notes)`, `list_team`,
+  `get_task`, `list_open_conflicts`. `todo` — made real (was a Hermes mock
+  placeholder): session-scoped worklist backed by `run_context`, never
+  persisted, matches the "create a todo, then complete one by one" framing
+  from Shivam's design brief.
+
+  **Meeting data gap resolved as agent-inferred, not manual entry or
+  calendar polling** (Shivam's explicit call after the spec draft
+  originally proposed manual-only): v2 has no calendar ingestion at all
+  (`Meeting`/`ActionItem` are orphaned v1 tables, `app/kb/meetings.py`'s
+  creation path was never wired into the v2 frontend). Each agent
+  heartbeat tick is handed the last `AGENT_MEETING_SCAN_LOOKBACK_HOURS`
+  (default 48) of raw `Claim` text and instructed to spot meeting mentions
+  ("let's connect at 5pm") not already in `list_meetings` and create them
+  via `dashboard_action`. This is the one deliberately LLM-judged step in
+  an otherwise deterministic-selection design — natural-language time/
+  attendee extraction is inherently a judgment call, same precedent as
+  ingestion's own flash-model claim extraction.
+
+  **Two chat entry points, both through the same rewired harness**
+  (`app/agent/context.py::build_agent_context()` — owner profile, owned+
+  member projects' `summary.md`/`events.md` tail, `memory.md`, today's
+  `Event` rows, project-scoped team roster, recent claims, sim time —
+  replaces the dead `situation.py` digest): `POST /api/chat` (dashboard,
+  unchanged route shape, now passes `manager.id` through) and **Slack DM
+  replies to Harry** (confirmed in scope after Shivam's answer reversed
+  this spec's original dashboard-only draft) — `app/integrations/
+  slack.py`'s webhook, after a successful `ingest()`, now calls
+  `app/agent/direct_contact.py::handle_agent_dm()` when
+  `channel_type=="im"` and the event carries no `bot_id` (the loop-
+  prevention guard — more reliable than `Agent.user_id`, which the
+  current admin-seeded install flow never populates), runs the harness on
+  that single message, replies via `connector.send()` on the same DM
+  channel. Guarded `"pytest" not in sys.modules` so the general test suite
+  never makes a live Gemini call from this path (same convention as
+  `SlackConnector._skip_live_calls`/`verify_signature`) — covered instead
+  by `tests/test_agent_heartbeat_job.py`'s fake-client pattern.
+  **Review-caught fix:** the webhook's `return {"message_id": msg.
+  platform_msg_id, ...}` sat AFTER `db.close()` — harmless before this
+  step (nothing else touched the session in between), but
+  `handle_agent_dm`'s own `db.commit()` calls on the SAME session expire
+  *every* object in it (SQLAlchemy's `expire_on_commit` default, not just
+  objects the commit touched), so accessing `msg`'s fields afterward now
+  raised `DetachedInstanceError`; fixed by capturing `message_id`/
+  `sender_mapped` into locals immediately after `ingest()`, before any
+  further commits.
+
+  New `JobName.AGENT_HEARTBEAT` (`app/projectkb/jobs/agent_heartbeat.py`),
+  registered in the scheduler/job_schedule fixed-job dict exactly like the
+  other five — real wall-clock cadence, default 30 min
+  (`AGENT_HEARTBEAT_INTERVAL_MINUTES`), independent of ingest/heartbeat/
+  dream's own cadences (it reads their already-persisted output, doesn't
+  chain off them). `POST /api/heartbeat/run` (manual trigger,
+  `app/agent/api.py`) now calls this job instead of the deleted v1 triage
+  heartbeat. Live-verified end-to-end against the real dev server + real
+  Gemini: seeded a meeting 45 min out with no Slack-id'd employee →
+  heartbeat correctly attempted Slack first, got a clean error, fell back
+  to nothing (per-candidate, not global fallback — the model chose to
+  retry via portal itself, both attempts visible in `tool_trace`), logged
+  `AgentActionLog` + set `Meeting.brief_sent_at`; second tick correctly
+  found zero candidates (idempotency); `/api/chat` correctly answered "what
+  meetings do I have" via `list_meetings` in the same session.
+  `tests/test_agent_select.py` (7), `tests/test_agent_tools.py` (8),
+  `tests/test_agent_heartbeat_job.py` (2), `tests/test_agent.py` rewritten
+  (5, was testing the deleted v1 harness/schema). New shared fixtures in
+  `tests/conftest.py`: `cleanup_projects` (moved from
+  `tests/test_projects_registry.py`, now shared), `manager_employee_id`
+  (creates an Employee row matching the test manager's own email + a fake
+  `slack_id` — dev-login, unlike real Outlook login, doesn't auto-create
+  one). `tests/test_heartbeat.py` (the pre-existing failing v1 test file
+  CLAUDE.md previously listed as "known failing, not a v2 regression")
+  deleted — it directly imported `app.agent.situation`/`app.agent.
+  heartbeat`, both now genuinely gone rather than just untested.
+  `tests/test_scheduler.py::test_04_followup_lifecycle` remains the one
+  pre-existing failure (v1 followups/heartbeat code mid-refactor,
+  unrelated to this step).
+
+- **Pipeline debug tooling 2026-07-23** (not spec'd/wireframed — a test
+  utility, same tier as `login.html`/`connect.html`, not the product
+  surface): `app/static/debug.html` (plain HTML/vanilla JS, no build, same
+  convention as those two pages) — manual "Run now" button per job
+  (outlook_poll/slack_poll/ingestion/heartbeat/dream/lint/agent_heartbeat)
+  showing its currently-effective interval, plus read-only tables for
+  Messages / Claims / Events with click-to-trace chips (a claim's source
+  chips highlight+scroll to the cited message rows; an event's claim chips
+  do the same into the Claims table) — the message → claim → event chain
+  spec/architecture_v2_kb.md describes, made visually inspectable. Backing
+  API: new `app/api/dev_tools.py` (`GET/POST /api/dev/jobs`,
+  `GET /api/dev/claims`) — manager-scoped like every other route (cookie
+  auth), `POST /api/dev/jobs/{job_name}/run` runs that job against the
+  LOGGED-IN manager's own data, same as the pre-existing
+  `POST /api/heartbeat/run`. `GET /api/dev/claims` was a genuine gap: no
+  claims-listing endpoint existed anywhere before this (only messages and
+  events did). Live-verified the full chain through these exact endpoints:
+  manual message → `ingestion` → 3 claims citing it → `heartbeat` → 1
+  blocker event citing all 3 claims, all fields matching what the page's
+  JS expects. One real fix along the way: `GET /api/time`'s field is
+  `sim_time_ist`, not `current_time`/`sim_time` as first guessed — caught
+  by hitting the live endpoint rather than trusting the guess.
+  Headless-Chrome screenshot verification was skipped — hit the exact
+  documented gotcha above ("headless Chrome hangs on fresh
+  `--user-data-dir`"), same as the React frontend's screenshot trick;
+  didn't fight it since the actual risk (JS assuming wrong response
+  shapes) was already checked directly against the live endpoints via
+  curl.
+
+  **Current job frequencies** (defaults from `app/config.py`, overridable
+  via `job_schedule.json`/per-manager override — see
+  `app/projectkb/job_schedule.py`): outlook_poll 5 min, slack_poll 5 min,
+  ingestion 15 min, heartbeat (KB, user+project fan-out) 60 min, dream
+  1440 min (24h), lint 10080 min (7 days), agent_heartbeat 30 min.
+
+- **Chat widget enabled 2026-07-23** (frontend, closes the "Chat!" gap left
+  disabled since the Connectors-page frontend note): TopNav's disabled
+  "Chat!" pill removed; replaced with `frontend/src/components/
+  ChatWidget.tsx` — a floating circular orb (bottom-right, fixed, all
+  pages) that expands into a chat panel on click, lifted into `App.tsx`
+  alongside `QuickAddTodoModal` (same "reachable from anywhere" pattern).
+  The orb is a slow-rotating conic-gradient (brand blues/purple —
+  `nav`/`sidebarbtn`-family colors, not a flat button) — deliberately the
+  one bit of personality against an otherwise buttoned-down page;
+  `prefers-reduced-motion` respected. New `getChatHistory`/
+  `postChatMessage` in `lib/api.ts` hitting the already-existing
+  `GET /api/chat/history` / `POST /api/chat` (both were built with step
+  28's agent work but had no frontend consumer until now). Confirmed the
+  backend already had both memory layers the widget needed with no
+  changes required: working memory is rebuilt fresh per call
+  (`app/agent/context.py::build_agent_context` — projects' summary.md +
+  today's events + team roster + durable `memory.md`, assembled from real
+  DB/file state every turn) and session memory is the last 20
+  `ChatMessage` rows persisted to `db.sqlite` and replayed into the
+  harness as conversation history on every `/api/chat` call (`app/agent/
+  api.py::post_chat_message`) — so a multi-turn conversation genuinely
+  carries context, not just a single stateless reply. Live-verified via
+  curl against the real dev server: dev-login → empty history → sent "hi
+  Harry, what meetings do I have today?" → got a real tool-called reply
+  (`list_meetings`, correctly scoped to today's sim date) → `GET
+  /api/chat/history` showed both turns persisted in order. `npm run build`
+  clean. Headless-Chrome screenshot skipped (same documented
+  `--user-data-dir` hang as the pipeline-debug-tooling entry above) — the
+  actual integration risk (endpoint shapes, persisted history ordering)
+  was already verified directly via curl.
+
+- **Project card health/blockers/actions flowers wired up 2026-07-23**
+  (bug: cards showed permanently grey flowers even after real events/
+  claims/health were flowing — `frontend/src/components/ProjectCard.tsx`'s
+  blockers/actions flowers were hardcoded to `NO_DATA_COLOR` literals, and
+  `health` was typed as an optional field `GET /api/projects` never
+  actually returned; the "pipeline jobs don't exist yet" comment above
+  them was stale post step-24/25). Backend: `GET /api/projects` (and
+  `GET/POST/PATCH /api/portfolios[/{id}]`'s embedded project list) now
+  carry real `health`/`blockers_count`/`actions_count` per project via new
+  `app/api/projects_registry.py::_project_card_stats` — health is the
+  latest `HealthLog.final_score` from that project's OWN db.sqlite, banded
+  green/yellow/red at the same >=70/>=40 thresholds `dream.py`'s
+  `_compute_base_health_score` docstring already defines (`_health_band`,
+  no shared constant existed so this is the one place outside dream.py
+  that encodes it — flag if a third place ever needs it); blockers/actions
+  counts come from the calling manager's OWN db (`Event.type in
+  (blocker, clarification)` / `type == request`, unresolved via the same
+  `RESOLVED_UI_STATES` set `app/api/home.py`/`app/agent/select.py` already
+  use), grouped by `Event.project_ids`. New `mdb: Session =
+  Depends(get_manager_db)` param threaded through `list_projects` and all
+  four portfolio endpoints (`_portfolio_detail` now takes `mdb` too).
+  Known limitation, NOT new — inherited from the existing architecture
+  (project truth/events only exist in the OWNING manager's own db, per
+  "only the manager's pipeline writes project truth"): a project a manager
+  only *belongs to* (not owns) shows real health (health lives in the
+  project's own db, ownership-independent) but blockers/actions read 0
+  even if the owner's pipeline has real ones, same visibility gap
+  `GET /api/events?project_id=` already has for non-owners. One review-
+  caught bug before shipping: `_project_card_stats` unconditionally opened
+  `get_project_session(p.id)`, which crashed
+  (`OperationalError: no such table: health_log`) on registry rows with no
+  scaffolded `db.sqlite` — real code paths always scaffold at creation,
+  but `tests/test_portfolios.py`'s `_make_project` helper inserts a bare
+  `RegistryProject` row directly (a legitimate test shortcut, not a bug to
+  fix there); now guarded with a `project_db_path(p.id).exists()` check
+  that just leaves that project's health at `None` (same as
+  pipeline-hasn't-reached-it-yet) instead of raising.
+  Frontend: `ProjectCard.tsx` derives blocker/action flower color from the
+  real counts using the app's existing severity-color convention (>0 →
+  `SEVERITY_META[3]`/critical for blockers, `SEVERITY_META[2]`/attention
+  for actions; 0 → `ALL_CLEAR` green) instead of a flat grey constant.
+  `Projects.tsx`'s health sort option (previously `disabled` with a
+  "waits on health scoring" tooltip) is now live, worst-first
+  (`HEALTH_RANK`, unscored projects sort last, not first — "no data" isn't
+  "healthy"). Live-verified via curl against the real dev server + real
+  seeded demo data (`shivamk.iitd@outlook.com`'s 6 team projects): green/
+  yellow health bands and non-zero blocker counts came back correctly
+  differentiated per project, `null` health only on the two projects the
+  dream job genuinely hasn't scored yet. `npm run build` clean; full
+  `pytest tests/` back to the one pre-existing unrelated failure
+  (`test_scheduler.py::test_04_followup_lifecycle`).
+
+- **Chat widget: fixed stuck-top-left bug, made draggable, recolored
+  2026-07-23** (`ChatWidget.tsx`, found live during Shivam's manual
+  testing pass): the orb was rendering pinned to the top-left of the page
+  instead of floating bottom-right. Root cause: the component's own
+  inline `<style>` block declared `.orb { position: relative; ... }` (for
+  a `::after` pseudo-element highlight trick) using the SAME class the
+  button used for Tailwind's `fixed` utility — same CSS specificity, but
+  the `<style>` tag renders later in the DOM than Tailwind's stylesheet,
+  so the plain-CSS rule won the cascade and silently downgraded the
+  button from `position: fixed` back into normal document flow. Fixed by
+  never letting a class carry `position` for this element again: the
+  button's position is now driven entirely by inline `style={{ position:
+  "fixed", left, top }}` (inline always wins the cascade, so a
+  same-named/later class can never re-break it), and the gradient
+  highlight moved from a `::after` pseudo-element to a real child `<span
+  className="orb-fill">` so no CSS class ever needs to touch the button's
+  own `position` at all. While fixing it, also added the drag + recolor
+  Shivam asked for: pointer-event-based dragging (`onPointerDown/Move/Up`
+  on the button, `setPointerCapture` so the drag tracks past the
+  button's own bounds, a `DRAG_THRESHOLD`-px movement check to
+  distinguish a drag from a click so the widget doesn't pop open every
+  time you nudge it), clamped to the viewport, defaulting to bottom-right
+  on mount (`defaultPosition()`) — position is plain component state, NOT
+  persisted, so reopening the app always resets to bottom-right rather
+  than leaving the orb stranded somewhere from a previous session. The
+  chat panel now opens anchored to whichever screen quadrant the orb is
+  currently in (`openLeft`/`openTop`), so a dragged orb never pops the
+  panel off-screen. Recolored from the blue/purple brand gradient to a
+  crimson one (`#8B0000` → `#DC143C` → `#FF4D6D`) per Shivam's ask — kept
+  isolated to the orb + its header mini-orb, the panel chrome itself
+  stays brand-blue (`bg-nav`) to match the rest of the app's UI. Keyboard
+  activation (Tab + Enter/Space) needed its own `onKeyDown` handler since
+  it never goes through the pointer handlers — deliberately not `onClick`,
+  since a mouse click's synthesized `click` event firing after
+  `handlePointerUp` had already toggled `open` would otherwise immediately
+  toggle it back off. `npm run build` clean.
+
+- **Slack reader missing `:read` scopes -- `slack_poll` silently returned
+  zero for every manager 2026-07-23** (bug found on Shivam's very first
+  real manual test: Ally DM'd Sam on Slack, `slack_poll` reported
+  `fetched: 0`). Root cause: `fetch_since` (`app/integrations/slack.py`)
+  calls `conversations.list` with
+  `types=im,mpim,private_channel,public_channel` -- Slack requires the
+  matching `:read` scope for EVERY conversation type in that call, not
+  just `:history` for reading messages once you have a channel id. The
+  reader app's `USER_SCOPES` (`app/controlplane/slack_auth.py`) only ever
+  granted `im:read`, never `mpim:read`/`groups:read`/`channels:read`, so
+  `conversations.list` failed outright with `missing_scope` and
+  `fetch_since` returned `[]` before fetching a single message --
+  confirmed by calling the real Slack API directly with Sam's actual
+  stored token. Fixed: `USER_SCOPES` now includes all three missing
+  scopes; `SLACK.md` part 1 step 4 updated to match. **This requires
+  every already-connected manager to disconnect + reconnect Slack
+  reading** (Connectors page) -- Slack doesn't retroactively widen an
+  already-issued token's scope, re-consent is the only path, same as any
+  OAuth scope change. `tests/test_slack_auth.py` only asserted
+  `user_scope=` is present in the authorize URL (not its exact value), so
+  no test needed updating, but this was a real live-testing gap, not a
+  false alarm -- flagging in case a stricter scope-content test gets
+  added later. **Note for Shivam:** the reader Slack app's own **OAuth &
+  Permissions -> User Token Scopes** page (Slack's site, not this repo)
+  also needs `mpim:read`/`groups:read`/`channels:read` added -- the code
+  change alone doesn't grant new scopes on an app that hasn't had them
+  added on Slack's side; add them there first, then disconnect/reconnect
+  each manager.
+
+- **Second, deeper bug behind the same symptom: `slack_poll` reported
+  `fetched>0` but `stored: 0` even after the scope fix above, 2026-07-23**
+  (found on Shivam's very next test after the scope fix). Root cause:
+  `SlackConnector._resolve_dm_other_participant`'s fast path (and
+  `_sync_manager_slack_handle`, called from the OAuth callback) both
+  depend on `app.integrations.base.get_manager()`, which looks up the ONE
+  `TeamMember` row (per-manager db) whose `role` contains "manager" --
+  but nothing in the entire v2 provisioning flow ever created that row
+  (`app.tenancy.db.init_manager_db` only auto-seeds a "Harry" placeholder
+  row, never one for the manager themselves). So for every manager,
+  `get_manager()` returned `None`, the DM-counterpart fast path never
+  fired, normalize() fell through to a live `conversations.members` API
+  call that used the wrong token (`_api_call`'s default is
+  `self.bot_token` -- an installed pool bot's token, not the reader's own
+  user token, and the bot isn't a member of a DM between two humans
+  anyway), got nothing back, and returned `None` -- every real DM's
+  `normalize()` came back `None` ("ignored_not_a_message"), so
+  `ingest()` never stored a single one, no error anywhere. Confirmed by
+  querying `managers/<id>/db.sqlite`'s `team_members` table directly:
+  only `U_HARRY` existed, no manager row. Fixed in
+  `_sync_manager_slack_handle` (`app/controlplane/slack_auth.py`): now
+  CREATES the manager's own `TeamMember(role="manager",
+  slack_handle=authed_user.id)` row if `get_manager()` finds none,
+  instead of only updating an existing one. Deliberately NOT moved into
+  `init_manager_db`'s provisioning-time seed (tried that first, reverted
+  -- it runs at every `dev-login` too, including the test suite's shared
+  `client` fixture, and 6 existing tests across 5 files manually seed
+  their OWN manager `TeamMember` row expecting to be the only
+  role-matching one `get_manager()`'s `.first()` can find; auto-creating
+  a second one at every dev-login broke all 6). Scoping the fix to the
+  real OAuth callback path instead means it only fires exactly where the
+  bug lived, and every test that doesn't call that route is untouched --
+  confirmed via a full pytest run, back to only the one pre-existing
+  unrelated failure. This is a real backfill gap for every manager who
+  connected Slack reading before this fix (their `TeamMember` row will
+  never retroactively appear without either reconnecting, which
+  re-triggers the callback, or a manual DB fix) -- Sam's case resolved
+  itself by luck (the backend's autoreload picked up an interim draft of
+  this fix that also backfilled from `SlackReaderInstallation.user_id`,
+  before it got reverted in favor of the narrower final version), so
+  his row already exists correctly; anyone else who connected earlier
+  will need to disconnect + reconnect once more.
+
+- **Third bug, same family: outbound (manager → teammate) Slack DMs were
+  silently dropped too, 2026-07-23** (Shivam noticed after the TeamMember
+  fix landed: "outbound messages, that is manager to other person should
+  also come up"). Root cause: `_resolve_dm_other_participant`'s fast path
+  only covers the INBOUND case (`known_id != manager.slack_handle` — a
+  teammate DMed the manager); when the manager is the one who sent the
+  message, `known_id == manager.slack_handle`, so the fast path can't
+  fire and it always fell to the live `conversations.members` call —
+  which defaulted to `self.bot_token` (a pool agent's bot token). The bot
+  isn't a member of a DM between two humans, so that call came back
+  empty/errored every time, `normalize()` returned `None`, and
+  `ingest()` reported `"ignored_not_a_message"` for every manager-sent
+  DM, no error surfaced anywhere (same failure shape as the second bug
+  above, different code path). Fixed by threading `manager_id` through
+  the whole chain that previously stopped at `db`/`raw`:
+  `ChannelConnector.normalize(db, raw, manager_id=None)` (base.py
+  abstract method + `ingest()`'s call site now pass it; `manager_id` is
+  optional/unused for Outlook, added only for parity) →
+  `SlackConnector.normalize` → `_resolve_dm_other_participant(db,
+  channel_id, known_id, manager_id)`, which now resolves this manager's
+  own reader `user_token` (`resolve_reader_by_manager(manager_id)` — the
+  same token `fetch_since` already polls with, and which IS a member of
+  the manager's own DMs by construction) and uses THAT token for the
+  live `conversations.members` call instead of the bot token. No
+  `manager_id` (or no reader connected) → skip the live call and return
+  `None`, same graceful-degradation shape as before. `tests/
+  test_connectors.py`/`test_outbound.py`/`test_poll_completion.py`/
+  `test_slack_auth.py`/`test_slack_channels.py` (61 tests, the ones
+  touching this code) all still pass; full suite back to the same one
+  pre-existing unrelated failure.
+
+- **`debug.html` Messages/Claims/Events tables sorted + capped
+  2026-07-23** (Shivam, live-testing UX ask): all three tables were
+  rendering in raw DB/API order (oldest first, unbounded), so the row
+  you'd just triggered a job to create sat at the bottom of a
+  fast-growing list. New `sortDesc(arr, tsField)` helper sorts
+  newest-first and slices to `DEBUG_ROW_LIMIT = 20`; each panel's count
+  pill now reads `"20 of 47"` (shown vs. total fetched) rather than just
+  a raw count, so it's clear the table is capped, not that there are only
+  20 rows total.
+
+- **Agent couldn't open a new Slack DM ("could not open a DM with her"),
+  2026-07-23** (Shivam, live-testing: the agent replied it was blocked
+  trying to reach Ally to schedule the AI-agent-onboarding meeting).
+  Backend log showed `[slack] conversations.open failed: missing_scope`.
+  Root cause: `SlackConnector.open_dm` (the personal agent's `send_message`
+  tool path for messaging a teammate who's never DMed the bot before)
+  calls `conversations.open` with the pool bot's own bot token, which
+  needs the **`im:write`** Bot Token Scope -- never added to any pool app
+  (`SLACK.md` part 2 only ever listed `im:history`/`im:read`/`chat:write`).
+  `chat:write` alone lets a bot post into an EXISTING DM but not open a
+  brand-new one -- a separate permission. `SLACK.md` updated with the
+  missing scope. **Requires admin action, same re-consent pattern as the
+  reader-scope bug above:** on each pool app's own OAuth & Permissions
+  page (Slack's site), add `im:write` under Bot Token Scopes, then
+  **reinstall to workspace** (scope changes need reinstall, not just save)
+  -- this issues a NEW bot token, which must be copied into
+  `agents_pool.json` and re-seeded via `.venv/bin/python3 -m
+  scripts.seed_agents`. Not yet done as of this entry -- flagging so the
+  next attempt to have the agent open a new DM is expected to keep failing
+  until that's done.
+
+- **Same DM-open error persisted after the `im:write` scope fix + reinstall
+  -- real cause was agent resolution, not the scope, 2026-07-23**: even
+  after Atlas got `im:write` and a fresh bot token, `conversations.open`
+  kept 400ing with `missing_scope`. Root cause:
+  `SlackConnector._resolve_active_agent()` picked "whichever pool bot was
+  installed most recently" with NO manager scoping at all (the docstring's
+  own "single-tenant convenience" concession) -- `kettle-bot`/`nova-bot`
+  are unclaimed but were installed more recently than Atlas (the agent
+  Sam actually claimed and the only one with the scope fix), so `open_dm`
+  kept authenticating as kettle-bot's stale token instead. Confirmed by
+  querying `agents.installed_at` directly: kettle-bot/nova-bot both sort
+  above Atlas. Fixed: `_resolve_active_agent(manager_id=None)` now prefers
+  the `Agent` row actually claimed by `manager_id` (`Agent.manager_id ==
+  manager_id`) when one is given, only falling back to the old
+  most-recently-installed behavior when no manager_id is available (most
+  callers still don't have one -- see `app.outbound`'s callers, untouched,
+  same "later refactor" scope as before). `open_dm(slack_user_id,
+  manager_id=None)` now threads it through and resolves its own token
+  explicitly (no longer relies on the `self.bot_token` property, which
+  still has no manager_id path) -- `app/agent/tools.py`'s
+  `send_message_handler` (which already had `manager_id` in scope) now
+  passes it. Live-verified directly against real Slack after the fix:
+  `_resolve_active_agent(sam's manager_id)` correctly returns `atlas`, and
+  `open_dm("U0BK5U95VPU", sam's manager_id)` successfully opens a real DM
+  channel with Ally. `connector.send()`/`is_configured()`/`bot_token`
+  still aren't manager-scoped (unchanged, same pre-existing gap) -- only
+  the `open_dm` path used by the agent's `send_message` tool got fixed
+  here; if a similar wrong-bot symptom ever shows up through a different
+  send path, this is the pattern to apply there too.
+
 - **Pending steps, prompts pre-written 2026-07-23** (spec §7 implementation
   order items 8-9, not yet implemented): `prompts/step_26_lint_job.md`
   (deterministic integrity checks + optional non-blocking LLM coherence
@@ -398,15 +850,60 @@ Key concepts (from gbrain — full research index: `spec/research/gbrain_index.m
   in periodic batch sweeps. Quiet-hours gate on every autonomous ping; held
   pings fold into the 9 AM morning brief.
 
-## Simulated time (core demo trick)
+## Simulated time (RETIRED 2026-07-23 — see "Real time switch" below)
 
-Backend-authoritative anchored live clock: `(anchor_sim_time, anchor_real_time)`
-stored server-side; current sim time = anchor_sim + real elapsed. Set/advance
-endpoints; simulator top-bar widget drives it. ALL timestamp stamping, agent
-system prompts ("Current time: …IST"), and the scheduler read it. Crons are
-virtual: `scheduled_jobs` keyed on next-due sim time; advancing the clock runs
-everything that came due in the jumped interval, in order. Outbound realism:
-send endpoints mirror real Slack `chat.postMessage` / Graph `sendMail` shapes.
+Original core demo trick (kept below for history — no longer how the product
+behaves): backend-authoritative anchored live clock:
+`(anchor_sim_time, anchor_real_time)` stored server-side; current sim time =
+anchor_sim + real elapsed. Set/advance endpoints; simulator top-bar widget
+drives it. ALL timestamp stamping, agent system prompts ("Current time:
+…IST"), and the scheduler read it. Crons are virtual: `scheduled_jobs` keyed
+on next-due sim time; advancing the clock runs everything that came due in
+the jumped interval, in order. Outbound realism: send endpoints mirror real
+Slack `chat.postMessage` / Graph `sendMail` shapes.
+
+**Real time switch (2026-07-23, Shivam's explicit request):** `app.
+timeservice.now_ist()` now returns real wall-clock IST (`datetime.now(IST)`),
+full stop — it no longer reads the `(anchor_sim_time, anchor_real_time)`
+file at all. Trigger: live-testing hit a case where the simulator's sim
+clock had drifted to a stale date whose day-of-week (Sunday) made the
+quiet-hours gate correctly-but-confusingly hold an outbound message until
+"tomorrow" — prompted the question "why sim time at all," and the product
+is past the demo-storyline phase where compressing days into an 8-minute
+demo was the point. Scope of the change, deliberately narrow (Shivam chose
+"just switch the time source" over also deleting the simulator's clock
+UI): `now_ist()` is the only thing that changed. `set_time()`/`advance()`/
+`reset_to_real()`/`get_state()` and the `/api/time/set|advance|reset`
+endpoints are UNCHANGED code-wise — they still read/write the anchor file
+correctly — but are now inert for anything that matters: nothing downstream
+reads the anchor anymore, so jumping it no longer moves `now_ist()`, and by
+extension no longer moves what jobs consider "due" or what quiet-hours
+sees. The simulator UI's clock-jump widget (`app/static/index.html`) still
+renders and still succeeds when clicked; it just doesn't do anything
+real anymore — flagged here rather than removed, since deleting dead UI
+wasn't in scope for this change. `GET /api/time`'s `sim_time_ist` field now
+always reflects real time regardless of prior `/set`/`/advance` calls.
+
+**Test impact:** every test that previously called `timeservice.set_time(...)`
+to deterministically control time-dependent business logic (quiet hours,
+meeting briefs, follow-up lifecycles, health decay, scheduler catchup) broke,
+since `set_time` no longer reaches `now_ist()`. Fixed by adding a
+`set_sim_time` pytest fixture (`tests/conftest.py`) that monkeypatches
+`app.timeservice.now_ist` directly (every consumer does `from app import
+timeservice` then calls `timeservice.now_ist()`, never `from app.timeservice
+import now_ist`, so patching the module attribute reaches every call site) —
+freezes at a given datetime, then keeps flowing naturally with real elapsed
+time after that, same anchor behavior the old sim clock had. All
+`timeservice.set_time(...)` call sites in tests were mechanically swapped for
+`set_sim_time(...)` (fixture, not the retired production path);
+`test_scheduler.py::test_02_scheduler_catchup`, which drove its 3-day jump
+through the (now-inert) `/api/time/advance` HTTP endpoint, was rewritten to
+jump `set_sim_time` directly instead. `tests/test_timeservice.py` itself was
+rewritten to assert the new contract (`now_ist()` tracks real time regardless
+of `set`/`advance`/`reset` calls; those endpoints still 200 and still write
+the anchor file, but no longer affect any stamped timestamp). Full suite
+verified back to the one pre-existing unrelated failure
+(`test_scheduler.py::test_04_followup_lifecycle`) — 281 passed.
 
 
 All step prompts 4a–10 were pre-written on 2026-07-13 (before their

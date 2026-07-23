@@ -103,13 +103,18 @@ def _save_clock_unlocked(sim_dt: datetime, real_epoch: float):
 
 def now_ist() -> datetime:
     """
-    Returns the current naive IST datetime, which represents the simulated time.
+    Returns the current naive IST datetime -- real wall-clock time, not simulated.
     THE replacement for datetime.now(IST).replace(tzinfo=None)
+
+    2026-07-23: switched from the sim-clock anchor to real time per Shivam's
+    request (product is past the demo-storyline phase). The anchor file /
+    _load_clock / set_time / advance / reset_to_real and the /api/time
+    set|advance|reset endpoints are left in place (the simulator UI's clock
+    widget still calls them) but are now inert for anything that matters --
+    nothing reads the anchor to compute "now" anymore.
     """
-    with _lock:
-        sim_anchor, real_anchor = _load_clock()
-        elapsed = time.time() - real_anchor
-        return sim_anchor + timedelta(seconds=elapsed)
+    real_now_epoch = time.time()
+    return datetime.fromtimestamp(real_now_epoch, tz=pytz.UTC).astimezone(IST).replace(tzinfo=None)
 
 def now_epoch() -> float:
     """

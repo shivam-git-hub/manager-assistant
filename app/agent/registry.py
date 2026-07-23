@@ -28,9 +28,17 @@ class ToolRegistry:
         """
         return [tool.schema for tool in self._tools.values()]
 
-    def execute(self, name: str, args: Dict[str, Any], db: Session) -> str:
+    def execute(
+        self,
+        name: str,
+        args: Dict[str, Any],
+        db: Session,
+        manager_id: str = None,
+        run_context: Dict[str, Any] = None,
+    ) -> str:
         """
-        Executes a registered tool handler with the parsed arguments and DB session.
+        Executes a registered tool handler with the parsed arguments, DB session,
+        the owning manager_id, and a per-run scratch dict (todo list state etc.).
         Gracefully handles exceptions and returns "ERROR: <msg>".
         Caps the output string at 8000 characters and appends "... [truncated]" if exceeded.
         """
@@ -41,7 +49,7 @@ class ToolRegistry:
         try:
             # We call the handler with db session and unpack args
             # Using keyword arguments so that python maps it properly
-            result = tool.handler(db=db, **args)
+            result = tool.handler(db=db, manager_id=manager_id, run_context=run_context, **args)
             
             # Convert result to string
             if isinstance(result, (dict, list)):

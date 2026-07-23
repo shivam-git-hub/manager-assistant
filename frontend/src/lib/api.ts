@@ -226,6 +226,9 @@ export interface ProjectSummary {
   kind: "team" | "personal";
   is_manager: boolean;
   member_count: number;
+  health: "green" | "yellow" | "red" | null;
+  blockers_count: number;
+  actions_count: number;
 }
 
 export interface ProjectMemberDetail {
@@ -235,7 +238,7 @@ export interface ProjectMemberDetail {
   role: string | null;
 }
 
-export interface ProjectDetail extends Omit<ProjectSummary, "member_count"> {
+export interface ProjectDetail extends Omit<ProjectSummary, "member_count" | "health" | "blockers_count" | "actions_count"> {
   manager_user_id: string;
   supervisors: string[];
   members: ProjectMemberDetail[];
@@ -419,4 +422,22 @@ export interface Employee {
 
 export function getEmployees(): Promise<Employee[]> {
   return request("/api/employees");
+}
+
+// ── Chat (Harry, the personal agent) ─────────────────────
+
+export interface ChatMessage {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  tool_trace?: Record<string, unknown>[] | null;
+  created_at: string;
+}
+
+export function getChatHistory(limit = 50): Promise<ChatMessage[]> {
+  return request(`/api/chat/history?limit=${limit}`);
+}
+
+export function postChatMessage(message: string): Promise<{ reply: string; tool_trace: Record<string, unknown>[]; created_at: string }> {
+  return request("/api/chat", { method: "POST", body: JSON.stringify({ message }) });
 }
