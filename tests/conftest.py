@@ -61,9 +61,24 @@ def client(clean_controlplane_db):
 
     yield test_client
 
+    # Tests routinely do *additional* dev-logins beyond this fixture's own
+    # (e.g. alice/bob/carol/dave in test_auth.py, "other manager" logins for
+    # cross-manager scoping tests) -- each creates its own manager + scaffold
+    # dir. Cleaning up only test_client.manager_id leaked hundreds of
+    # managers/<id>/ directories over time. Query every manager row that
+    # exists in THIS test's controlplane db (about to be wiped by
+    # clean_controlplane_db's own teardown anyway) and remove all of their
+    # scaffold dirs, not just the first one.
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager
     from app.tenancy.paths import manager_dir
 
-    shutil.rmtree(manager_dir(test_client.manager_id), ignore_errors=True)
+    db = ControlPlaneSessionLocal()
+    try:
+        manager_ids = [m.id for m in db.query(Manager.id).all()]
+    finally:
+        db.close()
+    for manager_id in manager_ids:
+        shutil.rmtree(manager_dir(manager_id), ignore_errors=True)
 
 
 @pytest.fixture(scope="function")

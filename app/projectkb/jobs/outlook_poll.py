@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def run(db, manager_id: str) -> dict:
     """Outlook's arrival cadence -- distinct from the four KB extraction
-    jobs. Unlike Slack (push), Graph has no simple webhook, so this polls
+    jobs. Graph has no simple webhook, so this polls
     for anything received since the last poll and runs it through the same
     shared ingest() a webhook would use.
 
