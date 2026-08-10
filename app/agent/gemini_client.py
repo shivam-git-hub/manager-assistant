@@ -33,8 +33,16 @@ def sanitize_gemini_schema(schema: Any) -> Any:
                 continue
             if k == "properties" and isinstance(v, dict):
                 out[k] = {pname: sanitize_gemini_schema(pv) for pname, pv in v.items()}
+            elif k == "enum" and isinstance(v, list):
+                # Ensure all enum values are strings since Gemini API requires string enums
+                out[k] = [str(x) for x in v]
             else:
                 out[k] = sanitize_gemini_schema(v)
+        
+        # If the property has an enum, its type must be "string" for Gemini compatibility
+        if "enum" in out and out.get("type") in ("integer", "number", "boolean"):
+            out["type"] = "string"
+            
         return out
     return schema
 
@@ -67,12 +75,15 @@ def messages_to_gemini_contents(messages: List[Dict[str, Any]]) -> tuple[List[Di
         parts = []
         if "tool_calls" in msg and msg["tool_calls"]:
             for tc in msg["tool_calls"]:
-                parts.append({
+                part_item = {
                     "functionCall": {
                         "name": tc["function"]["name"],
                         "args": json_parse_if_string(tc["function"]["arguments"])
                     }
-                })
+                }
+                if "thought_signature" in tc and tc["thought_signature"]:
+                    part_item["thoughtSignature"] = tc["thought_signature"]
+                parts.append(part_item)
         elif role == "tool":
             # Gemini's functionResponse.response must be a STRUCT (object), never a
             # list/scalar. Tools that return a JSON array (e.g. get_conflicts) would
@@ -262,7 +273,8 @@ class GeminiClient:
                 tool_calls.append({
                     "id": f"call_{uuid.uuid4().hex[:12]}",
                     "name": fc["name"],
-                    "arguments": fc.get("args") or {}
+                    "arguments": fc.get("args") or {},
+                    "thought_signature": part.get("thoughtSignature")
                 })
                 
         # Standardize finish reason

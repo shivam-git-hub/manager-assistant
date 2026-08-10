@@ -67,7 +67,12 @@ def _echo_assistant_turn(content: Optional[str], tool_calls: List[Dict[str, Any]
         "role": "assistant",
         "content": content or "",
         "tool_calls": [
-            {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": tc["arguments"]}}
+            {
+                "id": tc["id"],
+                "type": "function",
+                "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                "thought_signature": tc.get("thought_signature"),
+            }
             for tc in tool_calls
         ],
     }

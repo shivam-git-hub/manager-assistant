@@ -592,45 +592,54 @@ async def slack_webhook(request: Request):
         return {"status": "ok", "detail": "no event in payload"}
 
     from app.tenancy.db import get_manager_session
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id, get_employee_by_slack_id
 
     db = get_manager_session(agent.manager_id)
     try:
-        msg, ingest_status = ingest(connector, event, db, agent.manager_id)
-        # Captured now, before any further commits on this session --
-        # handle_agent_dm below runs its own db.commit() calls (via
-        # run_agent's tool handlers), which -- SQLAlchemy's expire_on_commit
-        # default -- expire EVERY object in the session, not just the ones
-        # those commits touched. Reading msg's fields after that (or after
-        # db.close() below) would raise DetachedInstanceError.
-        message_id = msg.platform_msg_id if ingest_status == "ok" else None
-        sender_mapped = msg.sender_mapped_name if ingest_status == "ok" else None
-
-        if (
-            ingest_status == "ok"
+        # Determine if this is a 1:1 direct message to the agent from a human
+        is_im_message = (
+            event.get("type") == "message"
             and event.get("channel_type") == "im"
             and not event.get("bot_id")
-            and "pytest" not in sys.modules
-        ):
-            # A human DMed the bot directly -- reply live through the agent
-            # harness. `bot_id` is present on any bot/app-
-            # authored message event (including our own replies below), so
-            # this guard is what stops an infinite reply loop -- more
-            # reliable than comparing against Agent.user_id, which the
-            # current install flow (see Agent's docstring) never populates.
-            # Skipped under pytest -- same convention as
-            # SlackConnector._skip_live_calls/verify_signature elsewhere in
-            # this file -- so the general test suite never makes a real
-            # Gemini call; agent-harness behavior for this path is covered
-            # by tests/test_agent_heartbeat_job.py's fake-client pattern
-            # and dedicated direct_contact tests, not a live network call.
-            try:
-                from app.agent.direct_contact import handle_agent_dm
+            and not event.get("subtype")
+        )
 
-                handle_agent_dm(db, agent.manager_id, event.get("channel"), event.get("text", ""))
-            except Exception:
-                logger.exception(f"[slack] webhook: agent DM reply failed for manager={agent.manager_id}")
+        if is_im_message and "pytest" not in sys.modules:
+            # Resolve manager and sender Slack IDs to route correctly
+            cp_db = ControlPlaneSessionLocal()
+            try:
+                manager_emp = get_employee_by_manager_id(cp_db, agent.manager_id)
+                manager_slack_id = manager_emp.slack_id if manager_emp else None
+                
+                sender_slack_id = event.get("user")
+                
+                if manager_slack_id and sender_slack_id == manager_slack_id:
+                    # Case A: Manager DMed the COS Agent. Run COS Agent chat loop.
+                    logger.info(f"[slack] Manager DMed the COS agent. Processing directly (bypass unified_messages).")
+                    from app.agent.cos_agent import run_cos_agent
+                    run_cos_agent(db, agent.manager_id, event.get("text", ""), channel="slack")
+                    return {"status": "ok", "detail": "manager_cos_chat_handled"}
+                else:
+                    # Case B: Other team member DMed our bot. This is a reply to an active FollowupAgent.
+                    sender_emp = get_employee_by_slack_id(cp_db, sender_slack_id)
+                    if sender_emp:
+                        logger.info(f"[slack] Team member {sender_emp.name} replied to followup. Processing (bypass unified_messages).")
+                        from app.agent.cos_agent import handle_team_member_reply
+                        handle_team_member_reply(db, agent.manager_id, sender_emp.id, event.get("text", ""), source_channel="slack")
+                        return {"status": "ok", "detail": "team_member_followup_handled"}
+                    else:
+                        logger.warning(f"[slack] Received DM from unrecognized Slack ID {sender_slack_id}, ignoring.")
+                        return {"status": "ignored", "detail": "unrecognized_sender"}
+            finally:
+                cp_db.close()
+
+        # Case C: Not a direct message to our bot. Run normal ingestion flow.
+        msg, ingest_status = ingest(connector, event, db, agent.manager_id)
+        message_id = msg.platform_msg_id if ingest_status == "ok" else None
+        sender_mapped = msg.sender_mapped_name if ingest_status == "ok" else None
     finally:
         db.close()
+
     logger.debug(f"[slack] webhook ingest result: {ingest_status}")
 
     if ingest_status == "ignored_duplicate":

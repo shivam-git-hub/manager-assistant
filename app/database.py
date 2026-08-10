@@ -219,3 +219,49 @@ class AgentActionLog(Base):
     detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
 
+
+class Workflow(Base):
+    __tablename__ = "workflows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    task_type: Mapped[str] = mapped_column(String(50))  # followup | morning_brief | custom
+    cron_expression: Mapped[str] = mapped_column(String(50))  # e.g. "0 9 * * *" or "30m"
+    config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON-serialized params
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | paused
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist(), onupdate=lambda: timeservice.now_ist())
+
+
+class CronJob(Base):
+    __tablename__ = "cron_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workflow_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("workflows.id"), nullable=True)
+    task_type: Mapped[str] = mapped_column(String(50))  # followup | morning_brief | reminder | custom
+    prompt: Mapped[str] = mapped_column(Text)
+    schedule: Mapped[str] = mapped_column(String(100))  # e.g., "0 9 * * *" or timestamp ISO
+    is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | running | completed | failed | paused
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+
+
+class FollowupAgent(Base):
+    __tablename__ = "followup_agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recipient_employee_id: Mapped[str] = mapped_column(String(36))  # Who we are contacting
+    scoped_project_ids: Mapped[str] = mapped_column(Text)  # JSON-serialized list of projects they can access
+    instructions: Mapped[str] = mapped_column(Text)  # Instructions from the COS agent
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | completed | reported | no_response
+    last_message_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_message_received_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    chat_history: Mapped[str] = mapped_column(Text, default="[]")  # JSON-serialized chat history with the recipient
+    cos_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Context/conversation with COS
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist(), onupdate=lambda: timeservice.now_ist())
+
+

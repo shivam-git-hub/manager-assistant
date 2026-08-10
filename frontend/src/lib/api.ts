@@ -452,3 +452,85 @@ export function getChatHistory(limit = 50): Promise<ChatMessage[]> {
 export function postChatMessage(message: string): Promise<{ reply: string; tool_trace: Record<string, unknown>[]; created_at: string }> {
   return request("/api/chat", { method: "POST", body: JSON.stringify({ message }) });
 }
+
+
+// ── Agent Workflows, Crons & Followups ───────────────────
+
+export interface Workflow {
+  id: number;
+  name: string;
+  description?: string;
+  task_type: string;
+  cron_expression: string;
+  status: string;
+  created_at: string;
+}
+
+export interface Followup {
+  id: number;
+  recipient_employee_id: string;
+  recipient_name: string;
+  scoped_projects: string[];
+  instructions: string;
+  status: string;
+  last_message_sent_at?: string;
+  last_message_received_at?: string;
+  report_summary?: string;
+}
+
+export interface CronJobInfo {
+  id: number;
+  workflow_id?: number;
+  task_type: string;
+  prompt: string;
+  schedule: string;
+  is_recurring: boolean;
+  next_run_at: string;
+  status: string;
+}
+
+export interface AgentAction {
+  id: string;
+  action_type: string;
+  ref_key: string;
+  detail: string;
+  created_at: string;
+}
+
+export function listWorkflows(): Promise<Workflow[]> {
+  return request("/api/agent/workflows");
+}
+
+export function createWorkflow(payload: {
+  name: string;
+  cron_expression: string;
+  prompt: string;
+  description?: string;
+  task_type?: string;
+}): Promise<any> {
+  return request("/api/agent/workflows", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function toggleWorkflow(id: number): Promise<{ id: number; status: string }> {
+  return request(`/api/agent/workflows/${id}/toggle`, { method: "POST" });
+}
+
+export function deleteWorkflow(id: number): Promise<any> {
+  return request(`/api/agent/workflows/${id}`, { method: "DELETE" });
+}
+
+export function listFollowups(): Promise<Followup[]> {
+  return request("/api/agent/followups");
+}
+
+export function listCrons(): Promise<CronJobInfo[]> {
+  return request("/api/agent/crons");
+}
+
+export function listAgentActions(): Promise<AgentAction[]> {
+  return request("/api/agent/actions");
+}
+

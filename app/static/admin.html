@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pulse.ai — Control Center & Admin Portal</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #111111;
+    --text-muted: #666666;
+    --border: #e4e4e7;
+    --border-hover: #d4d4d8;
+    --accent: #18181b;
+    --accent-hover: #27272a;
+    --surface: #fafafa;
+    --error: #ef4444;
+    --success: #22c55e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--text);
+    background-color: var(--bg);
+    line-height: 1.5;
+    padding-bottom: 80px;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 24px;
+  }
+
+  /* Header & Identity Banner */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 24px;
+  }
+  .brand h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  .brand p {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .session-info {
+    text-align: right;
+    font-size: 13px;
+  }
+  .session-info .manager-name {
+    font-weight: 600;
+  }
+  .session-info .manager-email {
+    color: var(--text-muted);
+  }
+
+  /* Navigation Tabs */
+  .tabs {
+    display: flex;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+    padding-bottom: 1px;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .tab-btn:hover {
+    color: var(--text);
+  }
+  .tab-btn.active {
+    color: var(--text);
+    border-bottom-color: var(--text);
+    font-weight: 600;
+  }
+
+  .tab-content {
+    display: none;
+  }
+  .tab-content.active {
+    display: block;
+  }
+
+  /* Layout Utilities */
+  section {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    letter-spacing: -0.01em;
+  }
+  .flex-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .flex-header h2 { margin-bottom: 0; }
+
+  /* Buttons */
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  button:hover {
+    background: var(--surface);
+    border-color: var(--border-hover);
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+  }
+  button.primary:hover {
+    background: var(--accent-hover);
+  }
+  button.danger {
+    color: var(--error);
+    border-color: var(--border);
+  }
+  button.danger:hover {
+    background: #fef2f2;
+    border-color: #fca5a5;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Grid System */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  /* Forms & Inputs */
+  .form-group {
+    margin-bottom: 16px;
+  }
+  .form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    transition: border-color 0.15s;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    border-color: #a1a1aa;
+    outline: none;
+  }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 12px;
+    background: var(--surface);
+  }
+  tr:hover td {
+    background-color: var(--surface);
+  }
+  .actions-cell {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+
+  /* Micro badges / pills */
+  .badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .badge.manager { background: #eff6ff; color: #1e40af; }
+  .badge.teammate { background: #f4f4f5; color: #52525b; }
+  .badge.active { background: #f0fdf4; color: #166534; }
+  .badge.paused { background: #fef2f2; color: #991b1b; }
+
+  /* Monospace Output boxes */
+  .output-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    color: #333;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+
+  /* Full-width editor layout */
+  .editor-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-top: 16px;
+  }
+  .editor-panel {
+    display: flex;
+    flex-direction: column;
+  }
+  .editor-panel h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+  .editor-panel textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    height: 480px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fafafa;
+    resize: none;
+  }
+  .editor-status {
+    font-size: 12px;
+    margin-top: 6px;
+    min-height: 18px;
+  }
+  .editor-status.success { color: var(--success); }
+  .editor-status.error { color: var(--error); }
+
+  /* Modal Dialog */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--border);
+    width: 100%;
+    max-width: 500px;
+    padding: 24px;
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .modal-header h3 { font-size: 16px; font-weight: 600; }
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 24px;
+  }
+
+  /* Pipeline Log visualization */
+  .job-card {
+    display: grid;
+    grid-template-columns: 200px 140px 100px 1fr;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 0;
+  }
+  .job-card:last-child { border-bottom: none; }
+  .job-card .job-name { font-weight: 600; font-size: 13.5px; }
+  .job-card .job-schedule { color: var(--text-muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Identity & Brand -->
+  <header>
+    <div class="brand">
+      <h1>Pulse.ai Control Center</h1>
+      <p>Asynchronous Pipeline & Tenant Management Console</p>
+    </div>
+    <div class="session-info" id="session-identity">
+      <span class="manager-name">Loading Profile...</span><br>
+      <span class="manager-email">Checking identity</span>
+    </div>
+  </header>
+
+  <!-- Tabs Navigation -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab(event, 'jobs-tab')">Jobs & Pipelines</button>
+    <button class="tab-btn" onclick="switchTab(event, 'employees-tab')">Employees (ControlPlane)</button>
+    <button class="tab-btn" onclick="switchTab(event, 'teammembers-tab')">Team Members (Tenant)</button>
+    <button class="tab-btn" onclick="switchTab(event, 'state-tab')">Agents & Crons</button>
+    <button class="tab-btn" onclick="switchTab(event, 'files-tab')">Markdown Memory</button>
+  </div>
+
+  <!-- Tab 1: Jobs & Pipelines -->
+  <div id="jobs-tab" class="tab-content active">
+    <section>
+      <div class="flex-header">
+        <h2>Manual Job Triggers</h2>
+        <button onclick="loadJobs()">Refresh Cadence</button>
+      </div>
+      <div id="jobs-list">
+        <!-- Job Rows populated via JS -->
+      </div>
+    </section>
+  </div>
+
+  <!-- Tab 2: Employees (ControlPlane) -->
+  <div id="employees-tab" class="tab-content">
+    <section>
+      <div class="flex-header">
+        <h2>Global Employee Directory (ControlPlane DB)</h2>
+        <button class="primary" onclick="openEmployeeModal()">+ Create Employee</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Slack ID</th>
+            <th>Manager?</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="employees-table-body">
+          <!-- Rows -->
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- Tab 3: Team Members (Tenant) -->
+  <div id="teammembers-tab" class="tab-content">
+    <section>
+      <div class="flex-header">
+        <h2>Teammate Backlog Sync (Tenant DB)</h2>
+        <button class="primary" onclick="openTeamMemberModal()">+ Add Team Member</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Slack Handle</th>
+            <th>Outlook Email</th>
+            <th>Timezone</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="teammembers-table-body">
+          <!-- Rows -->
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- Tab 4: Agents & Crons (Tenant State) -->
+  <div id="state-tab" class="tab-content">
+    <div class="grid-2">
+      <!-- Active Workflows & Crons -->
+      <section>
+        <h2>Active Crons & Workflows</h2>
+        <div style="margin-bottom: 20px;">
+          <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted);">Workflows</h3>
+          <table style="font-size: 12px;">
+            <thead>
+              <tr><th>Name</th><th>Task Type</th><th>Cron</th><th>Status</th></tr>
+            </thead>
+            <tbody id="state-workflows-body"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted);">Scheduled Cron Runs</h3>
+          <table style="font-size: 12px;">
+            <thead>
+              <tr><th>Task Type</th><th>Prompt</th><th>Schedule</th><th>Next Run</th><th>Status</th></tr>
+            </thead>
+            <tbody id="state-cronjobs-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Active Followup Agents -->
+      <section>
+        <h2>Active Followup Agents (Asynchronous DMs)</h2>
+        <div id="followup-agents-list" style="display:flex; flex-direction:column; gap:16px;">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Tab 5: Markdown Memory Editor -->
+  <div id="files-tab" class="tab-content">
+    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+      <button class="primary" onclick="saveFile('user.md')">Save user.md</button>
+      <button class="primary" onclick="saveFile('memory.md')">Save memory.md</button>
+      <button onclick="loadFiles()">Reload Files</button>
+    </div>
+
+    <div class="editor-container">
+      <div class="editor-panel">
+        <h3>Manager Profile (user.md)</h3>
+        <textarea id="editor-user-md" placeholder="Enter user profile details (e.g. goals, timezone, constraints)..."></textarea>
+        <div class="editor-status" id="status-user-md"></div>
+      </div>
+      <div class="editor-panel">
+        <h3>Persistent Memory (memory.md)</h3>
+        <textarea id="editor-memory-md" placeholder="Enter long-term persistent memories..."></textarea>
+        <div class="editor-status" id="status-memory-md"></div>
+      </div>
+    </div>
+
+    <section style="margin-top: 24px;">
+      <h2>Events Log (events.md) <span class="badge teammate">Read-only</span></h2>
+      <div id="editor-events-md" class="output-box" style="height: 250px; max-height: none;">(empty)</div>
+    </section>
+  </div>
+</div>
+
+<!-- Employee Modal -->
+<div class="modal-backdrop" id="employee-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="employee-modal-title">Create Employee</h3>
+      <button onclick="closeEmployeeModal()" style="border:none; background:none; font-size:16px;">&times;</button>
+    </div>
+    <form id="employee-form" onsubmit="saveEmployee(event)">
+      <div class="form-group">
+        <label for="emp-id">Employee ID (UUID or Unique Key)</label>
+        <input type="text" id="emp-id" required placeholder="e.g. e1">
+      </div>
+      <div class="form-group">
+        <label for="emp-name">Name</label>
+        <input type="text" id="emp-name" required placeholder="e.g. Shivam Kanojia">
+      </div>
+      <div class="form-group">
+        <label for="emp-email">Email</label>
+        <input type="email" id="emp-email" required placeholder="e.g. shivam@co.com">
+      </div>
+      <div class="form-group">
+        <label for="emp-role">Role</label>
+        <input type="text" id="emp-role" placeholder="e.g. Engineering Lead">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="emp-slack">Slack User ID</label>
+          <input type="text" id="emp-slack" placeholder="e.g. U0BJAJB3AJF">
+        </div>
+        <div class="form-group">
+          <label for="emp-manager">Is Manager?</label>
+          <select id="emp-manager">
+            <option value="false">No</option>
+            <option value="true">Yes</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" onclick="closeEmployeeModal()">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Team Member Modal -->
+<div class="modal-backdrop" id="teammember-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="teammember-modal-title">Add Team Member</h3>
+      <button onclick="closeTeamMemberModal()" style="border:none; background:none; font-size:16px;">&times;</button>
+    </div>
+    <form id="teammember-form" onsubmit="saveTeamMember(event)">
+      <div class="form-group">
+        <label for="tm-id">Member ID</label>
+        <input type="text" id="tm-id" required placeholder="e.g. U_ALICE">
+      </div>
+      <div class="form-group">
+        <label for="tm-name">Name</label>
+        <input type="text" id="tm-name" required placeholder="e.g. Alice">
+      </div>
+      <div class="form-group">
+        <label for="tm-role">Role</label>
+        <input type="text" id="tm-role" required placeholder="e.g. Developer">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tm-slack">Slack Handle</label>
+          <input type="text" id="tm-slack" placeholder="e.g. U_ALICE">
+        </div>
+        <div class="form-group">
+          <label for="tm-email">Outlook Email</label>
+          <input type="email" id="tm-email" placeholder="e.g. alice@co.com">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="tm-timezone">Timezone</label>
+        <input type="text" id="tm-timezone" value="Asia/Kolkata">
+      </div>
+      <div class="modal-footer">
+        <button type="button" onclick="closeTeamMemberModal()">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  // Resolve gateway path adjustments
+  const apiPrefix = window.location.pathname.includes('/api/manager-assistant/') 
+    ? '/api/manager-assistant' 
+    : '';
+
+  const JOB_LABELS = {
+    outlook_poll: "Outlook Mail Sync",
+    slack_poll: "Slack Conversation Ingestion",
+    ingestion: "Unified Claims Ingestion Pipeline",
+    heartbeat: "Durable Knowledge Base Synthesis",
+    dream: "Long-term Memory Compactor",
+    lint: "Coherence Auditor & Health Linter",
+    agent_heartbeat: "Multi-Agent Followup Dispatcher",
+  };
+
+  // State
+  let editingEmployeeId = null;
+  let editingTeamMemberId = null;
+
+  async function api(path, opts = {}) {
+    const res = await fetch(`${apiPrefix}${path}`, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...opts
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`${path} -> ${res.status}: ${txt}`);
+    }
+    return res.json();
+  }
+
+  // Auth / Page Kickoff
+  async function checkAuth() {
+    try {
+      const me = await api("/api/auth/me");
+      document.getElementById("session-identity").innerHTML = `
+        <span class="manager-name">${me.name}</span><br>
+        <span class="manager-email">${me.email}</span>
+      `;
+      return true;
+    } catch (e) {
+      document.getElementById("session-identity").innerHTML = `
+        <span class="manager-name" style="color:var(--error);">Unauthenticated</span><br>
+        <span class="manager-email"><a href="/api/manager-assistant-dashboard/" style="text-decoration:underline;">Click to Login</a></span>
+      `;
+      return false;
+    }
+  }
+
+  // Switch Tab layout
+  function switchTab(evt, tabId) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    evt.currentTarget.classList.add('active');
+
+    // Tab-specific loads
+    if (tabId === 'jobs-tab') loadJobs();
+    if (tabId === 'employees-tab') loadEmployees();
+    if (tabId === 'teammembers-tab') loadTeamMembers();
+    if (tabId === 'state-tab') loadTenantState();
+    if (tabId === 'files-tab') loadFiles();
+  }
+
+  // --- TAB 1: Jobs & Manual Triggering ---
+  async function loadJobs() {
+    try {
+      const schedule = await api("/api/dev/jobs");
+      const el = document.getElementById("jobs-list");
+      el.innerHTML = "";
+      for (const name of Object.keys(JOB_LABELS)) {
+        const interval = schedule[name] ? schedule[name].interval_minutes : "?";
+        const row = document.createElement("div");
+        row.className = "job-card";
+        row.innerHTML = `
+          <span class="job-name">${JOB_LABELS[name]}</span>
+          <span class="job-schedule">every ${interval} min</span>
+          <div><button data-job="${name}" onclick="runJob('${name}')">Trigger Now</button></div>
+          <div class="output-box" id="result-${name}" style="height:38px; padding:6px; font-size:11px;">(idle)</div>
+        `;
+        el.appendChild(row);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function runJob(name) {
+    const btn = document.querySelector(`button[data-job="${name}"]`);
+    const resultEl = document.getElementById(`result-${name}`);
+    btn.disabled = true;
+    resultEl.textContent = "Processing active background thread...";
+    try {
+      const res = await api(`/api/dev/jobs/${name}/run`, { method: "POST" });
+      resultEl.textContent = JSON.stringify(res.result, null, 2);
+    } catch (e) {
+      resultEl.textContent = "ERROR: " + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // --- TAB 2: Employee CRUD (ControlPlane) ---
+  async function loadEmployees() {
+    try {
+      const emps = await api("/api/dev/employees");
+      const tbody = document.getElementById("employees-table-body");
+      tbody.innerHTML = "";
+      emps.forEach(e => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><code>${e.id}</code></td>
+          <td style="font-weight:600;">${e.name}</td>
+          <td>${e.email}</td>
+          <td>${e.role || '-'}</td>
+          <td><code>${e.slack_id || '-'}</code></td>
+          <td><span class="badge ${e.is_manager ? 'manager' : 'teammate'}">${e.is_manager ? 'Manager' : 'Teammate'}</span></td>
+          <td class="actions-cell">
+            <button onclick="editEmployee(${JSON.stringify(e).replace(/"/g, '&quot;')})">Edit</button>
+            <button class="danger" onclick="deleteEmployee('${e.id}')">Delete</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function openEmployeeModal(data = null) {
+    const modal = document.getElementById("employee-modal");
+    const title = document.getElementById("employee-modal-title");
+    modal.style.display = "flex";
+    if (data) {
+      title.textContent = "Update Employee";
+      editingEmployeeId = data.id;
+      document.getElementById("emp-id").value = data.id;
+      document.getElementById("emp-id").disabled = true;
+      document.getElementById("emp-name").value = data.name;
+      document.getElementById("emp-email").value = data.email;
+      document.getElementById("emp-role").value = data.role || "";
+      document.getElementById("emp-slack").value = data.slack_id || "";
+      document.getElementById("emp-manager").value = data.is_manager ? "true" : "false";
+    } else {
+      title.textContent = "Create Employee";
+      editingEmployeeId = null;
+      document.getElementById("employee-form").reset();
+      document.getElementById("emp-id").disabled = false;
+    }
+  }
+
+  function closeEmployeeModal() {
+    document.getElementById("employee-modal").style.display = "none";
+  }
+
+  async function saveEmployee(evt) {
+    evt.preventDefault();
+    const payload = {
+      id: document.getElementById("emp-id").value,
+      name: document.getElementById("emp-name").value,
+      email: document.getElementById("emp-email").value,
+      role: document.getElementById("emp-role").value || null,
+      slack_id: document.getElementById("emp-slack").value || null,
+      is_manager: document.getElementById("emp-manager").value === "true"
+    };
+
+    try {
+      if (editingEmployeeId) {
+        await api(`/api/dev/employees/${editingEmployeeId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await api("/api/dev/employees", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+      closeEmployeeModal();
+      loadEmployees();
+    } catch (e) {
+      alert("Error saving employee: " + e.message);
+    }
+  }
+
+  function editEmployee(emp) {
+    openEmployeeModal(emp);
+  }
+
+  async function deleteEmployee(id) {
+    if (!confirm(`Are you sure you want to delete employee '${id}'?`)) return;
+    try {
+      await api(`/api/dev/employees/${id}`, { method: "DELETE" });
+      loadEmployees();
+    } catch (e) {
+      alert("Error deleting employee: " + e.message);
+    }
+  }
+
+  // --- TAB 3: TeamMember CRUD (Tenant) ---
+  async function loadTeamMembers() {
+    try {
+      const members = await api("/api/dev/teammembers");
+      const tbody = document.getElementById("teammembers-table-body");
+      tbody.innerHTML = "";
+      members.forEach(m => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><code>${m.id}</code></td>
+          <td style="font-weight:600;">${m.name}</td>
+          <td>${m.role}</td>
+          <td><code>${m.slack_handle || '-'}</code></td>
+          <td>${m.outlook_email || '-'}</td>
+          <td><span class="badge teammate">${m.timezone}</span></td>
+          <td class="actions-cell">
+            <button onclick="editTeamMember(${JSON.stringify(m).replace(/"/g, '&quot;')})">Edit</button>
+            <button class="danger" onclick="deleteTeamMember('${m.id}')">Delete</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  function openTeamMemberModal(data = null) {
+    const modal = document.getElementById("teammember-modal");
+    const title = document.getElementById("teammember-modal-title");
+    modal.style.display = "flex";
+    if (data) {
+      title.textContent = "Update Team Member";
+      editingTeamMemberId = data.id;
+      document.getElementById("tm-id").value = data.id;
+      document.getElementById("tm-id").disabled = true;
+      document.getElementById("tm-name").value = data.name;
+      document.getElementById("tm-role").value = data.role;
+      document.getElementById("tm-slack").value = data.slack_handle || "";
+      document.getElementById("tm-email").value = data.outlook_email || "";
+      document.getElementById("tm-timezone").value = data.timezone || "Asia/Kolkata";
+    } else {
+      title.textContent = "Add Team Member";
+      editingTeamMemberId = null;
+      document.getElementById("teammember-form").reset();
+      document.getElementById("tm-id").disabled = false;
+    }
+  }
+
+  function closeTeamMemberModal() {
+    document.getElementById("teammember-modal").style.display = "none";
+  }
+
+  async function saveTeamMember(evt) {
+    evt.preventDefault();
+    const payload = {
+      id: document.getElementById("tm-id").value,
+      name: document.getElementById("tm-name").value,
+      role: document.getElementById("tm-role").value,
+      slack_handle: document.getElementById("tm-slack").value || null,
+      outlook_email: document.getElementById("tm-email").value || null,
+      timezone: document.getElementById("tm-timezone").value || "Asia/Kolkata"
+    };
+
+    try {
+      if (editingTeamMemberId) {
+        await api(`/api/dev/teammembers/${editingTeamMemberId}`, {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await api("/api/dev/teammembers", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+      }
+      closeTeamMemberModal();
+      loadTeamMembers();
+    } catch (e) {
+      alert("Error saving team member: " + e.message);
+    }
+  }
+
+  function editTeamMember(m) {
+    openTeamMemberModal(m);
+  }
+
+  async function deleteTeamMember(id) {
+    if (!confirm(`Are you sure you want to delete teammate '${id}'?`)) return;
+    try {
+      await api(`/api/dev/teammembers/${id}`, { method: "DELETE" });
+      loadTeamMembers();
+    } catch (e) {
+      alert("Error deleting teammate: " + e.message);
+    }
+  }
+
+  // --- TAB 4: Agents, Workflows & Scheduled Crons ---
+  async function loadTenantState() {
+    try {
+      const state = await api("/api/dev/tenant-state");
+      
+      // Workflows
+      const wBody = document.getElementById("state-workflows-body");
+      wBody.innerHTML = "";
+      state.workflows.forEach(w => {
+        wBody.innerHTML += `
+          <tr>
+            <td><strong>${w.name}</strong><br><small>${w.description || ''}</small></td>
+            <td><code>${w.task_type}</code></td>
+            <td><code>${w.cron_expression}</code></td>
+            <td><span class="badge ${w.status === 'active' ? 'active' : 'paused'}">${w.status}</span></td>
+          </tr>
+        `;
+      });
+
+      // CronJobs
+      const cBody = document.getElementById("state-cronjobs-body");
+      cBody.innerHTML = "";
+      state.cron_jobs.forEach(c => {
+        cBody.innerHTML += `
+          <tr>
+            <td><code>${c.task_type}</code></td>
+            <td title="${c.prompt}">${c.prompt}</td>
+            <td><code>${c.schedule}</code></td>
+            <td><small>${c.next_run_at}</small></td>
+            <td><span class="badge ${c.status === 'pending' ? 'active' : 'teammate'}">${c.status}</span></td>
+          </tr>
+        `;
+      });
+
+      // Active Followup Agents
+      const fList = document.getElementById("followup-agents-list");
+      fList.innerHTML = "";
+      if (state.followup_agents.length === 0) {
+        fList.innerHTML = `<p style="color:var(--text-muted); font-size:13px; font-style:italic;">No followup agents currently active in this tenant.</p>`;
+      } else {
+        state.followup_agents.forEach(f => {
+          let parsedHistory = [];
+          try {
+            parsedHistory = JSON.parse(f.chat_history);
+          } catch(err) {}
+
+          let historyHtml = parsedHistory.map(msg => `
+            <div style="margin-bottom: 6px; font-size: 11px;">
+              <strong style="color: ${msg.role === 'user' ? '#0284c7' : '#0f172a'}">${msg.role.toUpperCase()}:</strong>
+              <span>${msg.content}</span> <small style="color:var(--text-muted); float:right;">${msg.timestamp || ''}</small>
+            </div>
+          `).join("");
+
+          fList.innerHTML += `
+            <div style="border: 1px solid var(--border); padding: 16px; border-radius: 6px; font-size: 13px;">
+              <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                <strong>Agent #${f.id} — Recipient: <code>${f.recipient_employee_id}</code></strong>
+                <span class="badge ${f.status === 'active' ? 'active' : 'teammate'}">${f.status}</span>
+              </div>
+              <p style="margin-bottom:8px;"><strong>Scoped Projects:</strong> <code>${f.scoped_project_ids}</code></p>
+              <p style="margin-bottom:8px; color:var(--text-muted);"><strong>Instructions:</strong> <em>"${f.instructions}"</em></p>
+              
+              <details style="margin-top:12px; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:10px;">
+                <summary style="font-weight:600; font-size:12px; cursor:pointer;">Conversation Logs (${parsedHistory.length} turns)</summary>
+                <div style="margin-top:10px; max-height:200px; overflow-y:auto; padding-right:6px;">
+                  ${historyHtml || '<p style="color:var(--text-muted); font-size:11px;">No messages sent yet.</p>'}
+                </div>
+              </details>
+            </div>
+          `;
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // --- TAB 5: Markdown Memory Editor ---
+  async function loadFiles() {
+    try {
+      const files = await api("/api/dev/files");
+      document.getElementById("editor-user-md").value = files.user_md || "";
+      document.getElementById("editor-memory-md").value = files.memory_md || "";
+      document.getElementById("editor-events-md").innerHTML = files.events_md 
+        ? escapeHtml(files.events_md) 
+        : '<p style="color:var(--text-muted); font-style:italic;">(No events.md entries written yet.)</p>';
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function saveFile(filename) {
+    const areaId = filename === 'user.md' ? 'editor-user-md' : 'editor-memory-md';
+    const statusId = filename === 'user.md' ? 'status-user-md' : 'status-memory-md';
+    const val = document.getElementById(areaId).value;
+    const statEl = document.getElementById(statusId);
+    
+    statEl.className = "editor-status";
+    statEl.textContent = "Saving changes...";
+
+    try {
+      await api("/api/dev/files", {
+        method: "POST",
+        body: JSON.stringify({ filename, content: val })
+      });
+      statEl.className = "editor-status success";
+      statEl.textContent = `${filename} saved successfully!`;
+      setTimeout(() => statEl.textContent = "", 3000);
+    } catch (e) {
+      statEl.className = "editor-status error";
+      statEl.textContent = "Error: " + e.message;
+    }
+  }
+
+  // Utilities
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  // Initial Check
+  async function init() {
+    const ok = await checkAuth();
+    if (ok) {
+      loadJobs();
+    }
+  }
+  init();
+</script>
+</body>
+</html>

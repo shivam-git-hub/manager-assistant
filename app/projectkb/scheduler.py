@@ -203,6 +203,14 @@ def check_and_run_due_jobs(controlplane_db: Optional[object] = None) -> None:
     its own short-lived session via _run_job_for_all_managers instead, since
     a single global pass may take long enough that holding one session open
     across every job/manager isn't worth it."""
+    # 1. Run manager-scoped cron jobs/reminders
+    try:
+        from app.agent.cos_agent import check_and_run_manager_crons
+        check_and_run_manager_crons()
+    except Exception:
+        logger.exception("[projectkb.scheduler] Failed to run manager crons")
+
+    # 2. Run fixed background jobs
     for job_name, job_module in _JOBS.items():
         if not _is_due(job_name):
             continue

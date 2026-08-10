@@ -245,7 +245,10 @@ def test_08_stuck_unprocessed_claim_detected(client, db_session):
 
 
 def test_08b_recently_unprocessed_claim_not_flagged(client, db_session):
-    recent = timeservice.now_ist() - timedelta(minutes=1)
+    # Calculate a duration that is safely less than HEARTBEAT_INTERVAL_MINUTES * _HEARTBEAT_STALL_CYCLES
+    # even when HEARTBEAT_INTERVAL_MINUTES is configured to be very small (e.g. 5 seconds in development)
+    safe_recent_minutes = min(1.0, HEARTBEAT_INTERVAL_MINUTES * 0.5)
+    recent = timeservice.now_ist() - timedelta(minutes=safe_recent_minutes)
     _add_claim(db_session, processed=False, created_at=recent)
 
     tally: dict = {}

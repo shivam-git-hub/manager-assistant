@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, delete
 from pydantic import BaseModel
 
-from app.database import ChatMessage
+from app.database import ChatMessage, Workflow, CronJob, AgentActionLog
 from app.controlplane.auth import get_current_employee
 from app.controlplane.models import Employee
 from app.tenancy.db import get_manager_db
@@ -47,56 +47,16 @@ def post_chat_message(
     manager: Employee = Depends(get_current_employee),
 ):
     """
-    Submits a message to Harry. Loads the last 20 chat messages as conversation history,
-    runs the agentic harness loop, persists both user and assistant turns, and returns the response.
+    Submits a message to the Chief of Staff (COS) Agent. Handles unified chat
+    compaction, dynamic profile/context building, and persists user/assistant turns.
     """
     if not payload.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # 1. Load history (last 20 messages)
-    stmt = (
-        select(ChatMessage)
-        .order_by(ChatMessage.id.desc())
-        .limit(20)
-    )
-    history_reversed = db.scalars(stmt).all()
-    # Reverse to restore chronological order
-    history_list = list(reversed(history_reversed))
-    
-    # Format history for harness
-    formatted_history = []
-    for m in history_list:
-        formatted_history.append({
-            "role": m.role,
-            "content": m.content
-        })
+    from app.agent.cos_agent import run_cos_agent
+    result = run_cos_agent(db, manager.id, payload.message, channel="portal")
+    return result
 
-    # 2. Run Agent Harness
-    result = run_agent(db, manager.id, payload.message, formatted_history)
-
-    # 3. Persist User Message
-    user_msg = ChatMessage(
-        role="user",
-        content=payload.message
-    )
-    db.add(user_msg)
-    
-    # 4. Persist Assistant Reply
-    assistant_msg = ChatMessage(
-        role="assistant",
-        content=result["reply"],
-        tool_trace=json.dumps(result["tool_trace"]) if result.get("tool_trace") else None
-    )
-    db.add(assistant_msg)
-    
-    db.commit()
-    db.refresh(assistant_msg)
-
-    return {
-        "reply": assistant_msg.content,
-        "tool_trace": result["tool_trace"],
-        "created_at": assistant_msg.created_at
-    }
 
 
 @router.get("/history", response_model=List[ChatMessageResponse])
@@ -185,4 +145,133 @@ def get_agent_notes(limit: int = Query(30), db: Session = Depends(get_manager_db
             "content": n.content
         } for n in notes
     ]
+
+
+# -----------------------------------------------------------------------------
+# Chief of Staff / Agents Tab CRUD APIs
+# -----------------------------------------------------------------------------
+
+class CreateWorkflowRequest(BaseModel):
+    name: str
+    cron_expression: str
+    prompt: str
+    description: Optional[str] = None
+    task_type: str = "custom"
+
+
+@heartbeat_router.get("/api/agent/workflows")
+def list_workflows(
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    wfs = db.scalars(select(Workflow).order_by(Workflow.id.desc())).all()
+    return [
+        {
+            "id": w.id,
+            "name": w.name,
+            "description": w.description,
+            "task_type": w.task_type,
+            "cron_expression": w.cron_expression,
+            "status": w.status,
+            "created_at": w.created_at,
+        }
+        for w in wfs
+    ]
+
+
+@heartbeat_router.post("/api/agent/workflows")
+def create_workflow(
+    payload: CreateWorkflowRequest,
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    from app.agent.cos_agent import create_workflow_handler
+    res = create_workflow_handler(
+        db,
+        manager.id,
+        run_context={},
+        name=payload.name,
+        cron_expression=payload.cron_expression,
+        prompt=payload.prompt,
+        description=payload.description,
+        task_type=payload.task_type
+    )
+    return res
+
+
+@heartbeat_router.post("/api/agent/workflows/{id}/toggle")
+def toggle_workflow(
+    id: int,
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    wf = db.get(Workflow, id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    # Toggle workflow status
+    new_status = "paused" if wf.status == "active" else "active"
+    wf.status = new_status
+    
+    # Mirror status toggle to the workflow's recurring crons
+    crons = db.scalars(select(CronJob).where(CronJob.workflow_id == id)).all()
+    for c in crons:
+        c.status = "paused" if new_status == "paused" else "pending"
+        
+    db.commit()
+    return {"id": id, "status": wf.status}
+
+
+@heartbeat_router.delete("/api/agent/workflows/{id}")
+def delete_workflow(
+    id: int,
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    wf = db.get(Workflow, id)
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+        
+    # Delete associated crons first
+    db.execute(delete(CronJob).where(CronJob.workflow_id == id))
+    db.delete(wf)
+    db.commit()
+    return {"status": "deleted", "id": id}
+
+
+@heartbeat_router.get("/api/agent/followups")
+def list_followups(
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    from app.agent.cos_agent import list_active_followups_handler
+    return list_active_followups_handler(db, manager.id, run_context={})
+
+
+@heartbeat_router.get("/api/agent/crons")
+def list_crons(
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    from app.agent.cos_agent import list_cron_jobs_handler
+    return list_cron_jobs_handler(db, manager.id, run_context={})
+
+
+@heartbeat_router.get("/api/agent/actions")
+def list_actions(
+    db: Session = Depends(get_manager_db),
+    manager: Employee = Depends(get_current_employee),
+):
+    logs = db.scalars(select(AgentActionLog).order_by(AgentActionLog.created_at.desc()).limit(50)).all()
+    return [
+        {
+            "id": l.id,
+            "action_type": l.action_type,
+            "ref_key": l.ref_key,
+            "detail": l.detail,
+            "created_at": l.created_at,
+        }
+        for l in logs
+    ]
+
 

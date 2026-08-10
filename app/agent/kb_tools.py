@@ -1229,7 +1229,7 @@ SET_HEALTH_ADJUSTMENT_SCHEMA = {
         "type": "object",
         "properties": {
             "project_id": {"type": "string"},
-            "adjustment": {"type": "integer", "enum": [-1, 0, 1]},
+            "adjustment": {"type": "string", "enum": ["-1", "0", "1"]},
             "reason": {"type": "string", "description": "Required whenever adjustment is not 0."},
         },
         "required": ["project_id", "adjustment"],
