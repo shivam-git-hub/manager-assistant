@@ -1,9 +1,7 @@
-"""Per-manager engine/session plumbing -- directly mirrors
-app/projectkb/models.py's _engine_for/get_project_engine/get_project_session
-pattern one level up. Replaces the old single global engine/SessionLocal/
-get_db that used to live in app.database (retired in step 15 -- see
-app/database.py, which now only holds Base + the table classes; those stay
-engine-agnostic, only *which engine* a session is bound to changes here).
+"""Per-manager engine/session plumbing -- mirrors app/projects/models.py's
+_engine_for/get_project_engine/get_project_session pattern one level up.
+app/database.py holds only Base + the table classes; those stay
+engine-agnostic -- only *which engine* a session is bound to changes here.
 
 NOT a shared engine with a manager_id filter column on every table -- each
 manager's db.sqlite is a fully separate SQLite file, so isolation is
@@ -17,8 +15,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session as DBSession
 
 from app.tenancy.paths import manager_db_path
-from app.controlplane.models import Manager, SessionLocal as ControlPlaneSessionLocal
-from app.controlplane.auth import get_current_manager
+from app.controlplane.models import Employee, SessionLocal as ControlPlaneSessionLocal
+from app.controlplane.auth import get_current_employee
 
 logger = logging.getLogger(__name__)
 
@@ -45,18 +43,14 @@ def get_manager_session(manager_id: str) -> DBSession:
 
 
 def init_manager_db(manager_id: str) -> None:
-    """Schema create + column migrations + Harry seed + entity backfill +
-    default job seed, scoped to one manager's db.sqlite. Mirrors the old
-    global app.database.init_db(), just parameterized -- runs at
-    provisioning time (see app.tenancy.paths.ensure_manager_scaffold), not
-    at app boot. App boot instead sweeps the migration checks below across
-    every already-provisioned manager -- see app.main's lifespan."""
+    """Schema create + column migrations + Harry seed, scoped to one
+    manager's db.sqlite. Mirrors the old global app.database.init_db(),
+    just parameterized -- runs at provisioning time (see
+    app.tenancy.paths.ensure_manager_scaffold), not at app boot. App boot
+    instead sweeps the migration checks below across every
+    already-provisioned manager -- see app.main's lifespan."""
     from app.database import Base, TeamMember, Project
     from app.outbound import OutboundQueue  # noqa: F401 -- registers with Base metadata
-    from app.kb import models as kb_models  # noqa: F401
-    from app.scheduler import ScheduledJob, seed_default_jobs  # noqa: F401
-    from app.followups import Followup  # noqa: F401
-    from app.brief import Brief  # noqa: F401
     from app.agent.notes import AgentNote  # noqa: F401
 
     engine = get_manager_engine(manager_id)
@@ -80,6 +74,18 @@ def init_manager_db(manager_id: str) -> None:
             db.commit()
         if "skip_reason" not in columns:
             db.execute(text("ALTER TABLE unified_messages ADD COLUMN skip_reason VARCHAR(20)"))
+            db.commit()
+
+        res_events = db.execute(text("PRAGMA table_info(events)")).fetchall()
+        event_cols = [row[1] for row in res_events]
+        if "occurred_at" not in event_cols:
+            db.execute(text("ALTER TABLE events ADD COLUMN occurred_at DATETIME"))
+            db.commit()
+
+        res_claims = db.execute(text("PRAGMA table_info(claims)")).fetchall()
+        claim_cols = [row[1] for row in res_claims]
+        if "heartbeat_attempts" not in claim_cols:
+            db.execute(text("ALTER TABLE claims ADD COLUMN heartbeat_attempts INTEGER DEFAULT 0"))
             db.commit()
 
         res_mtg = db.execute(text("PRAGMA table_info(meetings)")).fetchall()
@@ -111,23 +117,12 @@ def init_manager_db(manager_id: str) -> None:
             db.add(harry)
             db.commit()
 
-        projects = db.query(Project).all()
-        for p in projects:
-            from app.kb.models import get_or_create_entity, slugify
-            get_or_create_entity(db, slug=f"project:{slugify(p.name)}", type="project", name=p.name, ref_id=str(p.id))
-
-        members = db.query(TeamMember).all()
-        for m in members:
-            from app.kb.models import get_or_create_entity
-            get_or_create_entity(db, slug=f"person:{m.id}", type="person", name=m.name, ref_id=m.id)
-
-        seed_default_jobs(db)
         logger.debug(f"[tenancy] initialized db.sqlite for manager={manager_id}")
     finally:
         db.close()
 
 
-def get_manager_db(manager: Manager = Depends(get_current_manager)):
+def get_manager_db(manager: Employee = Depends(get_current_employee)):
     """FastAPI dependency: resolves the logged-in manager from the session
     cookie, opens a session bound to THEIR db.sqlite. Replaces
     app.database.get_db for every cookie-authenticated route."""
@@ -139,11 +134,12 @@ def get_manager_db(manager: Manager = Depends(get_current_manager)):
 
 
 def list_provisioned_manager_ids() -> list:
-    """Every manager who has ever logged in -- used by background jobs
-    (app/projectkb/scheduler.py) that must iterate each manager's own DB now
-    that there's no single shared one to run against."""
+    """Every employee who has ever logged in as a manager (is_manager=True)
+    -- used by background jobs (app/projectkb/scheduler.py) that must
+    iterate each manager's own DB now that there's no single shared one to
+    run against."""
     db = ControlPlaneSessionLocal()
     try:
-        return [m.id for m in db.query(Manager).all()]
+        return [e.id for e in db.query(Employee).filter(Employee.is_manager == True).all()]  # noqa: E712
     finally:
         db.close()

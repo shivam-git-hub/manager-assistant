@@ -10,7 +10,7 @@ import {
   type ProjectSummary,
 } from "@/lib/api";
 
-// Portfolio detail (wireframe 8.png): editable name, delete, member-
+// Portfolio detail: editable name, delete, member-
 // project grid with per-card remove + an add picker for projects not yet
 // in this portfolio.
 export default function PortfolioDetail() {

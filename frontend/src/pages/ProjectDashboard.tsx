@@ -21,7 +21,7 @@ import {
   type TaskInput,
 } from "@/lib/api";
 
-// Project Dashboard (wireframe 6.png): team task table + My Tasks + the
+// Project Dashboard: team task table + My Tasks + the
 // four insight panels. Updates / Blockers & Clarifications / Requests are
 // events tagged to this project. Conflicts come from the project store.
 // Requests get Approve/Reject (step 24 -- approving a request tied to a
@@ -411,7 +411,7 @@ export default function ProjectDashboard() {
     </div>
   );
 
-  // Team view (wireframe 6.png's "switch to: Team view" link): one section
+  // Team view (the "switch to: Team view" link): one section
   // per project member, listing every task (incl. nested subtasks,
   // flattened) assigned to them -- Assigned column dropped since it's
   // implied by the grouping. Unassigned tasks get their own trailing

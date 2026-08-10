@@ -9,7 +9,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
     try {
       await logout();
     } finally {
-      window.location.href = "/api/manager-assistant-dashboard/";
+      window.location.href = import.meta.env.DEV ? "/" : "/api/manager-assistant-dashboard/";
     }
   }
 

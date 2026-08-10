@@ -1,14 +1,8 @@
-"""Per-project home directory -- global, NOT nested under any one manager
-(spec/architecture_v2_kb.md §3.1: teammates' dashboards read shared project
-data, so it can't live inside a private managers/<id>/ directory). Mirrors
-app/tenancy/paths.py's per-manager pattern one level over: projects/<id>/ is
-a sibling of managers/ at the repo root.
-
-Deliberately a fresh package, not a rework of app.projectkb.paths -- that
-module is an orphaned v1 sketch (per-manager-nested projects/<slug>/, no
-global registry) kept around only as reading material and deleted in a
-later step; see spec/architecture_v2_kb.md Appendix A and
-prompts/step_18_registry_and_scaffold.md.
+"""Per-project home directory -- global, NOT nested under any one manager:
+teammates' dashboards read shared project data, so it can't live inside a
+private managers/<id>/ directory. Mirrors app/tenancy/paths.py's per-manager
+pattern one level over: projects/<id>/ is a sibling of managers/ at the repo
+root.
 
 Not env-redirected for tests, same as MANAGERS_DIR: tests write real
 projects/<uuid>/ dirs (uuid ids -> no collisions across test runs) and

@@ -1,4 +1,4 @@
-"""Agent pool claim flow (step 17 piece 2a -- prompts/step_17_agent_pool.md).
+"""Agent pool claim flow.
 
 Wires up the pool's identity/isolation machinery: redeem the shared access
 code, pick an unclaimed bot, claim it. The install cutover itself
@@ -15,8 +15,8 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from app.config import AGENT_POOL_ACCESS_CODE
-from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, Agent
-from app.controlplane.auth import get_current_manager
+from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee, Agent
+from app.controlplane.auth import get_current_employee
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,12 @@ class ClaimRequest(BaseModel):
 
 
 @router.get("/mine")
-def my_agent(manager: Manager = Depends(get_current_manager)):
+def my_agent(manager: Employee = Depends(get_current_employee)):
     """The bot this manager has claimed, if any -- deliberately separate
     from GET /api/auth/connections' `slack` key (that's the unrelated
-    message-tracking grant, redesigned 2026-07-23). `installed` reflects
+    message-tracking grant). `installed` reflects
     whether the admin has installed this agent's Slack app to the
-    workspace yet (scripts/seed_agents.py) -- purely informational, there
+    workspace yet (a manual row insert/update) -- purely informational, there
     is nothing for the manager to do about it either way."""
     db = ControlPlaneSessionLocal()
     try:
@@ -52,11 +52,10 @@ def my_agent(manager: Manager = Depends(get_current_manager)):
 
 
 @router.get("/available")
-def list_available_agents(manager: Manager = Depends(get_current_manager)):
+def list_available_agents(manager: Employee = Depends(get_current_employee)):
     """Unclaimed pool agents -- visible to any logged-in user WITHOUT the
-    access code (per Shivam 2026-07-23: users see what's available first;
-    the admin's code gates the CLAIM, not the view). Replaces the old
-    /redeem endpoint, which required the code just to see the list."""
+    access code: users see what's available first, and the admin's code
+    gates the CLAIM, not the view."""
     db = ControlPlaneSessionLocal()
     try:
         unassigned = db.query(Agent).filter(Agent.manager_id.is_(None)).all()
@@ -66,7 +65,7 @@ def list_available_agents(manager: Manager = Depends(get_current_manager)):
 
 
 @router.post("/claim")
-def claim_agent(payload: ClaimRequest, manager: Manager = Depends(get_current_manager)):
+def claim_agent(payload: ClaimRequest, manager: Employee = Depends(get_current_employee)):
     if not AGENT_POOL_ACCESS_CODE:
         raise HTTPException(500, "AGENT_POOL_ACCESS_CODE is not configured")
     if payload.code != AGENT_POOL_ACCESS_CODE:
@@ -113,8 +112,8 @@ def claim_agent(payload: ClaimRequest, manager: Manager = Depends(get_current_ma
 
 
 @router.post("/release")
-def release_agent(manager: Manager = Depends(get_current_manager)):
-    """Unclaim this manager's agent (Agents tab "Remove" -- 2026-07-23).
+def release_agent(manager: Employee = Depends(get_current_employee)):
+    """Unclaim this manager's agent (Agents tab "Remove").
     Clears manager_id/claimed_at on the Agent row, freeing it back into the
     available pool for anyone to claim -- install-derived fields
     (bot_token/team_id/user_token/user_id) are left as-is, mirroring

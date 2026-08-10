@@ -1,7 +1,4 @@
-"""Personal agent tool catalog (step 28 -- prompts/step_28_personal_agent.md
-§5). Full rewrite: everything the old file had was either dead-schema
-(send_slack_dm/send_email/list|get|create_meeting against v1 TeamMember) or
-a Hermes mock placeholder never reachable from either entry point. Deleted
+"""Personal agent tool catalog. Deleted
 outright rather than kept-unused, per CLAUDE.md's "no half-finished
 implementations" rule.
 
@@ -12,8 +9,8 @@ lookups, `run_context` is a plain dict living for one run_agent() call
 current run's `candidates` map (kind, ref_key) -> Candidate, used to
 validate a `candidate_ref` the model claims to be resolving before trusting
 it (see send_message_handler) -- same "hallucinated id silently drops"
-discipline used elsewhere in the pipeline (step 23's project_ids/claim_ids
-filtering).
+discipline used elsewhere in the pipeline (the heartbeat job's
+project_ids/claim_ids filtering).
 """
 import json
 import uuid
@@ -32,22 +29,12 @@ from app.agent.registry import registry
 
 
 def _resolve_target_employee_id(manager_id: str, target: str) -> Optional[str]:
-    """`target="manager"` resolves to the calling manager's own Employee
-    row (matched by email, same convention as project_detail._my_employee_ids);
-    anything else is treated as a literal Employee.id."""
+    """`target="manager"` resolves to the calling manager's own Employee id
+    -- manager_id IS employees.id now (step 30), so this is the identity
+    function; anything else is treated as a literal Employee.id."""
     if target != "manager":
         return target
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, Employee
-
-    cdb = ControlPlaneSessionLocal()
-    try:
-        manager = cdb.get(Manager, manager_id)
-        if manager is None:
-            return None
-        emp = cdb.query(Employee).filter(Employee.email.ilike(manager.email)).first()
-        return emp.id if emp else None
-    finally:
-        cdb.close()
+    return manager_id
 
 
 def _log_candidate_resolution(db: Session, run_context: Optional[Dict[str, Any]], candidate_kind: Optional[str], candidate_ref_key: Optional[str], detail: str) -> Optional[str]:
@@ -218,7 +205,13 @@ def _dashboard_update_task_status(manager_id, project_id, task_id, status) -> Di
 
 
 def _dashboard_add_project_member(manager_id, project_id, employee_id, role=None) -> Dict[str, Any]:
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, ProjectMember, Employee, Project as RegistryProject
+    from app.controlplane.models import (
+        SessionLocal as ControlPlaneSessionLocal,
+        Employee,
+        Project as RegistryProject,
+        get_member_list,
+        set_member_list,
+    )
 
     cdb = ControlPlaneSessionLocal()
     try:
@@ -230,15 +223,16 @@ def _dashboard_add_project_member(manager_id, project_id, employee_id, role=None
         employee = cdb.get(Employee, employee_id)
         if not employee:
             return {"error": f"Employee '{employee_id}' not found."}
-        existing = (
-            cdb.query(ProjectMember)
-            .filter(ProjectMember.project_id == project_id, ProjectMember.employee_id == employee_id)
-            .first()
-        )
-        if existing:
+        members = get_member_list(project)
+        if any(m["employee_id"] == employee_id for m in members):
             return {"success": True, "message": "already a member"}
-        cdb.add(ProjectMember(id=uuid.uuid4().hex, project_id=project_id, employee_id=employee_id, role=role))
+        members.append({"employee_id": employee_id, "role": role})
+        set_member_list(project, members)
         cdb.commit()
+
+        from app.tenancy.team_sync import sync_team_member_from_employee
+        sync_team_member_from_employee(manager_id, employee, role)
+
         return {"success": True, "message": f"Added {employee.name} to {project.name}."}
     finally:
         cdb.close()
@@ -400,11 +394,15 @@ LIST_MEETINGS_SCHEMA = {
 
 
 def get_project_doc_handler(db: Session, manager_id: str, run_context: Optional[Dict[str, Any]], project_id: str, doc: str) -> Dict[str, Any]:
+    from app.agent.kb_tools import _require_visible_project
     from app.projects.paths import project_md_path, summary_md_path, notes_md_path
 
     paths = {"project": project_md_path, "summary": summary_md_path, "notes": notes_md_path}
     if doc not in paths:
         return {"error": f"doc must be one of {list(paths)}"}
+    visibility_error = _require_visible_project(manager_id, project_id)
+    if visibility_error is not None:
+        return visibility_error
     path = paths[doc](project_id)
     return {"content": path.read_text(encoding="utf-8") if path.exists() else ""}
 
@@ -437,8 +435,13 @@ LIST_TEAM_SCHEMA = {
 
 
 def get_task_handler(db: Session, manager_id: str, run_context: Optional[Dict[str, Any]], project_id: str, task_id: str) -> Dict[str, Any]:
+    from app.agent.kb_tools import _require_visible_project
     from app.projects.db import get_project_session
     from app.projects.models import Task
+
+    visibility_error = _require_visible_project(manager_id, project_id)
+    if visibility_error is not None:
+        return visibility_error
 
     pdb = get_project_session(project_id)
     try:
@@ -469,9 +472,14 @@ GET_TASK_SCHEMA = {
 }
 
 
-def list_tasks_handler(db: Session, manager_id: str, run_context: Optional[Dict[str, Any]], project_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_tasks_handler(db: Session, manager_id: str, run_context: Optional[Dict[str, Any]], project_id: str, status: Optional[str] = None) -> Any:
+    from app.agent.kb_tools import _require_visible_project
     from app.projects.db import get_project_session
     from app.projects.models import Task
+
+    visibility_error = _require_visible_project(manager_id, project_id)
+    if visibility_error is not None:
+        return visibility_error
 
     pdb = get_project_session(project_id)
     try:

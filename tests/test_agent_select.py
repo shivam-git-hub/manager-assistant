@@ -1,4 +1,4 @@
-"""Step 28 §3 -- deterministic candidate selection. Follows
+"""Deterministic candidate selection. Follows
 tests/test_projects_registry.py's isolation patterns (real project dirs,
 rmtree'd via cleanup_projects)."""
 import json
@@ -14,7 +14,7 @@ from app.agent.select import build_candidates
 
 @pytest.fixture
 def team_project(client, cleanup_projects):
-    r = client.post("/api/projects", json={"name": "Phoenix", "kind": "team"})
+    r = client.post("/api/projects", json={"name": "Phoenix", "kind": "team", "description": "Test project description for automated tests."})
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
     cleanup_projects.append(pid)

@@ -5,7 +5,7 @@ from app.main import app
 from app.controlplane.models import (
     SessionLocal as ControlPlaneSessionLocal,
     Agent,
-    SlackReaderInstallation,
+    get_employee_by_manager_id,
 )
 from app.controlplane.slack_auth import _sign_state, _verify_state
 
@@ -27,7 +27,7 @@ def _login(client, email="manager@company.com", name="Manager"):
 def _seed_installed_agent(agent_id="atlas", app_id="A_TEST", manager_id=None):
     """Admin-provisioned agent, bot_token already present -- the new
     reality (redesigned 2026-07-23): installation happens entirely out of
-    band (see scripts/seed_agents.py / SLACK.md), never through a
+    band (a manual row insert, see SLACK.md), never through a
     per-manager OAuth flow."""
     db = ControlPlaneSessionLocal()
     try:
@@ -100,11 +100,11 @@ def test_callback_creates_reader_installation(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        installation = db.get(SlackReaderInstallation, manager_id)
-        assert installation is not None
-        assert installation.team_id == "T12345"
-        assert installation.user_token == "xoxp-fake"
-        assert installation.user_id == "U_MANAGER_SLACK"
+        employee = get_employee_by_manager_id(db, manager_id)
+        assert employee is not None
+        assert employee.slack_team_id == "T12345"
+        assert employee.slack_user_token == "xoxp-fake"
+        assert employee.slack_id == "U_MANAGER_SLACK"
     finally:
         db.close()
 
@@ -126,20 +126,19 @@ def test_callback_without_authed_user_is_400(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        assert db.get(SlackReaderInstallation, manager_id) is None
+        employee = get_employee_by_manager_id(db, manager_id)
+        assert employee is not None and not employee.slack_user_token
     finally:
         db.close()
 
 
-def test_callback_syncs_manager_teammember_slack_handle(client, monkeypatch, db_session):
-    """authed_user.id is the manager's own Slack user id -- without writing
-    it onto their TeamMember row, DM-participant resolution can never
-    recognize the manager (see SlackConnector._resolve_dm_other_participant)."""
-    from app.database import TeamMember
-
+def test_callback_writes_manager_employee_slack_id(client, monkeypatch):
+    """authed_user.id is the manager's own Slack user id -- it's written
+    straight onto their own Employee row (Employee.slack_id), which is what
+    DM-participant resolution now reads directly (see
+    SlackConnector._resolve_dm_other_participant); no TeamMember sync step
+    needed anymore."""
     manager_id = client.manager_id
-    db_session.add(TeamMember(id="U_HARRY_2", name="Shivam", role="Manager", slack_handle=None))
-    db_session.commit()
 
     from app.controlplane import slack_auth as slack_auth_module
 
@@ -155,10 +154,12 @@ def test_callback_syncs_manager_teammember_slack_handle(client, monkeypatch, db_
     state = slack_auth_module._sign_state(manager_id)
     client.get("/auth/slack/callback", params={"code": "abc123", "state": state}, follow_redirects=False)
 
-    from app.integrations.base import get_manager
-    db_session.expire_all()
-    manager_member = get_manager(db_session)
-    assert manager_member.slack_handle == "U_MANAGER_REAL"
+    db = ControlPlaneSessionLocal()
+    try:
+        employee = get_employee_by_manager_id(db, manager_id)
+        assert employee.slack_id == "U_MANAGER_REAL"
+    finally:
+        db.close()
 
 
 def test_disconnect_deletes_reader_installation(client, monkeypatch):
@@ -166,10 +167,10 @@ def test_disconnect_deletes_reader_installation(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        db.add(SlackReaderInstallation(
-            manager_id=manager_id, team_id="T_DISCONNECT_ME", team_name="Acme",
-            user_token="xoxp-fake", user_id="U_X",
-        ))
+        employee = get_employee_by_manager_id(db, manager_id)
+        employee.slack_team_id = "T_DISCONNECT_ME"
+        employee.slack_team_name = "Acme"
+        employee.slack_user_token = "xoxp-fake"
         db.commit()
     finally:
         db.close()
@@ -182,7 +183,8 @@ def test_disconnect_deletes_reader_installation(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        assert db.get(SlackReaderInstallation, manager_id) is None
+        employee = get_employee_by_manager_id(db, manager_id)
+        assert not employee.slack_user_token
     finally:
         db.close()
 
@@ -217,9 +219,12 @@ def test_webhook_routes_by_api_app_id(client):
     manager_id = _login(client)
     _seed_installed_agent(agent_id="atlas", app_id="A_KNOWN", manager_id=manager_id)
 
-    client.post("/api/team", json={
-        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
+    db = ControlPlaneSessionLocal()
+    try:
+        get_employee_by_manager_id(db, manager_id).slack_id = "U_MANAGER"
+        db.commit()
+    finally:
+        db.close()
 
     payload = {
         "team_id": "T_KNOWN",

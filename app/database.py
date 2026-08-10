@@ -1,11 +1,9 @@
-"""Table definitions shared by every manager's db.sqlite. As of step 15
-there is no single global engine/SessionLocal here anymore -- each manager
-gets their own SQLite file (app/tenancy/db.py's get_manager_engine/
-get_manager_session), and these are plain SQLAlchemy declarative models,
-engine-agnostic until a session binds to one. See
-app.tenancy.db.init_manager_db for schema creation + migrations (the old
-init_db()'s logic, now parameterized per manager) and
-app.tenancy.db.get_manager_db for the FastAPI dependency that replaces the
+"""Table definitions shared by every manager's db.sqlite. There is no
+global engine/SessionLocal here -- each manager gets their own SQLite file
+(app/tenancy/db.py's get_manager_engine/get_manager_session), and these are
+plain SQLAlchemy declarative models, engine-agnostic until a session binds
+to one. See app.tenancy.db.init_manager_db for schema creation + migrations
+and app.tenancy.db.get_manager_db for the FastAPI dependency that replaces the
 old get_db.
 """
 from datetime import datetime, date
@@ -77,10 +75,10 @@ class UnifiedMessage(Base):
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     is_processed: Mapped[bool] = mapped_column(Boolean, default=False)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    # Step 20 (spec §4.2): why the ingest job skipped this row without an
-    # LLM call -- "blocked" (user blocklist) or "noise" (built-in filter).
-    # NULL for rows that were (or will be) genuinely processed. Auditable,
-    # never re-scanned.
+    # Why the ingest job skipped this row without an
+    # LLM call -- "blocked" (user blocklist; the sole skip reason for now,
+    # see app.projectkb.blocklist.classify_message). NULL for rows that
+    # were (or will be) genuinely processed. Auditable, never re-scanned.
     skip_reason: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     raw_metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -106,57 +104,15 @@ class Meeting(Base):
     mom_message_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("unified_messages.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")  # "scheduled" | "completed" | "cancelled"
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
-    # Step 28 (personal agent): set the moment the agent sends a pre-meeting
+    # Set the moment the agent sends a pre-meeting
     # brief, so a later heartbeat tick inside the same 2h window doesn't
     # re-send it. NULL = not yet briefed.
     brief_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-class ActionItem(Base):
-    __tablename__ = "action_items"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    meeting_id: Mapped[int] = mapped_column(Integer, ForeignKey("meetings.id"))
-    task_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("tasks.id"), nullable=True)
-    description: Mapped[str] = mapped_column(Text)
-    owner_member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
-    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
-
-class Leave(Base):
-    __tablename__ = "leaves"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
-    starts_on: Mapped[date] = mapped_column(Date)
-    ends_on: Mapped[date] = mapped_column(Date)
-    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
-
-class ReassignmentSuggestion(Base):
-    __tablename__ = "reassignment_suggestions"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    leave_id: Mapped[int] = mapped_column(Integer, ForeignKey("leaves.id"))
-    task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"))
-    from_member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
-    to_member_id: Mapped[str] = mapped_column(String(100), ForeignKey("team_members.id"))
-    rationale: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20), default="suggested")  # "suggested", "approved", "rejected"
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
-    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-
-class Digest(Base):
-    __tablename__ = "digests"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    week_start: Mapped[date] = mapped_column(Date, unique=True)
-    content: Mapped[str] = mapped_column(Text)  # JSON-serialized string
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
-
 class Todo(Base):
-    """User-maintained TODO list (home dashboard panel, wireframe 2.png).
+    """User-maintained TODO list (home dashboard panel).
     No LLM anywhere in this table's lifecycle -- the user is the only
-    writer, via app/api/home.py. Step 19."""
+    writer, via app/api/home.py."""
     __tablename__ = "todos"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)  # uuid4 hex
@@ -169,10 +125,7 @@ class Todo(Base):
 
 class Claim(Base):
     """Short structured statement extracted from message(s) by the ingest
-    job (spec/architecture_v2_kb.md §2). Schema settled in step 19 so later
-    pipeline steps only populate, never re-shape; nothing writes rows until
-    the v2 ingest job lands. content_hash guards retry dedup (transactional
-    idempotency, spec §4)."""
+    job. content_hash guards retry dedup (transactional idempotency)."""
     __tablename__ = "claims"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)  # uuid4 hex -- THE claim_id
@@ -180,6 +133,12 @@ class Claim(Base):
     thread_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64))
     processed: Mapped[bool] = mapped_column(Boolean, default=False)  # consumed by heartbeat yet?
+    # Starvation guard for the agentic heartbeat (step 35): incremented every
+    # time this claim lands in a batch, whether or not the agent cites it.
+    # Reaching 3 without ever being cited force-marks it processed so a claim
+    # the model keeps ignoring doesn't get re-sent to the LLM forever -- see
+    # app.projectkb.jobs.heartbeat.run.
+    heartbeat_attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
 
 
@@ -211,12 +170,20 @@ class Event(Base):
     claim_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON list -> claims.id (citations)
     general: Mapped[bool] = mapped_column(Boolean, default=False)  # not tied to any project/task
     dreamed: Mapped[bool] = mapped_column(Boolean, default=False)  # consumed by dream yet?
-    ui_state: Mapped[str] = mapped_column(String(10), default="shown")  # shown | dismissed | promoted | approved | rejected (approved/rejected: request events only, step 24)
+    ui_state: Mapped[str] = mapped_column(String(10), default="shown")  # shown | dismissed | promoted | approved | rejected (approved/rejected: request events only)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: timeservice.now_ist())
+    # When the underlying messages actually happened (max timestamp across
+    # the cited claims' source messages -- app.projectkb.occurrence), NOT
+    # when this row was inserted (that's created_at, unchanged). Computed in
+    # code, never LLM-supplied. NULL for events created before this column
+    # existed, or whose claims have no resolvable source -- every ordering/
+    # filtering read site must COALESCE(occurred_at, created_at) rather than
+    # reading created_at alone, or old and new events interleave wrongly.
+    occurred_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class AgentAssignment(Base):
-    """Mirror of the control-plane Agent claim (step 17 piece 2a), written
+    """Mirror of the control-plane Agent claim, written
     into the manager's OWN db.sqlite so the assignment is visible from both
     sides -- any code already holding a manager-scoped session can look up
     "which bot is mine" without a control-plane round trip. At most one row
@@ -231,7 +198,7 @@ class AgentAssignment(Base):
 
 class AgentActionLog(Base):
     """Idempotency ledger for the personal agent's autonomous heartbeat
-    (step 28 -- prompts/step_28_personal_agent.md §2). The deterministic
+    heartbeat. The deterministic
     candidate selector (app/agent/select.py) checks this before proposing
     an action; the tool handlers that actually take an action
     (app/agent/tools.py) write the matching row afterwards -- never left to

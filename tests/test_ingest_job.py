@@ -1,10 +1,10 @@
-"""Step 22 (prompts/step_22_ingest_job.md): blocklist/noise selection ->
+"""Ingest job: blocklist/noise selection ->
 per-thread batching -> flash-model claim extraction."""
 import json
 
 from app import timeservice
 from app.agent.gemini_client import GeminiClient
-from app.config import INGESTION_BATCH_SIZE
+from app.config import INGESTION_BATCH_SIZE, INGESTION_MAX_CHARS_PER_CALL, INGESTION_MAX_CALLS_PER_RUN
 from app.database import Claim, ClaimSource, UnifiedMessage
 from app.projectkb import blocklist
 from app.projectkb.jobs import ingestion
@@ -69,26 +69,22 @@ def test_01_zero_pending_short_circuits_without_llm_call(client, db_session):
     assert transport.call_count == 0
 
 
-def test_02_blocked_and_noise_messages_skip_llm(client, db_session):
+def test_02_blocked_messages_skip_llm(client, db_session):
     blocklist.add_blocked_contact(client.manager_id, label="spammy", email_pattern="spam@*")
     blocked_msg = _add_message(db_session, sender_raw_id="spam@evil.com")
-    noise_msg = _add_message(db_session, sender_raw_id="no-reply@service.com", platform_msg_id="m_noise")
 
     transport = FakeTransport([])
     fake_client = GeminiClient(api_key="fake-key", transport=transport)
 
     stats = ingestion.run(db_session, client.manager_id, client=fake_client)
 
-    assert stats["skipped"] == 2
+    assert stats["skipped"] == 1
     assert stats["claims_created"] == 0
     assert transport.call_count == 0
 
     db_session.refresh(blocked_msg)
-    db_session.refresh(noise_msg)
     assert blocked_msg.is_processed is True
     assert blocked_msg.skip_reason == "blocked"
-    assert noise_msg.is_processed is True
-    assert noise_msg.skip_reason == "noise"
 
 
 def test_03_survivors_batch_by_thread_and_produce_claims(client, db_session):
@@ -152,41 +148,69 @@ def test_05_claim_with_message_id_outside_batch_is_dropped(client, db_session):
     assert m1.is_processed is True
 
 
-def test_06_batch_size_cap_leaves_excess_for_next_tick(client, db_session):
-    # Each message is its own thread (solo batch), so the cap boundary
-    # falls cleanly between whole batches -- exercises the common case.
+def test_06_max_calls_per_run_leaves_excess_for_next_tick(client, db_session):
+    # Each message is its own thread (solo chunk = 1 LLM call each), so the
+    # INGESTION_MAX_CALLS_PER_RUN ceiling falls cleanly between whole calls.
     messages = [
         _add_message(db_session, platform_msg_id=f"m_cap_{i}", thread_id=f"solo-{i}")
-        for i in range(INGESTION_BATCH_SIZE + 5)
+        for i in range(INGESTION_MAX_CALLS_PER_RUN + 5)
     ]
-    responses = [_gemini_response({"claims": []}) for _ in range(INGESTION_BATCH_SIZE)]
+    responses = [_gemini_response({"claims": []}) for _ in range(INGESTION_MAX_CALLS_PER_RUN)]
     fake_client = GeminiClient(api_key="fake-key", transport=FakeTransport(responses))
 
     stats = ingestion.run(db_session, client.manager_id, client=fake_client)
 
-    assert stats["processed"] == INGESTION_BATCH_SIZE
+    assert stats["processed"] == INGESTION_MAX_CALLS_PER_RUN
     for m in messages:
         db_session.refresh(m)
     processed_count = sum(1 for m in messages if m.is_processed)
-    assert processed_count == INGESTION_BATCH_SIZE
+    assert processed_count == INGESTION_MAX_CALLS_PER_RUN
 
 
-def test_06b_batch_size_cap_never_splits_a_thread(client, db_session):
-    # A thread larger than the cap goes through whole rather than being
-    # sliced mid-conversation (which would let a later tick re-extract
-    # from a partial thread and produce divergent claims).
+def test_06b_thread_larger_than_batch_size_is_chunked_but_fully_processed_this_run(client, db_session):
+    # A thread larger than INGESTION_BATCH_SIZE is split into consecutive
+    # chunks (never reordered, never merged with another thread) -- but
+    # every chunk still gets processed in THIS run via multiple LLM calls,
+    # not deferred to the next tick.
     big_thread = [
         _add_message(db_session, platform_msg_id=f"m_big_{i}", thread_id="big-thread")
         for i in range(INGESTION_BATCH_SIZE + 3)
     ]
-    fake_client = GeminiClient(api_key="fake-key", transport=FakeTransport([_gemini_response({"claims": []})]))
+    responses = [_gemini_response({"claims": []}) for _ in range(2)]  # two chunks expected
+    fake_client = GeminiClient(api_key="fake-key", transport=FakeTransport(responses))
 
     stats = ingestion.run(db_session, client.manager_id, client=fake_client)
 
+    assert fake_client._transport.call_count == 2
     assert stats["processed"] == len(big_thread)
     for m in big_thread:
         db_session.refresh(m)
         assert m.is_processed is True
+
+
+def test_06c_chunking_respects_char_budget_and_never_drops_a_huge_single_message(client, db_session):
+    # A handful of messages whose combined content exceeds
+    # INGESTION_MAX_CHARS_PER_CALL get split into separate chunks even
+    # though they're well under INGESTION_BATCH_SIZE by count; one
+    # oversized single message still goes through as its own chunk.
+    huge_msg = _add_message(
+        db_session, platform_msg_id="m_huge", thread_id="char-thread",
+        content="x" * (INGESTION_MAX_CHARS_PER_CALL + 500),
+    )
+    small_msg = _add_message(
+        db_session, platform_msg_id="m_small", thread_id="char-thread", content="tiny follow-up",
+    )
+    responses = [_gemini_response({"claims": []}) for _ in range(2)]
+    fake_client = GeminiClient(api_key="fake-key", transport=FakeTransport(responses))
+
+    stats = ingestion.run(db_session, client.manager_id, client=fake_client)
+
+    assert fake_client._transport.call_count == 2
+    assert stats["processed"] == 2
+    db_session.refresh(huge_msg)
+    db_session.refresh(small_msg)
+    assert huge_msg.is_processed is True
+    assert small_msg.is_processed is True
 
 
 def test_08_duplicate_claim_in_one_response_is_deduped_by_content_hash(client, db_session):

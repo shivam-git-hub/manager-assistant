@@ -1,5 +1,4 @@
-"""Personal agent heartbeat (step 28 -- prompts/step_28_personal_agent.md
-§6A). A 5th tick, not a re-detection pass: ingestion/heartbeat/dream have
+"""Personal agent heartbeat. A 5th tick, not a re-detection pass: ingestion/heartbeat/dream have
 already turned raw messages into claims/events/task-transitions/synthesis.
 This job only ACTS on what they already produced -- deterministic candidate
 selection in code (app.agent.select), one LLM tool-calling run to draft
@@ -7,8 +6,14 @@ text and take the actions, idempotency enforced by AgentActionLog (written
 by the tool handlers themselves, not left to the model to remember).
 
 Same run(db, manager_id, client=None) signature convention as the other
-jobs (ingestion.py/heartbeat.py/dream.py), registered in
-app.projectkb.scheduler's _JOBS dict under JobName.AGENT_HEARTBEAT.
+jobs (ingestion.py/heartbeat.py/dream.py) -- but, unlike them, this one is
+DELIBERATELY NOT registered in app.projectkb.scheduler's _JOBS dict, and
+must stay that way: it sends real Slack DMs/portal messages, so it only
+runs when explicitly triggered (POST /api/heartbeat/run, or the debug
+page's generic job runner under JobName.AGENT_HEARTBEAT) -- never on an
+automatic tick. Both manual entry points share a lock keyed by
+JobName.AGENT_HEARTBEAT.value (app.projectkb.scheduler.get_job_lock) so
+they can't double-run it concurrently for the same manager.
 """
 import logging
 from typing import Optional

@@ -1,4 +1,3 @@
-import os
 import pytest
 from datetime import datetime
 import pytz
@@ -9,27 +8,6 @@ from app import timeservice
 from app.database import UnifiedMessage, TeamMember
 from app.outbound import is_quiet_hours, next_work_morning, send_or_hold
 
-@pytest.fixture(autouse=True)
-def setup_tmp_clock(monkeypatch, tmp_path):
-    """
-    Automatically redirect SIM_CLOCK_PATH to a temporary file for every test
-    to guarantee perfect isolation.
-    """
-    tmp_file = tmp_path / "sim_clock.json"
-    monkeypatch.setenv("SIM_CLOCK_PATH", str(tmp_file))
-    if os.path.exists(tmp_file):
-        os.remove(tmp_file)
-    
-    if hasattr(timeservice, "_reset_state_for_tests"):
-        timeservice._reset_state_for_tests()
-        
-    yield tmp_file
-    
-    if os.path.exists(tmp_file):
-        try:
-            os.remove(tmp_file)
-        except OSError:
-            pass
 
 def test_01_harry_seeded_automatically(db_session):
     """
@@ -43,7 +21,7 @@ def test_01_harry_seeded_automatically(db_session):
     assert harry.slack_handle == "U_HARRY"
     assert harry.outlook_email == "harry.assistant@company.com"
 
-def test_02_slack_send_success(db_session, set_sim_time):
+def test_02_slack_send_success(db_session, monkeypatch):
     """
     2. Slack connector.send(): DB row has direction="outbound",
        sender_mapped_name="Harry", correct channel, ok result.
@@ -51,7 +29,7 @@ def test_02_slack_send_success(db_session, set_sim_time):
     from app.integrations.slack import connector as slack_connector
 
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    set_sim_time(anchor_time)
+    monkeypatch.setattr(timeservice, "now_ist", lambda: anchor_time)
 
     result = slack_connector.send(db_session, "C_GENERAL", "Hi Alice, any update on the schema?")
     assert result.ok is True
@@ -75,7 +53,7 @@ def test_03_slack_send_empty_text(db_session):
     assert result.ok is False
     assert result.error == "invalid_arguments"
 
-def test_04_outlook_send_success(db_session, set_sim_time):
+def test_04_outlook_send_success(db_session, monkeypatch):
     """
     4. Outlook connector.send(): DB row outbound, HTML body cleaned (send
        <style>x{color:red}</style><p>Done</p>, stored content must contain
@@ -84,7 +62,7 @@ def test_04_outlook_send_success(db_session, set_sim_time):
     from app.integrations.outlook import connector as outlook_connector
 
     anchor_time = datetime(2026, 7, 15, 12, 0, 0)
-    set_sim_time(anchor_time)
+    monkeypatch.setattr(timeservice, "now_ist", lambda: anchor_time)
 
     result = outlook_connector.send(
         db_session, "alice@company.com", "<style>x{color:red}</style><p>Done</p>", "Weekly Update"
@@ -152,14 +130,14 @@ def test_06_next_work_morning():
     sat_day = datetime(2026, 7, 18, 11, 0, 0)
     assert next_work_morning(sat_day) == datetime(2026, 7, 20, 9, 0, 0)
 
-def test_07_send_or_hold_work_hours(db_session, set_sim_time):
+def test_07_send_or_hold_work_hours(db_session, monkeypatch):
     """
-    7. send_or_hold during work hours (set sim time Wed 11:00) -> sent, row NOT queued,
-       message in DB.
+    7. send_or_hold during work hours (frozen Wed 11:00) -> sent, row NOT
+       queued, message in DB.
     """
     # Wed Jul 15 11:00 (work hours)
     anchor_time = datetime(2026, 7, 15, 11, 0, 0)
-    set_sim_time(anchor_time)
+    monkeypatch.setattr(timeservice, "now_ist", lambda: anchor_time)
     
     payload = {
         "channel": "C_GENERAL",
@@ -180,15 +158,16 @@ def test_07_send_or_hold_work_hours(db_session, set_sim_time):
     queue_rows = db_session.query(OutboundQueue).all()
     assert len(queue_rows) == 0
 
-def test_08_send_or_hold_quiet_hours_and_release(client, db_session, set_sim_time):
+def test_08_send_or_hold_quiet_hours_and_release(client, db_session, monkeypatch):
     """
-    8. send_or_hold at Wed 23:00 -> held with release Thu 09:00; then set sim
-       time Thu 09:05, POST /api/outbound/release -> released=1, message now in
-       DB with direction="outbound", queue row status="sent".
+    8. send_or_hold at Wed 23:00 -> held with release Thu 09:00; then move
+       time to Thu 09:05, POST /api/outbound/release -> released=1, message
+       now in DB with direction="outbound", queue row status="sent".
     """
     # Wed Jul 15 23:00 (quiet hours)
     anchor_time = datetime(2026, 7, 15, 23, 0, 0)
-    set_sim_time(anchor_time)
+    clock = {"now": anchor_time}
+    monkeypatch.setattr(timeservice, "now_ist", lambda: clock["now"])
     
     payload = {
         "channel": "C_GENERAL",
@@ -218,8 +197,7 @@ def test_08_send_or_hold_quiet_hours_and_release(client, db_session, set_sim_tim
     assert q_list[0]["id"] == q_row.id
     
     # Advance time to Thu Jul 16 09:05
-    new_time = datetime(2026, 7, 16, 9, 5, 0)
-    set_sim_time(new_time)
+    clock["now"] = datetime(2026, 7, 16, 9, 5, 0)
     
     # POST /api/outbound/release
     resp_rel = client.post("/api/outbound/release")
@@ -244,21 +222,20 @@ def test_09_slack_ingest_direction_default(client, db_session):
     """
     9. direction defaults to "inbound" for a normal Slack webhook ingest.
     """
-    # 1. Manager, then a matching team member (step 20: no tracked-contacts
+    # 1. Manager's own Employee.slack_id (DM counterpart resolution's fast
+    # path), then a matching Employee row for the sender -- connector
+    # resolution now matches Employee, not TeamMember (no tracked-contacts
     # setup needed anymore -- everything gets stored)
-    client.post("/api/team", json={
-        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
-    member_payload = {
-        "id": "U_ALICE_MEMBER",
-        "name": "Alice Developer",
-        "role": "Backend dev",
-        "slack_handle": "U_ALICE_MEMBER",
-        "outlook_email": "alice@company.com"
-    }
-    client.post("/api/team", json=member_payload)
+    import uuid
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee, get_employee_by_manager_id
 
-    # An installed Agent is required for webhook routing (step 17 piece 2b)
+    cp_db = ControlPlaneSessionLocal()
+    get_employee_by_manager_id(cp_db, client.manager_id).slack_id = "U_MANAGER"
+    cp_db.add(Employee(id=uuid.uuid4().hex, email="alice@company.com", name="Alice Developer", slack_id="U_ALICE_MEMBER"))
+    cp_db.commit()
+    cp_db.close()
+
+    # An installed Agent is required for webhook routing
     # to resolve which manager's db.sqlite an event belongs to.
     from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
     cp_db = ControlPlaneSessionLocal()

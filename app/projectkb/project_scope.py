@@ -1,7 +1,7 @@
 """Shared "which of this manager's OWNED projects does each event touch"
-grouping -- manager-only project truth (spec §4.3) applies identically to
-heartbeat's project fan-out (step 24) and dream's project-level synthesis
-(step 25), so this lives in one place rather than twice."""
+grouping -- manager-only project truth applies identically to heartbeat's
+project fan-out and dream's project-level synthesis, so this lives in one
+place rather than twice."""
 import json
 from typing import Dict, List
 

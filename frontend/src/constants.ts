@@ -33,7 +33,7 @@ export const HEALTH_COLORS: Record<string, string> = {
   red: "#DD5454",
 };
 
-// ── Project tasks (wireframe 6) ──────────────────────────
+// ── Project tasks ────────────────────────────────────────
 export const PRIORITY_META: Record<string, { label: string; bg: string; fg: string }> = {
   high: { label: "High", bg: "#DD5454", fg: "#FFFFFF" },
   medium: { label: "Medium", bg: "#E9B949", fg: "#1E2A38" },

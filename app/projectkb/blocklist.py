@@ -1,10 +1,9 @@
-"""Blocklist + deterministic noise filter (step 20 --
-prompts/step_20_poll_completion.md, spec/architecture_v2_kb.md §4.2).
+"""Blocklist + deterministic noise filter.
 
-Philosophy inversion from v1: the pollers store EVERYTHING (the user's own
+The pollers store EVERYTHING (the user's own
 mailbox/DMs/channels belong to them by construction); the user lists what
 NOT to process. classify_message() is the selection filter the ingest job
-(spec §4.2, step 4) runs before any LLM sees a message -- skipped rows get
+runs before any LLM sees a message -- skipped rows get
 `is_processed=True` + `skip_reason` there, so editing the blocklist never
 loses history and every skip is auditable.
 
@@ -29,24 +28,6 @@ SOURCE_PATTERN_FIELD = {
     "slack": "slack_pattern",
     "outlook": "email_pattern",
 }
-
-# Deterministic noise rules (spec §4.2 layer 2) -- built-in, not
-# user-managed. All lowercase; matched against the sender's local part.
-NOISE_SENDER_LOCAL_PARTS = (
-    "noreply",
-    "no-reply",
-    "no_reply",
-    "donotreply",
-    "do-not-reply",
-    "notifications",
-    "notification",
-    "mailer-daemon",
-    "postmaster",
-)
-# Calendar accept/decline stubs (Outlook prefixes these).
-NOISE_SUBJECT_PREFIXES = ("accepted:", "declined:", "tentative:")
-# Bulk-mail marker; Graph exposes raw headers inside the stored payload.
-NOISE_METADATA_MARKERS = ("list-unsubscribe",)
 
 
 def _empty() -> Dict:
@@ -191,33 +172,20 @@ def is_channel_blocked(manager_id: str, source: str, channel: str) -> bool:
 # ── The ingest-selection filter ──────────────────────────
 
 def classify_message(manager_id: str, msg) -> Optional[str]:
-    """Returns "blocked" | "noise" | None for a UnifiedMessage row. Run by
-    the ingest job on unprocessed rows BEFORE any LLM call; a non-None
-    result means: mark is_processed=True with this skip_reason, never scan
-    again. Deterministic only -- no LLM here (that's the flash model's
-    separate de-noise role, spec §4.2 layer 3)."""
-    # Layer 1: user blocklist.
+    """Returns "blocked" | None for a UnifiedMessage row. Run by the ingest
+    job on unprocessed rows BEFORE any LLM call; a non-None result means:
+    mark is_processed=True with this skip_reason, never scan again.
+    Deterministic only -- no LLM here.
+
+    The built-in noise-rule layer (noreply senders, calendar RSVP subject
+    prefixes, list-unsubscribe marker) was removed -- the user blocklist is
+    the sole source of truth for blocking for now. Glob-based noise
+    patterns can be added back as user-editable blocklist entries later."""
     if is_contact_blocked(manager_id, msg.source, msg.sender_raw_id or ""):
         return "blocked"
     if is_contact_blocked(manager_id, msg.source, msg.receiver_raw_id or ""):
         return "blocked"
     if is_channel_blocked(manager_id, msg.source, msg.channel_raw_id or ""):
         return "blocked"
-
-    # Layer 2: built-in noise rules.
-    sender = (msg.sender_raw_id or "").lower()
-    local_part = sender.split("@", 1)[0]
-    # Substring, not just prefix: real automated senders routinely put the
-    # marker mid-local-part (account-security-noreply@..., azure-noreply@...,
-    # no-reply-<random-token>@slack.com) -- a startswith-only check let
-    # those straight through to the LLM in live testing (2026-07-23).
-    if any(p in local_part for p in NOISE_SENDER_LOCAL_PARTS):
-        return "noise"
-    subject = (msg.subject or "").lower()
-    if any(subject.startswith(p) for p in NOISE_SUBJECT_PREFIXES):
-        return "noise"
-    metadata = (msg.raw_metadata or "").lower()
-    if any(m in metadata for m in NOISE_METADATA_MARKERS):
-        return "noise"
 
     return None

@@ -1,5 +1,4 @@
-"""Project drill-down APIs (step 21 -- prompts/step_21_project_drilldown.md,
-wireframes 6/7): per-project tasks, doc/notes markdown, vault files,
+"""Project drill-down APIs: per-project tasks, doc/notes markdown, vault files,
 insights bundle, and project deletion. Visibility follows the registry
 rule (manager or member-by-email); writes are manager-only.
 
@@ -19,13 +18,14 @@ from sqlalchemy.orm import Session as DBSession
 
 from app import timeservice
 from app.api.projects_registry import _is_visible
-from app.controlplane.auth import get_current_manager
+from app.controlplane.auth import get_current_employee
 from app.controlplane.models import (
     get_controlplane_db,
     Employee,
-    Manager,
     Project as RegistryProject,
-    ProjectMember,
+    Portfolio,
+    get_portfolio_project_ids,
+    set_portfolio_project_ids,
 )
 from app.projects.db import get_project_session
 from app.projects.models import Concern, Conflict, HealthLog, Suggestion, Task
@@ -51,7 +51,7 @@ TASK_PRIORITIES = ("low", "medium", "high")
 # ────────────────────────────────────────────────────────
 
 def _get_visible_project(
-    project_id: str, manager: Manager, db: DBSession
+    project_id: str, manager: Employee, db: DBSession
 ) -> RegistryProject:
     project = db.get(RegistryProject, project_id)
     if project is None or not _is_visible(db, project, manager):
@@ -59,12 +59,12 @@ def _get_visible_project(
     return project
 
 
-def _require_manager(project: RegistryProject, manager: Manager) -> None:
+def _require_manager(project: RegistryProject, manager: Employee) -> None:
     if project.manager_user_id != manager.id:
         raise HTTPException(status_code=403, detail="Only the project manager can do this")
 
 
-def _my_employee_ids(db: DBSession, manager: Manager) -> set:
+def _my_employee_ids(db: DBSession, manager: Employee) -> set:
     rows = db.query(Employee).all()
     email = manager.email.lower()
     return {e.id for e in rows if (e.email or "").lower() == email}
@@ -93,7 +93,7 @@ class TaskPatchIn(BaseModel):
 
 
 def _schedule_state(task: Task, now: datetime) -> dict:
-    """The status chip (wireframe 6): explicit states win; otherwise the
+    """The status chip: explicit states win; otherwise the
     due date against SIM time decides overdue/on-schedule."""
     if task.status == "done":
         return {"schedule_state": "done", "days_overdue": 0}
@@ -128,7 +128,7 @@ def _task_dict(task: Task, employees_by_id: dict, now: datetime) -> dict:
 @router.get("/tasks")
 def list_tasks(
     project_id: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     _get_visible_project(project_id, manager, cp_db)
@@ -159,7 +159,7 @@ def list_tasks(
 def create_task(
     project_id: str,
     payload: TaskCreateIn,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     project = _get_visible_project(project_id, manager, cp_db)
@@ -195,7 +195,7 @@ def patch_task(
     project_id: str,
     task_id: str,
     payload: TaskPatchIn,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     project = _get_visible_project(project_id, manager, cp_db)
@@ -238,7 +238,7 @@ class DocPutIn(BaseModel):
 @router.get("/doc")
 def get_doc(
     project_id: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     _get_visible_project(project_id, manager, cp_db)
@@ -254,7 +254,7 @@ def get_doc(
 def put_doc(
     project_id: str,
     payload: DocPutIn,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     project = _get_visible_project(project_id, manager, cp_db)
@@ -281,7 +281,7 @@ def _safe_vault_name(filename: str) -> str:
 @router.get("/vault")
 def list_vault(
     project_id: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     _get_visible_project(project_id, manager, cp_db)
@@ -298,7 +298,7 @@ def list_vault(
 async def upload_vault_file(
     project_id: str,
     file: UploadFile,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     """Members can dump files (spec §3: teammates/managers/agents use the
@@ -318,7 +318,7 @@ async def upload_vault_file(
 def download_vault_file(
     project_id: str,
     filename: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ):
     _get_visible_project(project_id, manager, cp_db)
@@ -336,7 +336,7 @@ def download_vault_file(
 @router.get("/insights")
 def get_insights(
     project_id: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> dict:
     _get_visible_project(project_id, manager, cp_db)
@@ -364,18 +364,28 @@ def get_insights(
 
 
 # ────────────────────────────────────────────────────────
-# Delete project (wireframe 6)
+# Delete project
 # ────────────────────────────────────────────────────────
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(
     project_id: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     cp_db: DBSession = Depends(get_controlplane_db),
 ) -> None:
     project = _get_visible_project(project_id, manager, cp_db)
     _require_manager(project, manager)
-    cp_db.query(ProjectMember).filter(ProjectMember.project_id == project_id).delete()
+
+    # Strip this project out of every portfolio that references it -- there's
+    # no FK/join to cascade through now that Portfolio.project_ids is a JSON
+    # column (step 31), so this has to be done explicitly or the id goes
+    # stale (the gap this replaces the old PortfolioProject table over).
+    for portfolio in cp_db.query(Portfolio).all():
+        ids = get_portfolio_project_ids(portfolio)
+        if project_id in ids:
+            ids.remove(project_id)
+            set_portfolio_project_ids(portfolio, ids)
+
     cp_db.delete(project)
     cp_db.commit()
     shutil.rmtree(project_dir(project_id), ignore_errors=True)

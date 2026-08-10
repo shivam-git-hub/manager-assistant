@@ -1,4 +1,4 @@
-"""Step 28 §8 -- end-to-end agent heartbeat job with a fake LLM client:
+"""End-to-end agent heartbeat job with a fake LLM client:
 seeded meeting -> a send_message tool call -> AgentActionLog row ->
 second tick is a no-op (idempotency)."""
 import json

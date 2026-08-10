@@ -1,4 +1,4 @@
-"""Step 19 (prompts/step_19_home_backend.md): home-dashboard backend --
+"""Home-dashboard backend --
 user-maintained todos CRUD + the Updates panel's query over events.
 
 Events are only ever created by jobs (ingest/heartbeat, later steps), so
@@ -23,9 +23,9 @@ from app.projects.paths import project_dir
 
 @pytest.fixture()
 def project(client):
-    """A team project owned by the client's throwaway manager (step 24's
+    """A team project owned by the client's throwaway manager (the fan-out's
     approve-with-linked-task tests need a real, scaffolded project db)."""
-    r = client.post("/api/projects", json={"name": "Approve Test Project", "kind": "team"})
+    r = client.post("/api/projects", json={"name": "Approve Test Project", "kind": "team", "description": "Test project description for automated tests."})
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
     yield pid
@@ -37,7 +37,7 @@ def project(client):
 # ────────────────────────────────────────────────────────
 
 def _mk_event(db, *, severity=1, ui_state="shown", type="fyi", title=None,
-              created_at=None, general=True):
+              created_at=None, occurred_at=None, general=True):
     ev = Event(
         id=uuid.uuid4().hex,
         type=type,
@@ -46,6 +46,7 @@ def _mk_event(db, *, severity=1, ui_state="shown", type="fyi", title=None,
         general=general,
         ui_state=ui_state,
         created_at=created_at or timeservice.now_ist(),
+        occurred_at=occurred_at,
     )
     db.add(ev)
     db.commit()
@@ -120,6 +121,34 @@ def test_events_severity_filter_and_ordering(client, db_session):
     assert mid.id == body["events"][2]["id"]
 
 
+def test_events_ordering_coalesces_occurred_at_over_created_at(client, db_session):
+    """Step 34: ordering must use COALESCE(occurred_at, created_at) -- a
+    heartbeat-batching delay means an event about something that happened
+    hours ago can get inserted (created_at) after one about something more
+    recent. The Updates panel must still order by when things actually
+    happened, not insertion order."""
+    now = timeservice.now_ist()
+    # Backdated: really happened 3h ago, but only just got inserted (batching
+    # delay) -- created_at is the most recent of the two rows.
+    backdated = _mk_event(
+        db_session, severity=2, title="backdated (really old)",
+        created_at=now, occurred_at=now - timedelta(hours=3),
+    )
+    # No occurred_at at all (e.g. unsourced claim) -- falls back to its own
+    # created_at, which is genuinely more recent than the backdated event's
+    # real occurrence time.
+    recent_no_occurred = _mk_event(
+        db_session, severity=2, title="recent, no occurred_at",
+        created_at=now - timedelta(hours=1), occurred_at=None,
+    )
+
+    body = client.get("/api/events?min_severity=1").json()
+    titles = [e["title"] for e in body["events"]]
+    assert titles == ["recent, no occurred_at", "backdated (really old)"]
+    assert body["events"][1]["occurred_at"] is not None
+    assert body["events"][0]["occurred_at"] is None
+
+
 def test_events_empty_state(client):
     body = client.get("/api/events").json()
     assert body["events"] == []
@@ -160,7 +189,7 @@ def test_events_state_404s(client):
     assert client.post("/api/events/nonexistent/promote").status_code == 404
 
 
-# ── Approve/Reject (step 24 — request events only) ──────────────────────
+# ── Approve/Reject (request events only) ───────────────────────────────
 
 def test_events_approve_request_excludes_from_default_query(client, db_session):
     ev = _mk_event(db_session, severity=2, type="request")

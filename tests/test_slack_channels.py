@@ -1,7 +1,7 @@
 """Slack conversation handling: conversation_type on NormalizedMessage,
 the pure conversations.history -> event-dict transform (now thread_ts-
 preserving), the conversations.list object -> channel_type mapping, and
-step 20's store-everything ingest behavior. Blocklist/noise selection
+store-everything ingest behavior. Blocklist/noise selection
 itself is covered in tests/test_poll_completion.py."""
 from app.integrations.slack import SlackConnector
 from app.integrations.base import ingest
@@ -32,7 +32,7 @@ def test_history_to_event_group_and_mpim():
 
 
 def test_history_to_event_preserves_thread_ts():
-    """Step 20: threaded replies carry the parent's ts -- it must survive
+    """Threaded replies carry the parent's ts -- it must survive
     the reshaping so normalize() can fold it into thread_key."""
     msg = {"type": "message", "user": "U_ALICE", "text": "reply", "ts": "445.000000", "thread_ts": "444.000000"}
     event = SlackConnector._history_message_to_event(msg, "C_ENG", "channel")
@@ -59,7 +59,7 @@ def test_history_to_event_skips_missing_user():
     assert SlackConnector._history_message_to_event(msg, "C_ENG", "channel") is None
 
 
-# --- conversations.list object -> channel_type (step 20) ------------------
+# --- conversations.list object -> channel_type -------------------------
 
 def test_conversation_object_type_mapping():
     assert SlackConnector._conversation_object_type({"is_im": True}) == "im"
@@ -72,17 +72,18 @@ def test_conversation_object_type_mapping():
 # --- normalize() conversation_type mapping --------------------------------
 
 def test_normalize_dm_sets_conversation_type_dm(client, db_session):
-    from app.database import TeamMember
+    """DM counterpart resolution's fast path now reads the manager's own
+    Employee.slack_id directly, needing manager_id threaded into normalize()."""
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
-    db_session.add_all([
-        TeamMember(id="U_MANAGER", name="Shivam", role="Manager", slack_handle="U_MANAGER"),
-        TeamMember(id="U_ALICE", name="Alice", role="Developer", slack_handle="U_ALICE"),
-    ])
-    db_session.commit()
+    cp_db = ControlPlaneSessionLocal()
+    get_employee_by_manager_id(cp_db, client.manager_id).slack_id = "U_MANAGER"
+    cp_db.commit()
+    cp_db.close()
 
     connector = SlackConnector()
     event = {"type": "message", "user": "U_ALICE", "channel": "D_1", "channel_type": "im", "text": "hi", "ts": "1.0"}
-    normalized = connector.normalize(db_session, event)
+    normalized = connector.normalize(db_session, event, client.manager_id)
     assert normalized is not None
     assert normalized.conversation_type == "dm"
     assert normalized.receiver_id == "U_MANAGER"
@@ -120,10 +121,41 @@ def test_normalize_unrecognized_channel_type_returns_none(client, db_session):
     assert connector.normalize(db_session, event) is None
 
 
-# --- ingest(): store-everything (step 20) ---------------------------------
+# --- channel/group session-window thread grouping --------------------------
+
+def test_channel_top_level_messages_within_gap_share_thread_key(client, db_session):
+    """Two top-level (no thread_ts) channel messages close in time land in
+    the SAME thread_key -- a live back-and-forth should batch into one LLM
+    call, not one per message."""
+    connector = SlackConnector()
+    first = {"type": "message", "client_msg_id": "s1", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "starting the migration now", "ts": "1000.0"}
+    second = {"type": "message", "client_msg_id": "s2", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "done, all green", "ts": "1300.0"}  # 5 min later
+
+    m1, _ = ingest(connector, first, db_session, client.manager_id)
+    m2, _ = ingest(connector, second, db_session, client.manager_id)
+    assert m1.thread_id == m2.thread_id
+
+
+def test_channel_top_level_messages_after_gap_start_new_thread(client, db_session):
+    """A top-level channel message arriving after a real gap (unrelated
+    topic, most likely) starts a fresh thread_key instead of chaining onto
+    whatever the channel's last message happened to be about."""
+    from app.config import SLACK_CHANNEL_SESSION_GAP_MINUTES
+
+    connector = SlackConnector()
+    gap_seconds = SLACK_CHANNEL_SESSION_GAP_MINUTES * 60 + 60
+    first = {"type": "message", "client_msg_id": "g1", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "morning standup notes", "ts": "2000.0"}
+    later = {"type": "message", "client_msg_id": "g2", "user": "U_ALICE", "channel": "C_ENG", "channel_type": "channel", "text": "unrelated afternoon question", "ts": str(2000.0 + gap_seconds)}
+
+    m1, _ = ingest(connector, first, db_session, client.manager_id)
+    m2, _ = ingest(connector, later, db_session, client.manager_id)
+    assert m1.thread_id != m2.thread_id
+
+
+# --- ingest(): store-everything -------------------------------------------
 
 def test_ingest_channel_message_stored_without_any_list(client, db_session):
-    """v1 required the channel on an allowlist; step 20 stores everything."""
+    """No allowlist -- every channel message is stored."""
     from app.database import TeamMember
 
     db_session.add_all([

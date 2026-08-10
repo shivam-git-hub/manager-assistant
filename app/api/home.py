@@ -1,5 +1,4 @@
-"""Home-dashboard backend (step 19 -- prompts/step_19_home_backend.md,
-spec/architecture_v2_kb.md §2/§5): user-maintained todos CRUD + the Updates
+"""Home-dashboard backend: user-maintained todos CRUD + the Updates
 panel's query over events, per-user db via get_manager_db like the other
 manager-scoped routers.
 
@@ -16,19 +15,19 @@ from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
 
 from app import timeservice
-from app.controlplane.auth import get_current_manager
-from app.controlplane.models import Manager
+from app.controlplane.auth import get_current_employee
+from app.controlplane.models import Employee
 from app.database import Event, Todo, UnifiedMessage
 from app.tenancy.db import get_manager_db
 
 logger = logging.getLogger(__name__)
 
 # ui_state values that mean "resolved, stop showing by default" -- dismiss
-# (any event) and approve/reject (request events only, step 24). Distinct
+# (any event) and approve/reject (request events only). Distinct
 # from "promoted", which always overrides regardless of severity/resolution.
 RESOLVED_UI_STATES = {"dismissed", "approved", "rejected"}
 
@@ -74,6 +73,10 @@ def _event_dict(e: Event) -> dict:
         "general": e.general,
         "ui_state": e.ui_state,
         "created_at": e.created_at.isoformat() if e.created_at else None,
+        # When the underlying messages actually happened, vs. created_at
+        # ("when we noticed") -- None for events predating this column or
+        # whose claims have no resolvable source (see app.projectkb.occurrence).
+        "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
     }
 
 
@@ -139,23 +142,31 @@ def list_events(
     project_id: Optional[str] = None,
     db: Session = Depends(get_manager_db),
 ) -> dict:
-    """The Updates panel query (spec §2): events at/above the severity
-    threshold minus resolved ones (dismissed, or approved/rejected --
-    step 24 requests), plus promoted ones regardless of severity.
+    """The Updates panel query: events at/above the severity threshold
+    minus resolved ones (dismissed, or approved/rejected requests), plus
+    promoted ones regardless of severity.
     include_dismissed=true is the "View All" screen -- resolved rows come
     back too (threshold still applies to non-promoted rows; the param
     name predates approve/reject but keeping it avoids a frontend/backend
     rename for the same "show everything" toggle).
     project_id narrows to events tagged with that project (the project
-    dashboard's panels, step 21) -- Python-side filter over the JSON list
+    dashboard's panels) -- Python-side filter over the JSON list
     column, fine at this scale."""
     visible = or_(Event.severity >= min_severity, Event.ui_state == "promoted")
     query = select(Event).where(visible)
     if not include_dismissed:
         query = query.where(or_(Event.ui_state.notin_(RESOLVED_UI_STATES), Event.ui_state == "promoted"))
 
+    # COALESCE: occurred_at is NULL for events predating that column or with
+    # unsourced claims, so ordering must fall back to created_at per-row
+    # rather than reading occurred_at alone -- otherwise every NULL sorts
+    # together instead of interleaving correctly with dated rows.
     matching = db.scalars(
-        query.order_by(Event.severity.desc(), Event.created_at.desc(), Event.id.desc())
+        query.order_by(
+            Event.severity.desc(),
+            func.coalesce(Event.occurred_at, Event.created_at).desc(),
+            Event.id.desc(),
+        )
     ).all()
     if project_id is not None:
         matching = [
@@ -185,7 +196,7 @@ class ManualMessageIn(BaseModel):
 @router.post("/messages/manual", status_code=status.HTTP_201_CREATED)
 def add_manual_message(
     payload: ManualMessageIn,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     db: Session = Depends(get_manager_db),
 ) -> dict:
     """Minutes of meetings and pasted notes enter as unified_messages rows
@@ -239,7 +250,7 @@ def promote_event(event_id: str, db: Session = Depends(get_manager_db)) -> dict:
 
 @router.post("/events/{event_id}/approve")
 def approve_event(event_id: str, db: Session = Depends(get_manager_db)) -> dict:
-    """Requests-panel Approve (step 24, per Shivam 2026-07-23): scoped to
+    """Requests-panel Approve: scoped to
     type="request" events only -- blockers/conflicts get their own resolve
     semantics later, not this. The status flip is always applied and
     always succeeds; if the project fan-out job (heartbeat.py's

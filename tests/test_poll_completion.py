@@ -1,7 +1,6 @@
-"""Step 20 (prompts/step_20_poll_completion.md): blocklist + noise
-classification, thread_key capture for both sources, the /api/blocklist
-management API, and the manual-MoM input endpoint."""
-import json
+"""Poll completion: blocklist classification,
+thread_key capture for both sources, the /api/blocklist management API, and
+the manual-MoM input endpoint."""
 import uuid
 
 from fastapi.testclient import TestClient
@@ -48,18 +47,22 @@ def test_outlook_normalize_captures_conversation_id(client, db_session):
 
 
 def test_slack_normalize_thread_key_dm(client, db_session):
+    """A DM channel is one conversation -- every message in it (regardless
+    of Slack's own thread_ts, which a flat back-and-forth never sets) gets
+    the SAME thread_key, so the ingest job batches them into one LLM call."""
     from app.integrations.slack import SlackConnector
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
-    db_session.add_all([
-        TeamMember(id="U_MANAGER", name="Shivam", role="Manager", slack_handle="U_MANAGER"),
-    ])
-    db_session.commit()
+    cp_db = ControlPlaneSessionLocal()
+    get_employee_by_manager_id(cp_db, client.manager_id).slack_id = "U_MANAGER"
+    cp_db.commit()
+    cp_db.close()
 
     connector = SlackConnector()
     top = {"type": "message", "user": "U_A", "channel": "D_1", "channel_type": "im", "text": "root", "ts": "100.5"}
     reply = {"type": "message", "user": "U_A", "channel": "D_1", "channel_type": "im", "text": "reply", "ts": "101.5", "thread_ts": "100.5"}
-    assert connector.normalize(db_session, top).thread_key == "D_1:100.5"
-    assert connector.normalize(db_session, reply).thread_key == "D_1:100.5"
+    assert connector.normalize(db_session, top, client.manager_id).thread_key == "D_1"
+    assert connector.normalize(db_session, reply, client.manager_id).thread_key == "D_1"
 
 
 # --- blocklist module ------------------------------------------------------
@@ -108,23 +111,6 @@ def test_classify_blocked_channel(client):
     blocklist.add_blocked_channel(mid, "Memes", "slack", "C_MEMES")
     m = _msg(source="slack", sender_raw_id="U_A", receiver_raw_id="C_MEMES", channel_raw_id="C_MEMES")
     assert blocklist.classify_message(mid, m) == "blocked"
-
-
-def test_classify_noise_rules(client):
-    mid = client.manager_id
-    assert blocklist.classify_message(mid, _msg(sender_raw_id="noreply@service.com")) == "noise"
-    assert blocklist.classify_message(mid, _msg(sender_raw_id="do-not-reply@corp.com")) == "noise"
-    assert blocklist.classify_message(mid, _msg(subject="Accepted: Design review")) == "noise"
-    assert blocklist.classify_message(mid, _msg(raw_metadata=json.dumps({"internetMessageHeaders": [{"name": "List-Unsubscribe", "value": "<mailto:x>"}]}))) == "noise"
-
-
-def test_classify_noise_rules_match_mid_local_part(client):
-    """Real automated senders routinely put the noise marker mid-local-part,
-    not at the start (found live 2026-07-23: account-security-noreply@... and
-    azure-noreply@... both sailed past a startswith-only check)."""
-    mid = client.manager_id
-    assert blocklist.classify_message(mid, _msg(sender_raw_id="account-security-noreply@accountprotection.microsoft.com")) == "noise"
-    assert blocklist.classify_message(mid, _msg(sender_raw_id="azure-noreply@microsoft.com")) == "noise"
 
 
 def test_classify_clean_message_passes(client):

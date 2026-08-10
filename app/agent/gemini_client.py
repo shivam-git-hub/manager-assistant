@@ -1,4 +1,5 @@
 import os
+import random
 import time
 import json
 import logging
@@ -7,6 +8,7 @@ from typing import Optional, List, Dict, Any, Callable
 import httpx
 
 from app.config import GEMINI_API_KEY, SMART_MODEL, FLASH_MODEL
+from app.agent.rate_limit import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +143,17 @@ class GeminiClient:
         api_key = self._api_key or GEMINI_API_KEY
         if not api_key:
             raise ValueError("GEMINI_API_KEY must be configured to use the Gemini Client")
-            
+
+        if json_mode and tools:
+            # Gemini 400s the whole request if responseMimeType:
+            # application/json is set alongside function declarations
+            # (CLAUDE.md critical bug #1's sibling issue) -- caught here,
+            # not left to a live 400, since every tool-using agent (the
+            # chat harness, app.agent.runner) must never combine the two.
+            raise ValueError("json_mode cannot be combined with tools -- Gemini rejects responseMimeType alongside function declarations.")
+
         contents, system_instruction = messages_to_gemini_contents(messages)
-        
+
         # Configuration setup
         config = {
             "temperature": temperature,
@@ -170,7 +180,9 @@ class GeminiClient:
         attempts = 3
         last_error = None
         resp_json = None
-        
+
+        get_rate_limiter().acquire()
+
         for i in range(attempts):
             try:
                 resp_json = self._transport(url, payload)
@@ -179,15 +191,35 @@ class GeminiClient:
                 last_error = e
                 # Exclude httpx exceptions/HTTP errors from breaking right away if they look like rate limits/server issues
                 status_code = None
+                response_obj = None
                 if hasattr(e, "response") and getattr(e, "response") is not None:
-                    status_code = getattr(e, "response").status_code
-                
-                # If we've exhausted attempts, or the error is not a 429/5xx, raise
+                    response_obj = getattr(e, "response")
+                    status_code = response_obj.status_code
+
+                # If we've exhausted attempts, or the error is not a 429/5xx, raise.
+                # Only 2 of these 3 attempts ever sleep -- the 3rd (last) attempt
+                # re-raises immediately on failure rather than sleeping first.
                 if i == attempts - 1 or (status_code is not None and status_code not in (429, 500, 502, 503, 504)):
                     raise e
-                    
-                backoff = 2 ** (i + 1)  # 2s, 4s, 8s
-                logger.warning(f"Gemini API request failed ({e}). Retrying in {backoff}s...")
+
+                retry_after = None
+                if response_obj is not None:
+                    header_val = response_obj.headers.get("Retry-After")
+                    if header_val is not None:
+                        try:
+                            retry_after = float(header_val)
+                        except ValueError:
+                            retry_after = None
+
+                if retry_after is not None:
+                    backoff = retry_after
+                else:
+                    base_backoff = 2 ** (i + 1)  # attempt 0 -> 2s, attempt 1 -> 4s
+                    # +/-25% jitter so a burst of parallel callers backing off
+                    # from the same 429/5xx don't all retry in lockstep.
+                    backoff = base_backoff * random.uniform(0.75, 1.25)
+
+                logger.warning(f"Gemini API request failed ({e}). Retrying in {backoff:.1f}s...")
                 time.sleep(backoff)
         
         if resp_json is None:
@@ -217,6 +249,12 @@ class GeminiClient:
         tool_calls = []
         
         for part in parts:
+            if part.get("thought"):
+                # Gemini 3.x "thinking" parts -- a reasoning-trace part alongside
+                # the real answer part, not itself an answer. Concatenating it in
+                # produced two overlapping JSON fragments stitched together with
+                # no separator, breaking every downstream json.loads() call.
+                continue
             if "text" in part:
                 text_content = part["text"] if text_content is None else text_content + part["text"]
             elif "functionCall" in part:

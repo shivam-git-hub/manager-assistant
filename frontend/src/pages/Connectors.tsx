@@ -7,14 +7,14 @@ import {
   disconnectOutlook,
   disconnectSlack,
   getConnections,
+  goToOutlookConnectMail,
   goToOutlookEnableSend,
-  goToOutlookLogin,
   goToSlackInstall,
   revokeOutlookSend,
   type Connections,
 } from "@/lib/api";
 
-// Connectors page (wireframe 10.png): one row per connector, Read/Send
+// Connectors page: one row per connector, Read/Send
 // permission pills, Grant/Revoke actions, Teams parked under "Coming
 // Soon". All state comes from GET /api/auth/connections. Redesigned
 // 2026-07-23: Slack here is ONLY message tracking (a user-token grant,
@@ -181,7 +181,7 @@ export default function Connectors() {
                   title="Forgets Pulse's copy of the mailbox tokens (send access goes with it)"
                 />
               ) : (
-                <ActionButton label="Grant" onClick={goToOutlookLogin} />
+                <ActionButton label="Grant" onClick={goToOutlookConnectMail} />
               )
             }
           />

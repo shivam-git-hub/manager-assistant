@@ -31,12 +31,11 @@ MS_GRAPH_REDIRECT_URI = os.getenv("MS_GRAPH_REDIRECT_URI", f"http://localhost:{P
 # page -- see app/integrations/SLACK.md.
 SLACK_REDIRECT_URI = os.getenv("SLACK_REDIRECT_URI", f"http://localhost:{PORT}/auth/slack/callback")
 
-# Agent pool (step 17 piece 2a, see prompts/step_17_agent_pool.md) -- single
-# shared admin-issued code gating who can claim a pre-created pool bot.
+# Agent pool -- single shared admin-issued code gating who can claim a pre-created pool bot.
 AGENT_POOL_ACCESS_CODE = os.getenv("AGENT_POOL_ACCESS_CODE")
 
-# Slack "reader" app (redesigned 2026-07-23, see Agent/SlackReaderInstallation
-# docstrings in app/controlplane/models.py) -- ONE Slack app, shared by every
+# Slack "reader" app (see the Agent/Employee docstrings in
+# app/controlplane/models.py) -- ONE Slack app, shared by every
 # manager, requesting only a user-token grant to track that manager's own
 # messages. Deliberately separate from the Agent pool's per-agent Slack app
 # credentials (see app/controlplane/slack_auth.py, app/integrations/SLACK.md).
@@ -51,8 +50,8 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # LLM Config Resolution: Env -> config.json -> Defaults
 CONFIG_JSON_PATH = BASE_DIR / "config.json"
 
-smart_model_val = "gemini-2.5-pro"
-flash_model_val = "gemini-2.5-flash"
+smart_model_val = "gemini-3.5-flash"
+flash_model_val = "gemini-3.5-flash-lite"
 gemini_api_key_val = None
 
 if CONFIG_JSON_PATH.exists():
@@ -83,31 +82,62 @@ WORK_HOURS_END = 19
 # projectkb job cadence defaults -- job_schedule.json (per-deployment
 # override) wins over these when present; see app/projectkb/job_schedule.py.
 PROJECTKB_POLL_SECONDS = int(os.getenv("PROJECTKB_POLL_SECONDS", "60"))
+# Where app.projectkb.scheduler persists each job's last-run timestamp
+# across process restarts. Env-overridable (JOB_STATE_FILENAME, same
+# pattern as CONTROLPLANE_DB_FILENAME) so tests don't clobber the real file.
+JOB_STATE_PATH = DATA_DIR / os.getenv("JOB_STATE_FILENAME", "job_state.json")
 INGESTION_INTERVAL_MINUTES = float(os.getenv("INGESTION_INTERVAL_MINUTES", "15"))
 INGESTION_MESSAGE_THRESHOLD = int(os.getenv("INGESTION_MESSAGE_THRESHOLD", "10"))
-# Max messages the ingest job (step 22) will send to the LLM in a single
-# run -- distinct from INGESTION_MESSAGE_THRESHOLD above (which the
-# scheduler doesn't currently read at all; this one gates work done PER
-# run, not whether a run happens). Overflow waits for the next tick.
+# Max messages the ingest job will send to the LLM in a SINGLE
+# CALL -- a thread larger than this is split into consecutive chunks (never
+# reordered, never merged across threads). Distinct from
+# INGESTION_MESSAGE_THRESHOLD above (which the scheduler doesn't currently
+# read at all).
 INGESTION_BATCH_SIZE = int(os.getenv("INGESTION_BATCH_SIZE", "30"))
+# Soft char budget per LLM call, applied alongside INGESTION_BATCH_SIZE when
+# chunking a thread -- whichever limit is hit first ends the chunk. A single
+# message longer than this on its own still gets sent as its own one-message
+# chunk (best-effort; not truncated) rather than being dropped or split.
+INGESTION_MAX_CHARS_PER_CALL = int(os.getenv("INGESTION_MAX_CHARS_PER_CALL", "20000"))
+# Max LLM calls (chunks, across all survivor threads combined) the ingest
+# job will make in a single run -- a safety ceiling for a large backlog
+# (e.g. first ingestion after connecting a mailbox with years of history).
+# Everything within this run's survivor set gets processed across possibly
+# many calls; only calls beyond this ceiling wait for the next tick.
+INGESTION_MAX_CALLS_PER_RUN = int(os.getenv("INGESTION_MAX_CALLS_PER_RUN", "40"))
 HEARTBEAT_INTERVAL_MINUTES = float(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "60"))
-# Max unprocessed claims the heartbeat job (step 23) will judge into events
+# Max unprocessed claims the heartbeat job will judge into events
 # in a single run -- overflow waits for next tick, same shape as
 # INGESTION_BATCH_SIZE above.
 HEARTBEAT_CLAIM_BATCH_SIZE = int(os.getenv("HEARTBEAT_CLAIM_BATCH_SIZE", "40"))
 DREAM_INTERVAL_MINUTES = int(os.getenv("DREAM_INTERVAL_MINUTES", "1440"))
-# Max un-dreamed Event rows the dream job (step 25) will synthesize in a
+# Max un-dreamed Event rows the dream job will synthesize in a
 # single run -- overflow waits for next tick, same shape as the other
 # jobs' batch caps.
 DREAM_EVENT_BATCH_SIZE = int(os.getenv("DREAM_EVENT_BATCH_SIZE", "200"))
 LINT_INTERVAL_MINUTES = int(os.getenv("LINT_INTERVAL_MINUTES", "10080"))
+# Staleness threshold (Part 1's deterministic check 4): an owned project's
+# summary.md/events.md untouched for this many days WHILE new events kept
+# arriving for it is a lint finding -- a signal the dream job isn't keeping
+# that project's synthesis current, not that the project itself is idle.
+LINT_STALE_PROJECT_DAYS = int(os.getenv("LINT_STALE_PROJECT_DAYS", "14"))
 OUTLOOK_POLL_INTERVAL_MINUTES = int(os.getenv("OUTLOOK_POLL_INTERVAL_MINUTES", "5"))
 SLACK_POLL_INTERVAL_MINUTES = int(os.getenv("SLACK_POLL_INTERVAL_MINUTES", "5"))
+# Slack channel/group top-level messages (no thread_ts -- Slack itself
+# gives no conversation signal for these) are grouped into the same
+# ingestion thread_key as the channel's own most recent message if it's
+# within this many minutes; otherwise a new thread session starts. Mirrors
+# how a DM is always one thread and a real reply-in-thread always groups --
+# see app.integrations.slack.SlackConnector.normalize.
+SLACK_CHANNEL_SESSION_GAP_MINUTES = int(os.getenv("SLACK_CHANNEL_SESSION_GAP_MINUTES", "30"))
 
-# Personal agent (step 28 -- prompts/step_28_personal_agent.md). Frequent
-# enough to catch the 2h pre-meeting-brief window without drifting; most
-# ticks have zero candidates (see app/agent/select.py) so the cost of a
-# short interval is just a DB scan, not an LLM call.
+# Personal agent. RESERVED/UNUSED: agent_heartbeat is deliberately NOT
+# registered in app.projectkb.scheduler's _JOBS (it sends real Slack DMs,
+# so it's manual-trigger-only -- see that job's own docstring), so nothing
+# in this codebase currently reads this constant on any automatic cadence.
+# Kept for when/if an automatic tick is deliberately added later; the
+# "frequent enough for the 2h pre-meeting-brief window" reasoning below
+# describes the interval it WOULD run at, not a live cadence today.
 AGENT_HEARTBEAT_INTERVAL_MINUTES = float(os.getenv("AGENT_HEARTBEAT_INTERVAL_MINUTES", "30"))
 # How far ahead a scheduled meeting must be to become a pre-meeting-brief
 # candidate.
@@ -120,3 +150,31 @@ CONFLICT_ESCALATE_AFTER_HOURS = int(os.getenv("CONFLICT_ESCALATE_AFTER_HOURS", "
 # a tracked Meeting row.
 AGENT_MEETING_SCAN_LOOKBACK_HOURS = int(os.getenv("AGENT_MEETING_SCAN_LOOKBACK_HOURS", "48"))
 AGENT_MEETING_SCAN_MAX_CLAIMS = int(os.getenv("AGENT_MEETING_SCAN_MAX_CLAIMS", "20"))
+
+# Agentic runner foundation (step 33). Process-wide Gemini call rate cap --
+# 15/min is comfortably under typical free/low-tier Gemini RPM limits while
+# still letting a heartbeat/dream pass over several managers run without
+# stalling. 0 disables the limiter entirely (tests set this so no test ever
+# sleeps -- see tests/conftest.py).
+LLM_MAX_CALLS_PER_MINUTE = int(os.getenv("LLM_MAX_CALLS_PER_MINUTE", "15"))
+# Default per-tool result cap (app.agent.registry.ToolRegistry.register) --
+# small enough that a handful of tool calls plus the KB context still fit
+# comfortably under a model's context window, large enough that a normal
+# list_tasks/list_team result never needs compaction.
+AGENT_DEFAULT_TOOL_RESULT_CHARS = int(os.getenv("AGENT_DEFAULT_TOOL_RESULT_CHARS", "4000"))
+# Per-agent-spec LLM call ceilings for the future KB agents (heartbeat/dream/
+# lint job rewrites, Phase B+) -- defined now so those steps only wire an
+# AgentSpec, never invent a new budget knob. User-level and project-fanout
+# passes get separate ceilings since project fan-out runs once per
+# project-with-events, not once per manager.
+KB_HEARTBEAT_MAX_LLM_CALLS = int(os.getenv("KB_HEARTBEAT_MAX_LLM_CALLS", "6"))
+KB_HEARTBEAT_PROJECT_MAX_LLM_CALLS = int(os.getenv("KB_HEARTBEAT_PROJECT_MAX_LLM_CALLS", "5"))
+KB_DREAM_MAX_LLM_CALLS = int(os.getenv("KB_DREAM_MAX_LLM_CALLS", "6"))
+KB_DREAM_PROJECT_MAX_LLM_CALLS = int(os.getenv("KB_DREAM_PROJECT_MAX_LLM_CALLS", "6"))
+KB_LINT_MAX_LLM_CALLS = int(os.getenv("KB_LINT_MAX_LLM_CALLS", "4"))
+KB_SYNTHESIS_MAX_LLM_CALLS = int(os.getenv("KB_SYNTHESIS_MAX_LLM_CALLS", "12"))
+# Wall-clock ceiling for one KB agent run (app.agent.runner.run_spec's
+# deadline_seconds) -- generous enough to cover several tool-call round
+# trips plus Gemini's own latency without letting one stuck manager stall a
+# whole scheduler pass indefinitely.
+KB_AGENT_DEADLINE_SECONDS = float(os.getenv("KB_AGENT_DEADLINE_SECONDS", "180"))

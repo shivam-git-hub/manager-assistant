@@ -1,13 +1,13 @@
-"""Context assembly for the personal agent (step 28 §4) -- shared by both
-the agent heartbeat job and the chat entry points (dashboard + Slack DM).
-Pulls from the real v2 pipeline output (summary.md/events.md/memory.md,
-Event rows, the projects registry) instead of the dead v1 tables the old
-app/agent/situation.py read from.
+"""Context assembly for the personal agent -- shared by both the agent
+heartbeat job and the chat entry points (dashboard + Slack DM). Pulls from
+pipeline output: summary.md/events.md/memory.md, Event rows, and the
+projects registry.
 """
 import json
 from datetime import timedelta
 from typing import List
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import timeservice
@@ -26,30 +26,23 @@ def _tail(text: str, max_chars: int = 1500) -> str:
 def visible_projects_for_manager(manager_id: str) -> List[dict]:
     """Owned + member projects (read scope -- broader than
     app.agent.select.owned_projects_for_manager's write scope)."""
-    from sqlalchemy import func
     from app.controlplane.models import (
         SessionLocal as ControlPlaneSessionLocal,
-        Manager,
         Project as RegistryProject,
-        ProjectMember,
         Employee,
+        get_member_list,
     )
 
     cdb = ControlPlaneSessionLocal()
     try:
-        manager = cdb.get(Manager, manager_id)
+        manager = cdb.get(Employee, manager_id)
         if manager is None:
             return []
         owned = cdb.query(RegistryProject).filter(RegistryProject.manager_user_id == manager_id).all()
         owned_ids = {p.id for p in owned}
         member_ids = {
-            row.project_id
-            for row in (
-                cdb.query(ProjectMember.project_id)
-                .join(Employee, ProjectMember.employee_id == Employee.id)
-                .filter(func.lower(Employee.email) == manager.email.lower())
-                .all()
-            )
+            p.id for p in cdb.query(RegistryProject).all()
+            if any(m["employee_id"] == manager_id for m in get_member_list(p))
         }
         all_ids = owned_ids | member_ids
         if not all_ids:
@@ -63,27 +56,30 @@ def visible_projects_for_manager(manager_id: str) -> List[dict]:
 def team_roster_for_manager(manager_id: str) -> List[dict]:
     """Employees who are members of any project this manager touches --
     not the whole org (keeps the roster relevant + small)."""
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, ProjectMember, Employee
+    from app.controlplane.models import (
+        SessionLocal as ControlPlaneSessionLocal,
+        Employee,
+        Project as RegistryProject,
+        get_member_list,
+    )
 
     project_ids = [p["id"] for p in visible_projects_for_manager(manager_id)]
     if not project_ids:
         return []
     cdb = ControlPlaneSessionLocal()
     try:
-        rows = (
-            cdb.query(Employee)
-            .join(ProjectMember, ProjectMember.employee_id == Employee.id)
-            .filter(ProjectMember.project_id.in_(project_ids))
-            .distinct()
-            .all()
-        )
+        projects = cdb.query(RegistryProject).filter(RegistryProject.id.in_(project_ids)).all()
+        employee_ids = {m["employee_id"] for p in projects for m in get_member_list(p)}
+        if not employee_ids:
+            return []
+        rows = cdb.query(Employee).filter(Employee.id.in_(employee_ids)).all()
         return [{"id": e.id, "name": e.name, "role": e.role, "has_slack": bool(e.slack_id)} for e in rows]
     finally:
         cdb.close()
 
 
 def build_agent_context(db: Session, manager_id: str) -> str:
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee
     from app.tenancy.paths import manager_memory_md_path
     from app.projects.paths import summary_md_path, events_md_path
 
@@ -91,7 +87,7 @@ def build_agent_context(db: Session, manager_id: str) -> str:
 
     cdb = ControlPlaneSessionLocal()
     try:
-        manager = cdb.get(Manager, manager_id)
+        manager = cdb.get(Employee, manager_id)
     finally:
         cdb.close()
     manager_name = manager.name if manager else manager_id
@@ -116,10 +112,17 @@ def build_agent_context(db: Session, manager_id: str) -> str:
     memory_md = _read_if_exists(manager_memory_md_path(manager_id))
 
     today = now.date()
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Today" means EITHER it happened today (occurred_at) OR we only
+    # noticed it today (created_at, e.g. an unsourced event, or a
+    # backdated one whose real occurrence was yesterday but only just got
+    # judged) -- an OR of both, not a straight COALESCE-only filter, so a
+    # late-arriving event about yesterday doesn't silently vanish (there's
+    # no "yesterday" panel to catch it instead).
     todays_events = (
         db.query(Event)
-        .filter(Event.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0))
-        .order_by(Event.created_at.desc())
+        .filter(or_(func.coalesce(Event.occurred_at, Event.created_at) >= start_of_day, Event.created_at >= start_of_day))
+        .order_by(func.coalesce(Event.occurred_at, Event.created_at).desc())
         .limit(30)
         .all()
     )

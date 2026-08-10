@@ -1,5 +1,5 @@
-"""Step 18 -- global projects registry, employees directory, project
-scaffold (prompts/step_18_registry_and_scaffold.md). Follows the isolation
+"""Global projects registry, employees directory, project
+scaffold. Follows the isolation
 patterns already used by tests/test_agents.py / tests/test_auth.py (direct
 ControlPlaneSessionLocal() use for control-plane rows) and
 tests/test_tenancy.py (real on-disk dirs, rmtree'd in teardown -- not
@@ -18,7 +18,7 @@ from app.controlplane.models import (
     SessionLocal as ControlPlaneSessionLocal,
     Employee,
     Project as RegistryProject,
-    ProjectMember,
+    get_member_list,
 )
 from app.projects.paths import (
     project_dir,
@@ -44,17 +44,24 @@ def _login(email, name="Test User"):
 
 
 def _make_employee(email, name, slack_id=None, role=None, skills=None):
+    """Upsert by email -- since login (dev-login/Outlook) now also creates
+    an Employee row, a test that first logs a person in via
+    `extra_login` and then calls this to attach project-relevant fields
+    (role/skills) must update that existing row, not insert a duplicate."""
     db = ControlPlaneSessionLocal()
     try:
-        emp = Employee(
-            id=uuid.uuid4().hex,
-            email=email.lower(),
-            name=name,
-            slack_id=slack_id,
-            role=role,
-            skills=json.dumps(skills) if skills else None,
-        )
-        db.add(emp)
+        emp = db.query(Employee).filter(Employee.email == email.lower()).first()
+        if emp is None:
+            emp = Employee(id=uuid.uuid4().hex, email=email.lower(), name=name)
+            db.add(emp)
+        else:
+            emp.name = name
+        if slack_id is not None:
+            emp.slack_id = slack_id
+        if role is not None:
+            emp.role = role
+        if skills is not None:
+            emp.skills = json.dumps(skills)
         db.commit()
         db.refresh(emp)
         return {"id": emp.id, "email": emp.email, "name": emp.name}
@@ -117,8 +124,8 @@ def test_create_team_project_scaffolds_everything(client, cleanup_projects):
         assert row.manager_user_id == client.manager_id
         assert row.kind == "team"
 
-        members = db.query(ProjectMember).filter(ProjectMember.project_id == project_id).all()
-        assert {m.employee_id for m in members} == {emp_a["id"], emp_b["id"]}
+        members = get_member_list(row)
+        assert {m["employee_id"] for m in members} == {emp_a["id"], emp_b["id"]}
     finally:
         db.close()
 
@@ -148,6 +155,7 @@ def test_get_projects_visibility_manager_member_stranger(client, extra_login, cl
 
     r = client.post("/api/projects", json={
         "name": "Voyager",
+        "description": "Cross-team visibility test project",
         "kind": "team",
         "member_employee_ids": [{"employee_id": emp_carol["id"], "role": "designer"}],
     })
@@ -182,7 +190,9 @@ def test_get_projects_visibility_manager_member_stranger(client, extra_login, cl
 def test_personal_project_is_private_and_rejects_members(client, extra_login, cleanup_projects):
     other_client = extra_login("erin@example.com", "Erin")
 
-    r = client.post("/api/projects", json={"name": "My Task List", "kind": "personal"})
+    r = client.post("/api/projects", json={
+        "name": "My Task List", "kind": "personal", "description": "Personal scratch task list",
+    })
     assert r.status_code == 201, r.text
     project_id = r.json()["id"]
     cleanup_projects.append(project_id)
@@ -196,6 +206,7 @@ def test_personal_project_is_private_and_rejects_members(client, extra_login, cl
     emp = _make_employee("frank@example.com", "Frank")
     r_bad = client.post("/api/projects", json={
         "name": "Bad Personal",
+        "description": "Personal project that wrongly includes members",
         "kind": "personal",
         "member_employee_ids": [{"employee_id": emp["id"]}],
     })
@@ -216,6 +227,7 @@ def test_project_detail_404_and_patch_permissions(client, extra_login, cleanup_p
 
     r = client.post("/api/projects", json={
         "name": "Atlas",
+        "description": "Detail/patch permission test project",
         "kind": "team",
         "member_employee_ids": [{"employee_id": emp_grace["id"], "role": "lead"}],
     })
@@ -242,13 +254,13 @@ def test_project_detail_404_and_patch_permissions(client, extra_login, cleanup_p
 
     # PATCH by manager: add ivan, remove grace.
     r_patch = client.patch(f"/api/projects/{project_id}", json={
-        "description": "Updated description",
+        "description": "Updated description with enough length",
         "add_member_employee_ids": [{"employee_id": emp_ivan["id"], "role": "eng"}],
         "remove_member_employee_ids": [emp_grace["id"]],
     })
     assert r_patch.status_code == 200, r_patch.text
     body = r_patch.json()
-    assert body["description"] == "Updated description"
+    assert body["description"] == "Updated description with enough length"
     member_ids_after = {m["employee_id"] for m in body["members"]}
     assert member_ids_after == {emp_ivan["id"]}
 
@@ -269,42 +281,3 @@ def test_get_employees_returns_seeded_directory(client):
     assert by_email["judy@example.com"]["slack_id"] == "U_JUDY"
     assert by_email["judy@example.com"]["skills"] == ["planning"]
     assert by_email["kim@example.com"]["skills"] == ["python", "sql"]
-
-
-# ────────────────────────────────────────────────────────
-# 6. Seed script upsert: run twice with an edit -> no duplicates, updated
-# ────────────────────────────────────────────────────────
-
-def test_seed_employees_script_upserts_by_email(clean_controlplane_db, tmp_path):
-    from scripts.seed_employees import seed
-
-    employees_path = tmp_path / "employees.json"
-    employees_path.write_text(json.dumps([
-        {"email": "Leo@Example.com", "name": "Leo", "role": "Intern", "skills": ["excel"]},
-    ]), encoding="utf-8")
-
-    seed(employees_path)
-
-    db = ControlPlaneSessionLocal()
-    try:
-        rows = db.query(Employee).filter(Employee.email == "leo@example.com").all()
-        assert len(rows) == 1
-        assert rows[0].role == "Intern"
-    finally:
-        db.close()
-
-    # Re-run with an edited role/skills for the same email.
-    employees_path.write_text(json.dumps([
-        {"email": "Leo@Example.com", "name": "Leo", "role": "Senior Intern", "skills": ["excel", "sql"]},
-    ]), encoding="utf-8")
-
-    seed(employees_path)
-
-    db = ControlPlaneSessionLocal()
-    try:
-        rows = db.query(Employee).filter(Employee.email == "leo@example.com").all()
-        assert len(rows) == 1
-        assert rows[0].role == "Senior Intern"
-        assert json.loads(rows[0].skills) == ["excel", "sql"]
-    finally:
-        db.close()

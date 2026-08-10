@@ -1,8 +1,4 @@
-"""System prompt for the personal agent (step 28). Full rewrite of the old
-file, which read from the dead v1 TeamMember/Project tables (no rows ever
-populated in v2) and cited a `timeline entry ID` citation scheme ([T12])
-that doesn't exist in v2 -- claims/events aren't numbered that way.
-"""
+"""System prompt for the personal agent."""
 from app.agent.context import build_agent_context
 
 STABLE_PROMPT = """You are Harry, a professional, concise AI assistant working for one manager (your owner).

@@ -1,8 +1,18 @@
+import { useSearchParams } from "react-router-dom";
 import amexLogo from "@/assets/amex.png";
 import outlookIcon from "@/assets/outlook_icon.png";
 import { goToOutlookLogin } from "@/lib/api";
 
+const ERROR_MESSAGES: Record<string, string> = {
+  not_recognized_employee:
+    "This account isn't set up for Pulse.ai yet. Contact your admin to be added.",
+};
+
 export default function Login() {
+  const [searchParams] = useSearchParams();
+  const errorCode = searchParams.get("error");
+  const errorMessage = errorCode ? ERROR_MESSAGES[errorCode] ?? "Sign-in failed. Please try again." : null;
+
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 text-zinc-950">
       <header className="px-8 pt-8 flex items-center justify-between">
@@ -23,6 +33,12 @@ export default function Login() {
               The Intelligent Management Assistant Portal
             </p>
           </div>
+
+          {errorMessage && (
+            <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 text-center">
+              {errorMessage}
+            </div>
+          )}
 
           <div className="flex flex-col gap-4">
             <button

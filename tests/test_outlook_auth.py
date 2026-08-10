@@ -2,7 +2,9 @@ import msal
 import msal.authority
 import pytest
 
-from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, OutlookInstallation, Employee
+from app.controlplane.models import (
+    SessionLocal as ControlPlaneSessionLocal, Employee, get_employee_by_manager_id,
+)
 from app.controlplane.outlook_auth import _sign_state, _verify_state
 
 
@@ -34,8 +36,10 @@ def test_login_redirects_to_microsoft_authorize_endpoint(client):
     assert location.startswith("https://login.microsoftonline.com/test-tenant-id/oauth2/v2.0/authorize")
     assert "client_id=test-client-id" in location
     assert "state=" in location
-    # Login only requests base scopes -- Mail.Send is a later, optional grant.
+    # Login only requests identity (User.Read) -- no mailbox
+    # access, no send access, implied by signing in.
     assert "Mail.Send" not in location
+    assert "Mail.Read" not in location
 
 
 def test_state_roundtrip():
@@ -53,7 +57,7 @@ def test_state_roundtrip():
 def test_callback_mismatched_state_is_400(client):
     db = ControlPlaneSessionLocal()
     try:
-        managers_before = db.query(Manager).count()
+        managers_before = db.query(Employee).filter(Employee.is_manager == True).count()  # noqa: E712
     finally:
         db.close()
 
@@ -65,7 +69,7 @@ def test_callback_mismatched_state_is_400(client):
         # No NEW manager created by the tampered callback attempt -- the
         # `client` fixture's own throwaway manager (from dev-login) already
         # accounts for managers_before.
-        assert db.query(Manager).count() == managers_before
+        assert db.query(Employee).filter(Employee.is_manager == True).count() == managers_before  # noqa: E712
     finally:
         db.close()
 
@@ -80,7 +84,25 @@ def test_callback_provider_error_is_400(client):
     assert r.status_code == 400
 
 
+def _seed_employee_if_missing(email: str, name: str) -> None:
+    """Real Outlook login rejects any email not already in the
+    pre-seeded Employee directory -- tests exercising the login callback
+    must seed that row first, same as the admin's manual insert would in
+    production."""
+    import uuid
+    db = ControlPlaneSessionLocal()
+    try:
+        existing = db.query(Employee).filter(Employee.email == email.lower()).first()
+        if existing is None:
+            db.add(Employee(id=uuid.uuid4().hex, email=email.lower(), name=name))
+            db.commit()
+    finally:
+        db.close()
+
+
 def _mock_successful_exchange(monkeypatch, email="alice@company.com", name="Alice"):
+    _seed_employee_if_missing(email, name)
+
     def fake_acquire(self, code, scopes=None, redirect_uri=None):
         return {"access_token": "fake-access-token", "refresh_token": "fake-refresh-token"}
 
@@ -98,7 +120,46 @@ def _mock_successful_exchange(monkeypatch, email="alice@company.com", name="Alic
     monkeypatch.setattr(outlook_auth_module.httpx, "get", lambda *a, **kw: FakeResponse())
 
 
-def test_callback_creates_manager_and_installation(client, monkeypatch):
+def test_login_callback_rejects_unrecognized_email(client, monkeypatch):
+    """An email not already in the pre-seeded Employee directory
+    is rejected outright -- no is_manager flip, no session issued.
+
+    The rejection is a redirect back to the login page carrying
+    ?error=not_recognized_employee, NOT a raw 403 JSON body: this endpoint is
+    reached by the browser following Microsoft's OAuth redirect, so a JSON
+    error has nowhere to render. The frontend Login page reads the query param
+    and shows it inline (frontend/src/pages/Login.tsx::ERROR_MESSAGES)."""
+    def fake_acquire(self, code, scopes=None, redirect_uri=None):
+        return {"access_token": "fake-access-token", "refresh_token": "fake-refresh-token"}
+
+    monkeypatch.setattr(msal.ConfidentialClientApplication, "acquire_token_by_authorization_code", fake_acquire)
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"mail": "stranger@company.com", "displayName": "Stranger"}
+
+        text = "{}"
+
+    import app.controlplane.outlook_auth as outlook_auth_module
+    monkeypatch.setattr(outlook_auth_module.httpx, "get", lambda *a, **kw: FakeResponse())
+
+    r = client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
+    assert r.status_code == 307
+    assert "error=not_recognized_employee" in r.headers["location"]
+
+    db = ControlPlaneSessionLocal()
+    try:
+        assert db.query(Employee).filter(Employee.email == "stranger@company.com").first() is None
+    finally:
+        db.close()
+
+
+def test_login_callback_creates_manager_without_mailbox_credentials(client, monkeypatch):
+    """Signing in does not imply a mailbox grant -- the Employee
+    row exists (is_manager=True) but carries no Outlook credentials until
+    connect-mail runs separately."""
     _mock_successful_exchange(monkeypatch, email="alice@company.com", name="Alice")
 
     state = _sign_state("login")
@@ -108,15 +169,57 @@ def test_callback_creates_manager_and_installation(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        manager = db.query(Manager).filter(Manager.email == "alice@company.com").first()
-        assert manager is not None
-        assert manager.name == "Alice"
+        employee = db.query(Employee).filter(Employee.email == "alice@company.com").first()
+        assert employee is not None
+        assert employee.name == "Alice"
+        assert employee.is_manager is True
+        assert employee.outlook_mailbox_email is None
+        assert employee.outlook_token_cache_json is None
+    finally:
+        db.close()
 
-        installation = db.get(OutlookInstallation, manager.id)
-        assert installation is not None
-        assert installation.mailbox_email == "alice@company.com"
-        assert installation.token_cache_json is not None
-        assert installation.granted_scopes == "Mail.Read,User.Read"
+
+def test_connect_mail_requires_login():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    bare_client = TestClient(app)
+    r = bare_client.get("/auth/outlook/connect-mail", follow_redirects=False)
+    assert r.status_code == 401
+
+
+def test_connect_mail_writes_credentials_onto_existing_employee(client, monkeypatch):
+    _mock_successful_exchange(monkeypatch, email="alice@company.com", name="Alice")
+    client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
+
+    db = ControlPlaneSessionLocal()
+    try:
+        manager = db.query(Employee).filter(Employee.email == "alice@company.com").first()
+    finally:
+        db.close()
+
+    # Log back in as alice (the login callback already sets the session
+    # cookie, but re-dev-login is simplest/most explicit for this test).
+    client.post("/api/auth/dev-login", json={"email": "alice@company.com", "name": "Alice"})
+
+    r = client.get("/auth/outlook/connect-mail", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    assert "Mail.Read" in r.headers["location"]
+    assert "Mail.Send" not in r.headers["location"]
+
+    r2 = client.get(
+        "/auth/outlook/callback",
+        params={"code": "mail-code", "state": _sign_state("connect_mail", manager.id)},
+        follow_redirects=False,
+    )
+    assert r2.status_code in (302, 307)
+
+    db = ControlPlaneSessionLocal()
+    try:
+        employee = get_employee_by_manager_id(db, manager.id)
+        assert employee.outlook_mailbox_email == "alice@company.com"
+        assert employee.outlook_token_cache_json is not None
+        assert employee.outlook_granted_scopes == "Mail.Read"
     finally:
         db.close()
 
@@ -131,6 +234,7 @@ def test_callback_mirrors_manager_into_employee_directory(client, monkeypatch):
         employee = db.query(Employee).filter(Employee.email == "alice@company.com").first()
         assert employee is not None
         assert employee.name == "Alice"
+        assert employee.is_manager is True
     finally:
         db.close()
 
@@ -154,8 +258,9 @@ def test_callback_reuses_existing_employee_row_and_updates_name(client, monkeypa
         matches = db.query(Employee).filter(Employee.email == "alice@company.com").all()
         assert len(matches) == 1
         assert matches[0].id == pre_existing_id
-        assert matches[0].name == "Alice New Name"
+        assert matches[0].name == "Old Name"  # login no longer overwrites name -- only is_manager
         assert matches[0].role == "Backend Engineer"
+        assert matches[0].is_manager is True
     finally:
         db.close()
 
@@ -171,35 +276,47 @@ def test_callback_twice_reuses_same_manager(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        managers = db.query(Manager).filter(Manager.email == "bob@company.com").all()
-        assert len(managers) == 1
-        installations = db.query(OutlookInstallation).filter(OutlookInstallation.manager_id == managers[0].id).all()
-        assert len(installations) == 1
+        employees = db.query(Employee).filter(Employee.email == "bob@company.com").all()
+        assert len(employees) == 1
+        assert employees[0].is_manager is True
     finally:
         db.close()
 
 
-def test_enable_send_without_installation_is_400(client):
+def test_enable_send_without_mailbox_connected_is_400(client):
     r = client.get("/auth/outlook/enable-send", follow_redirects=False)
     assert r.status_code == 400
 
 
-def test_enable_send_flow_grants_mail_send(client, monkeypatch):
-    _mock_successful_exchange(monkeypatch, email="carol@company.com", name="Carol")
-    r = client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
-    assert r.status_code in (302, 307)
+def _login_and_connect_mail(client, monkeypatch, email, name):
+    """Shared helper: login then connect-mail, returning the Employee row
+    (which IS the manager identity -- step 30)."""
+    _mock_successful_exchange(monkeypatch, email=email, name=name)
+    client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
 
     db = ControlPlaneSessionLocal()
     try:
-        manager = db.query(Manager).filter(Manager.email == "carol@company.com").first()
+        manager = db.query(Employee).filter(Employee.email == email).first()
     finally:
         db.close()
+
+    client.post("/api/auth/dev-login", json={"email": email, "name": name})
+    client.get(
+        "/auth/outlook/callback",
+        params={"code": "mail-code", "state": _sign_state("connect_mail", manager.id)},
+        follow_redirects=False,
+    )
+    return manager
+
+
+def test_enable_send_flow_grants_mail_send(client, monkeypatch):
+    manager = _login_and_connect_mail(client, monkeypatch, "carol@company.com", "Carol")
 
     r2 = client.get("/auth/outlook/enable-send", follow_redirects=False)
     assert r2.status_code in (302, 307)
     assert "Mail.Send" in r2.headers["location"]
     # prompt=consent forces the actual permission screen to show even when
-    # a prior consent exists (step 20 follow-up, Shivam's report)
+    # a prior consent exists
     assert "prompt=consent" in r2.headers["location"]
 
     r3 = client.get(
@@ -212,8 +329,8 @@ def test_enable_send_flow_grants_mail_send(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        installation = db.get(OutlookInstallation, manager.id)
-        assert installation.granted_scopes == "Mail.Read,User.Read,Mail.Send"
+        employee = get_employee_by_manager_id(db, manager.id)
+        assert employee.outlook_granted_scopes == "Mail.Read,Mail.Send"
     finally:
         db.close()
 
@@ -222,15 +339,7 @@ def test_revoke_send_drops_scope_and_gates_sending(client, monkeypatch):
     """Our-side send revoke: Mail.Send leaves granted_scopes, the
     connections API reports send_enabled=False again, and the outbound
     send gate (OutlookConnector.send_allowed) closes -- read untouched."""
-    _mock_successful_exchange(monkeypatch, email="erin@company.com", name="Erin")
-    r = client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
-    assert r.status_code in (302, 307)
-
-    db = ControlPlaneSessionLocal()
-    try:
-        manager = db.query(Manager).filter(Manager.email == "erin@company.com").first()
-    finally:
-        db.close()
+    manager = _login_and_connect_mail(client, monkeypatch, "erin@company.com", "Erin")
 
     r2 = client.get(
         "/auth/outlook/callback",
@@ -247,8 +356,8 @@ def test_revoke_send_drops_scope_and_gates_sending(client, monkeypatch):
 
     db = ControlPlaneSessionLocal()
     try:
-        installation = db.get(OutlookInstallation, manager.id)
-        assert installation.granted_scopes == "Mail.Read,User.Read"
+        employee = get_employee_by_manager_id(db, manager.id)
+        assert employee.outlook_granted_scopes == "Mail.Read"
     finally:
         db.close()
     assert outlook_connector.send_allowed(manager.id) is False
@@ -258,36 +367,21 @@ def test_revoke_send_drops_scope_and_gates_sending(client, monkeypatch):
     assert conn["outlook"]["send_enabled"] is False
 
 
-def test_revoke_send_without_installation_is_400(client):
+def test_revoke_send_without_mailbox_connected_is_400(client):
     assert client.post("/auth/outlook/revoke-send").status_code == 400
 
 
-def test_disconnect_removes_installation(client, monkeypatch):
-    _mock_successful_exchange(monkeypatch, email="dave@company.com", name="Dave")
-    r = client.get("/auth/outlook/callback", params={"code": "abc123", "state": _sign_state("login")}, follow_redirects=False)
-    assert r.status_code in (302, 307)
-
-    # Reuse the client's existing session cookie (still the throwaway
-    # fixture manager, not dave) is fine here -- disconnect only affects
-    # the currently-logged-in manager's own installation, and the fixture
-    # manager has none, so this proves disconnect is a no-op when there's
-    # nothing to disconnect. A real per-manager disconnect is covered by
-    # dev-logging-in as dave separately below.
-    db = ControlPlaneSessionLocal()
-    try:
-        dave = db.query(Manager).filter(Manager.email == "dave@company.com").first()
-    finally:
-        db.close()
-
-    login_resp = client.post("/api/auth/dev-login", json={"email": "dave@company.com", "name": "Dave"})
-    assert login_resp.status_code == 200
-    assert login_resp.json()["id"] == dave.id
+def test_disconnect_clears_mailbox_credentials(client, monkeypatch):
+    dave = _login_and_connect_mail(client, monkeypatch, "dave@company.com", "Dave")
 
     r2 = client.post("/auth/outlook/disconnect")
     assert r2.status_code == 200
 
     db = ControlPlaneSessionLocal()
     try:
-        assert db.get(OutlookInstallation, dave.id) is None
+        employee = get_employee_by_manager_id(db, dave.id)
+        assert employee.outlook_mailbox_email is None
+        assert employee.outlook_token_cache_json is None
+        assert employee.outlook_granted_scopes is None
     finally:
         db.close()

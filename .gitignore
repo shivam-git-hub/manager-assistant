@@ -19,7 +19,7 @@ agents_pool.json
 employees.json
 .env
 # Repo-root only (leading slash) -- must not shadow app/projects/, the
-# step-18 source package (see prompts/step_18_registry_and_scaffold.md).
+# source package of the same name.
 /projects/
 
 # Per-manager runtime data (db.sqlite is caught by *.sqlite, but the json

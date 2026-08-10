@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.controlplane.models import init_controlplane_db, get_controlplane_db, Manager, AuthSession, SessionLocal as ControlPlaneSessionLocal
+from app.controlplane.models import init_controlplane_db, get_controlplane_db, AuthSession, SessionLocal as ControlPlaneSessionLocal
 from app.controlplane.auth import SESSION_COOKIE_NAME
 
 
@@ -24,7 +24,7 @@ def test_dev_login_twice_reuses_same_manager(client):
 
 def test_me_without_cookie_is_401(clean_controlplane_db):
     # A bare TestClient, not the `client` fixture -- `client` auto-logs-in a
-    # throwaway manager (step 15: every manager-scoped route needs one), so
+    # throwaway manager (every manager-scoped route needs one), so
     # it always carries a session cookie by the time a test gets it.
     bare_client = TestClient(app)
     r = bare_client.get("/api/auth/me")
@@ -83,16 +83,14 @@ def test_connections_empty_for_fresh_manager(client):
 
 
 def test_connections_reflects_outlook_installation(client):
-    from app.controlplane.models import OutlookInstallation
+    from app.controlplane.models import get_employee_by_manager_id
 
     db = ControlPlaneSessionLocal()
     try:
-        db.add(OutlookInstallation(
-            manager_id=client.manager_id,
-            mailbox_email="me@outlook.com",
-            token_cache_json="{}",
-            granted_scopes="Mail.Read,User.Read",
-        ))
+        employee = get_employee_by_manager_id(db, client.manager_id)
+        employee.outlook_mailbox_email = "me@outlook.com"
+        employee.outlook_token_cache_json = "{}"
+        employee.outlook_granted_scopes = "Mail.Read"
         db.commit()
     finally:
         db.close()
@@ -105,8 +103,8 @@ def test_connections_reflects_outlook_installation(client):
 
     db = ControlPlaneSessionLocal()
     try:
-        installation = db.get(OutlookInstallation, client.manager_id)
-        installation.granted_scopes = "Mail.Read,User.Read,Mail.Send"
+        employee = get_employee_by_manager_id(db, client.manager_id)
+        employee.outlook_granted_scopes = "Mail.Read,Mail.Send"
         db.commit()
     finally:
         db.close()
@@ -116,16 +114,17 @@ def test_connections_reflects_outlook_installation(client):
 
 
 def test_connections_reflects_slack_reader_installation(client):
-    """Redesigned 2026-07-23: connections()'s slack key is ONLY the
+    """connections()'s slack key is ONLY the
     message-tracking grant, entirely independent of any claimed Agent."""
-    from app.controlplane.models import SlackReaderInstallation
+    from app.controlplane.models import get_employee_by_manager_id
 
     db = ControlPlaneSessionLocal()
     try:
-        db.add(SlackReaderInstallation(
-            manager_id=client.manager_id, team_id="T_1", team_name="Acme",
-            user_token="xoxp-fake", user_id="U_X",
-        ))
+        employee = get_employee_by_manager_id(db, client.manager_id)
+        employee.slack_team_id = "T_1"
+        employee.slack_team_name = "Acme"
+        employee.slack_user_token = "xoxp-fake"
+        employee.slack_id = "U_X"
         db.commit()
     finally:
         db.close()

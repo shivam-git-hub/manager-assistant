@@ -4,7 +4,7 @@ each row in the global registry (app.controlplane.models.Project) gets its
 own db.sqlite under projects/<project_id>/ (see app.projects.paths),
 sibling to managers/ at the repo root rather than nested inside one
 manager's private directory -- projects are shared by every member's
-dashboard (spec/architecture_v2_kb.md §3.1).
+dashboard.
 """
 import logging
 from functools import lru_cache

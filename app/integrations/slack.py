@@ -1,10 +1,10 @@
 """Real Slack connector: Events API webhook (push, already the real payload
 shape) + real Web API calls for sending and DM-participant resolution.
 
-Bot identity (step 17 piece 2a, redesigned 2026-07-23): a pool of
+Bot identity: a pool of
 distinctly-named Slack apps ("agents"), each pre-registered AND
-pre-installed to the workspace by the admin out of band (scripts/
-seed_agents.py -- NOT any OAuth code in this codebase), stored in the
+pre-installed to the workspace by the admin out of band (a manual DB
+insert into the `agents` table -- NOT any OAuth code in this codebase), stored in the
 control-plane DB as an Agent row (see app/controlplane/models.py).
 Claiming one (app/controlplane/agents.py) is pure DB bookkeeping -- it
 never talks to Slack. Webhook routing keys on the payload's `api_app_id`
@@ -13,11 +13,9 @@ managers' bots) can share a workspace.
 
 Reading a manager's own messages is a SEPARATE concern, unrelated to the
 Agent pool -- one single global reader Slack app, a user-token-only OAuth
-grant per manager (SlackReaderInstallation, app/controlplane/slack_auth.py),
-polled by app/projectkb/jobs/slack_poll.py via fetch_since() below. See
-SLACK.md for setup and prompts/step_17_agent_pool.md for the original
-design (superseded on the install/reading split, see the Agent/
-SlackReaderInstallation docstrings in app/controlplane/models.py).
+grant per manager (stored on the Employee row, granted via
+app/controlplane/slack_auth.py), polled by app/projectkb/jobs/slack_poll.py
+via fetch_since() below. See SLACK.md for setup.
 
 send() is a plain method, not an HTTP endpoint -- callers are app.outbound
 (quiet-hours gated) and, later, agent tools. Only /webhook is exposed, since
@@ -48,7 +46,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.database import UnifiedMessage, TeamMember
+from app.database import UnifiedMessage
 from app.config import IST
 from app import timeservice
 from app.integrations.base import ChannelConnector, NormalizedMessage, SendResult, ingest
@@ -77,15 +75,16 @@ class SlackConnector(ChannelConnector):
             db.close()
 
     def resolve_reader_by_manager(self, manager_id: str):
-        """This manager's own Slack reading grant, if any (redesigned
-        2026-07-23 -- SlackReaderInstallation, NOT the Agent pool; a
-        manager can read their own messages whether or not they've ever
-        claimed a bot). See app/controlplane/models.py's docstrings."""
-        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, SlackReaderInstallation
+        """This manager's own Slack reading grant, if any -- NOT the Agent
+        pool; a manager can read their own messages whether or not they've
+        ever claimed a bot). Returns the Employee row itself (or None) --
+        callers read `.slack_user_token`/`.slack_team_id`/`.slack_team_name`
+        directly. See app/controlplane/models.py's Employee docstring."""
+        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
         db = ControlPlaneSessionLocal()
         try:
-            return db.get(SlackReaderInstallation, manager_id)
+            return get_employee_by_manager_id(db, manager_id)
         finally:
             db.close()
 
@@ -98,12 +97,10 @@ class SlackConnector(ChannelConnector):
         concession OutlookConnector's _resolve_active_manager_id already
         makes.
 
-        Bug found live 2026-07-23: with no manager scoping at all, this
-        picked whichever pool bot was installed most recently, full stop
-        -- an UNCLAIMED bot (e.g. kettle-bot, installed after Atlas but
-        never claimed by anyone) could and did win over the agent the
-        calling manager actually owns, silently sending as the wrong bot
-        identity (and, since only Atlas had the im:write scope fix
+        Manager scoping matters here: without it this picks whichever pool
+        bot was installed most recently, so an UNCLAIMED bot could win over
+        the agent the calling manager actually owns, silently sending as
+        the wrong bot identity (and, if that bot lacks the im:write scope
         applied, surfacing as a `missing_scope` error that looked
         unrelated). Callers that DO have a manager_id (open_dm, so far)
         must pass it."""
@@ -148,7 +145,7 @@ class SlackConnector(ChannelConnector):
         """Resolves a Slack user id to a DM channel id via conversations.open
         (idempotent on Slack's side -- reopening an existing DM just returns
         its channel id). Used by the personal agent's send_message tool
-        (step 28) to message a teammate/manager by their Employee.slack_id
+        to message a teammate/manager by their Employee.slack_id
         rather than a pre-known channel id. `manager_id`, when given,
         resolves the calling manager's own claimed bot rather than
         whichever pool bot happened to be installed most recently -- see
@@ -193,12 +190,20 @@ class SlackConnector(ChannelConnector):
             logger.warning("[slack] webhook signature mismatch")
         return valid
 
-    def _resolve_member(self, db: Session, slack_id: str) -> Optional[TeamMember]:
-        return db.scalars(select(TeamMember).where(
-            (TeamMember.slack_handle == slack_id) | (TeamMember.id == slack_id)
-        )).first()
+    def _resolve_member(self, cdb, slack_id: str):
+        """Resolves a Slack user id straight against the control-plane
+        Employee directory -- connectors don't need the per-manager
+        TeamMember roster at all (that table is now purely a manually
+        maintained team-view, synced from Employee on project-member-add,
+        see app.agent.tools/app.api.projects_registry). `cdb` is a
+        control-plane session opened once by the caller (normalize()) and
+        reused across every resolution call in that pass, rather than each
+        call opening its own."""
+        from app.controlplane.models import get_employee_by_slack_id
 
-    def _resolve_dm_other_participant(self, db: Session, channel_id: str, known_id: str, manager_id: Optional[str] = None) -> Optional[str]:
+        return get_employee_by_slack_id(cdb, slack_id)
+
+    def _resolve_dm_other_participant(self, db: Session, cdb, channel_id: str, known_id: str, manager_id: Optional[str] = None) -> Optional[str]:
         """Given one known participant of a DM channel, find the other one.
 
         normalize() doesn't decide manager-involvement (ingest() does that
@@ -210,27 +215,33 @@ class SlackConnector(ChannelConnector):
         needed for the less common case of resolving who a
         manager-initiated DM was with.
 
-        Bug found live 2026-07-23: the manager-outbound case (known_id IS
-        the manager's own slack_handle -- they DMed a teammate) always fell
-        through to the live-call branch below, which defaulted to
-        self.bot_token (a pool agent's bot token). The bot isn't a member of
-        a DM between two humans, so conversations.members came back empty/
-        errored and every message a manager sent to someone else silently
-        vanished (normalize() -> None -> ingest() "ignored_not_a_message",
-        no error surfaced anywhere). Fixed by resolving this manager's own
-        reader user_token (the same token fetch_since already polls with --
-        it's a member of the manager's own DMs by construction) and using
-        THAT for the live call instead of the bot token."""
-        from app.integrations.base import get_manager
+        The manager-outbound case (known_id IS the manager's own slack_id --
+        they DMed a teammate) must NOT fall through to the live-call branch
+        below using self.bot_token (a pool agent's bot token): the bot isn't
+        a member of a DM between two humans, so conversations.members comes
+        back empty/errored and every message a manager sends to someone else
+        silently vanished (normalize() -> None -> ingest()
+        "ignored_not_a_message", no error surfaced anywhere). Fixed by
+        resolving this manager's own reader user_token (the same token
+        fetch_since already polls with -- it's a member of the manager's own
+        DMs by construction) and using THAT for the live call instead of the
+        bot token.
 
-        manager = get_manager(db)
-        if manager and manager.slack_handle and known_id != manager.slack_handle:
-            return manager.slack_handle
+        manager_id is resolved against the control-plane Employee row
+        directly (Employee.slack_id is always kept current -- written at
+        Slack-connect time, app.controlplane.slack_auth) rather than the old
+        TeamMember role="manager" lookup."""
+        from app.controlplane.models import get_employee_by_manager_id
+
+        manager_employee = get_employee_by_manager_id(cdb, manager_id) if manager_id else None
+
+        if manager_employee and manager_employee.slack_id and known_id != manager_employee.slack_id:
+            return manager_employee.slack_id
 
         token = None
         if manager_id:
             reader = self.resolve_reader_by_manager(manager_id)
-            token = reader.user_token if reader else None
+            token = reader.slack_user_token if reader else None
 
         if "pytest" in sys.modules or not token:
             logger.debug(f"[slack] skipping live conversations.members lookup for {channel_id} (no reader token)")
@@ -244,7 +255,32 @@ class SlackConnector(ChannelConnector):
             logger.exception(f"[slack] failed to resolve DM members for channel {channel_id}")
             return None
 
-    # Slack's channel_type -> our conversation_type (step 17 piece 3). "im"
+    def _resolve_channel_session_thread_key(self, db: Session, channel_id: str, timestamp_ist: datetime, ts_val: str) -> str:
+        """A channel/group top-level message (no thread_ts -- Slack gives no
+        conversation signal for these at all) is bucketed into a rolling
+        "session": if the channel's most recently STORED message (any
+        status, any conversation_type variant of it -- just "the last thing
+        that happened in this channel") landed within
+        SLACK_CHANNEL_SESSION_GAP_MINUTES, this message joins that same
+        thread_key (a live back-and-forth); otherwise it starts a fresh
+        session rooted at its own ts (an unrelated topic, more likely
+        after a real gap). A real Slack reply-in-thread (thread_ts present)
+        never goes through this path -- it always groups under its parent
+        via thread_ts regardless of elapsed time, see normalize()."""
+        from app.config import SLACK_CHANNEL_SESSION_GAP_MINUTES
+        from datetime import timedelta
+
+        last = (
+            db.query(UnifiedMessage)
+            .filter(UnifiedMessage.source == "slack", UnifiedMessage.channel_raw_id == channel_id)
+            .order_by(UnifiedMessage.timestamp.desc())
+            .first()
+        )
+        if last is not None and last.thread_id and (timestamp_ist - last.timestamp) <= timedelta(minutes=SLACK_CHANNEL_SESSION_GAP_MINUTES):
+            return last.thread_id
+        return f"{channel_id}:{ts_val}"
+
+    # Slack's channel_type -> our conversation_type. "im"
     # is a 1:1 DM (one counterpart, gated on tracked-contacts); everything
     # else is N-participant and gated on tracked-channels instead -- see
     # ingest()'s conversation_type branch in app/integrations/base.py.
@@ -273,19 +309,30 @@ class SlackConnector(ChannelConnector):
 
         channel_id = raw.get("channel", "unknown_channel")
 
-        if conversation_type == "dm":
-            receiver_id = self._resolve_dm_other_participant(db, channel_id, user_id, manager_id)
-            if receiver_id is None:
-                logger.debug(f"[slack] normalize: could not resolve DM counterpart for channel {channel_id}")
-                return None
-            receiver_member = self._resolve_member(db, receiver_id)
-            receiver_name = receiver_member.name if receiver_member else None
-        else:
-            # Channel/group: no single "the receiver" -- ingest() gates
-            # these on the channel's own tracked-list membership, not a
-            # counterpart identity, so there's nothing to resolve here.
-            receiver_id = channel_id
-            receiver_name = None
+        # One control-plane session for every Employee lookup this call
+        # needs (sender, receiver, DM-counterpart manager check) -- avoids
+        # opening a separate session per lookup.
+        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal
+
+        cdb = ControlPlaneSessionLocal()
+        try:
+            if conversation_type == "dm":
+                receiver_id = self._resolve_dm_other_participant(db, cdb, channel_id, user_id, manager_id)
+                if receiver_id is None:
+                    logger.debug(f"[slack] normalize: could not resolve DM counterpart for channel {channel_id}")
+                    return None
+                receiver_member = self._resolve_member(cdb, receiver_id)
+                receiver_name = receiver_member.name if receiver_member else None
+            else:
+                # Channel/group: no single "the receiver" -- ingest() gates
+                # these on the channel's own tracked-list membership, not a
+                # counterpart identity, so there's nothing to resolve here.
+                receiver_id = channel_id
+                receiver_name = None
+
+            sender_member = self._resolve_member(cdb, user_id)
+        finally:
+            cdb.close()
 
         ts_val = raw.get("ts")
         if not ts_val:
@@ -297,7 +344,28 @@ class SlackConnector(ChannelConnector):
         timestamp_utc = datetime.fromtimestamp(ts_float, tz=pytz.UTC)
         timestamp_ist = timestamp_utc.astimezone(IST).replace(tzinfo=None)
 
-        sender_member = self._resolve_member(db, user_id)
+        if conversation_type == "dm":
+            # A DM channel IS one conversation -- group every message in it
+            # under one thread_key regardless of Slack's own thread_ts
+            # (which is only set for explicit "reply in thread" messages;
+            # a normal flat back-and-forth never sets it, so keying on
+            # thread_ts/ts here would have split a single DM into one
+            # separate one-message "thread" per message, one LLM call each).
+            thread_key = channel_id
+        elif not ts_val:
+            thread_key = None
+        elif raw.get("thread_ts"):
+            # Explicit "reply in thread" -- always groups under the parent,
+            # regardless of elapsed time.
+            thread_key = f"{channel_id}:{raw['thread_ts']}"
+        else:
+            # Top-level channel/group message: Slack gives no conversation
+            # signal at all for these, so bucket by time-proximity to the
+            # channel's own last message instead (see
+            # _resolve_channel_session_thread_key) -- related messages land
+            # in the same LLM call, an unrelated one after a real gap starts
+            # a fresh thread.
+            thread_key = self._resolve_channel_session_thread_key(db, channel_id, timestamp_ist, ts_val)
 
         return NormalizedMessage(
             platform_msg_id=msg_id,
@@ -311,10 +379,7 @@ class SlackConnector(ChannelConnector):
             timestamp=timestamp_ist,
             raw_metadata=json.dumps(raw),
             conversation_type=conversation_type,
-            # A threaded reply carries thread_ts (the parent's ts); a
-            # top-level message is its own thread root (ts). Channel id
-            # prefixed because ts values are only unique per channel.
-            thread_key=f"{channel_id}:{raw.get('thread_ts') or ts_val}" if ts_val else None,
+            thread_key=thread_key,
         )
 
     @staticmethod
@@ -338,13 +403,13 @@ class SlackConnector(ChannelConnector):
             "client_msg_id": msg.get("client_msg_id"),
         }
         # Threaded replies carry the parent's ts -- normalize() folds it
-        # into thread_key (step 20), so it must survive this reshaping.
+        # into thread_key, so it must survive this reshaping.
         if msg.get("thread_ts"):
             event["thread_ts"] = msg["thread_ts"]
         return event
 
     def fetch_since(self, since: datetime, manager_id: str) -> list:
-        """User-token polling (step 17 piece 1) for a manager's own DMs --
+        """User-token polling for a manager's own DMs --
         the read-path analogue of OutlookConnector.fetch_since. Unlike the
         bot-token webhook, conversations.history with oldest=<ts> is a
         genuine per-user "everything since X" primitive, so this is safe to
@@ -356,15 +421,15 @@ class SlackConnector(ChannelConnector):
             return []
 
         reader = self.resolve_reader_by_manager(manager_id)
-        if reader is None or not reader.user_token:
+        if reader is None or not reader.slack_user_token:
             return []
 
         since_ts = f"{since.replace(tzinfo=pytz.UTC).timestamp():.6f}" if since.tzinfo is None else f"{since.timestamp():.6f}"
 
         raw_messages = []
         try:
-            # Step 20: DMs AND every group/channel the user is in (spec
-            # §4.1 -- track everything; the blocklist decides what not to
+            # DMs AND every group/channel the user is in (track
+            # everything; the blocklist decides what not to
             # PROCESS, not what to fetch). Requires the broader user scopes
             # (groups:history, channels:history, mpim:history) on the
             # reader app (app/controlplane/slack_auth.py's USER_SCOPES) --
@@ -373,7 +438,7 @@ class SlackConnector(ChannelConnector):
             convos = self._api_call(
                 "conversations.list",
                 {"types": "im,mpim,private_channel,public_channel", "limit": 200},
-                token=reader.user_token,
+                token=reader.slack_user_token,
             )
             if not convos.get("ok"):
                 logger.warning(f"[slack] fetch_since: conversations.list failed for manager={manager_id}: {convos.get('error')}")
@@ -389,7 +454,7 @@ class SlackConnector(ChannelConnector):
                     history = self._api_call(
                         "conversations.history",
                         {"channel": channel_id, "oldest": since_ts, "limit": 200},
-                        token=reader.user_token,
+                        token=reader.slack_user_token,
                     )
                 except Exception:
                     logger.exception(f"[slack] fetch_since: conversations.history failed for channel={channel_id}")
@@ -547,7 +612,7 @@ async def slack_webhook(request: Request):
             and "pytest" not in sys.modules
         ):
             # A human DMed the bot directly -- reply live through the agent
-            # harness (step 28 §6B). `bot_id` is present on any bot/app-
+            # harness. `bot_id` is present on any bot/app-
             # authored message event (including our own replies below), so
             # this guard is what stops an infinite reply loop -- more
             # reliable than comparing against Agent.user_id, which the

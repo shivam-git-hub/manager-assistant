@@ -1,4 +1,4 @@
-// The 4-petal status flower from Shivam's wireframes -- Pulse's signature
+// The 4-petal status flower -- Pulse's signature
 // status glyph, used for event severity, project health, blockers and
 // actions. Drawn inline (basic shape, per the asset rules) so the fill
 // can be driven by the semantic palette in constants.ts.

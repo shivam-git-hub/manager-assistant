@@ -1,7 +1,6 @@
 """Slack "Connect" for MESSAGE TRACKING -- a user-token-only OAuth flow,
-deliberately independent of the Agent pool (see the Agent/
-SlackReaderInstallation docstrings in app/controlplane/models.py for the
-2026-07-23 redesign this replaces).
+deliberately independent of the Agent pool (see the Agent and Employee
+docstrings in app/controlplane/models.py).
 
 Mirrors app/controlplane/outlook_auth.py's shape closely: ONE globally
 configured Slack app (SLACK_READER_CLIENT_ID/SECRET, app/config.py), state
@@ -17,7 +16,8 @@ Sending/being-messaged-as-a-bot is a completely separate concern, still
 handled by the Agent pool (app/controlplane/agents.py for claiming,
 app/integrations/slack.py for the bot-token webhook/send) -- each pool
 agent's own Slack app is installed to the workspace directly by the admin
-(scripts/seed_agents.py), not through any OAuth code in this file.
+(a manual insert into the control-plane `agents` table), not through any
+OAuth code in this file.
 """
 import base64
 import hashlib
@@ -30,8 +30,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 
 from app.config import SLACK_REDIRECT_URI, FRONTEND_URL, SLACK_READER_CLIENT_ID, SLACK_READER_CLIENT_SECRET
-from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, SlackReaderInstallation
-from app.controlplane.auth import get_current_manager
+from app.controlplane.models import (
+    SessionLocal as ControlPlaneSessionLocal, Employee, get_employee_by_manager_id,
+)
+from app.controlplane.auth import get_current_employee
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +43,13 @@ router = APIRouter(prefix="/auth/slack", tags=["Slack Auth"])
 # channel/group history (see app/integrations/slack.py fetch_since). No bot
 # `scope` is requested at all; this app never gets a bot presence.
 #
-# Bug found live 2026-07-23 (a real DM never showed up in slack_poll's
-# results, "fetched: 0" for everything): fetch_since's conversations.list
-# call asks for types=im,mpim,private_channel,public_channel, and Slack
-# requires the matching `:read` scope for EVERY type included in that
-# call, not just `:history` for reading messages once you have the
-# channel id -- `mpim:read`/`groups:read`/`channels:read` were missing
-# (only `im:read` was ever granted), so conversations.list failed
-# outright with `missing_scope` and fetch_since returned [] before it
-# ever got to fetching a single message. Any manager who connected before
-# this fix needs to disconnect + reconnect (Slack requires re-consent for
-# a scope change, an already-issued token can't silently gain scopes).
+# Every type listed in fetch_since's conversations.list call needs its
+# matching `:read` scope here, not just `:history` -- `:history` only covers
+# reading messages once you already have the channel id. Miss one and
+# conversations.list fails outright with `missing_scope`, so fetch_since
+# returns [] without fetching a single message ("fetched: 0" everywhere,
+# no error). Changing this list requires every connected manager to
+# disconnect + reconnect: Slack cannot add scopes to an issued token.
 USER_SCOPES = "im:history,im:read,mpim:history,mpim:read,groups:history,groups:read,channels:history,channels:read"
 SLACK_OAUTH_AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 SLACK_OAUTH_ACCESS_URL = "https://slack.com/api/oauth.v2.access"
@@ -86,7 +84,7 @@ def _require_configured():
 
 
 @router.get("/install")
-def slack_install(manager: Manager = Depends(get_current_manager)):
+def slack_install(manager: Employee = Depends(get_current_employee)):
     _require_configured()
     state = _sign_state(manager.id)
     authorize_url = (
@@ -136,106 +134,45 @@ def slack_callback(code: str = None, state: str = None, error: str = None):
 
     db = ControlPlaneSessionLocal()
     try:
-        installation = db.get(SlackReaderInstallation, manager_id)
-        if installation:
-            installation.team_id = team_id
-            installation.team_name = team_name
-            installation.user_token = user_token
-            installation.user_id = user_id
-        else:
-            installation = SlackReaderInstallation(
-                manager_id=manager_id, team_id=team_id, team_name=team_name,
-                user_token=user_token, user_id=user_id,
-            )
-            db.add(installation)
+        employee = get_employee_by_manager_id(db, manager_id)
+        if employee is None:
+            raise HTTPException(400, "No Employee record found for this manager -- sign in first")
+        employee.slack_team_id = team_id
+        employee.slack_team_name = team_name
+        employee.slack_user_token = user_token
+        employee.slack_id = user_id
         db.commit()
         logger.info(f"[slack-auth] manager={manager_id} connected Slack reading for workspace {team_id} ({team_name})")
     finally:
         db.close()
 
-    _sync_manager_slack_handle(manager_id, user_id)
-
     return RedirectResponse(url=f"{FRONTEND_URL}/connectors?connected=slack&workspace={team_name or team_id}")
 
 
-def _sync_manager_slack_handle(manager_id: str, slack_user_id: str) -> None:
-    """authed_user.id IS the manager's own Slack user id -- without writing
-    it onto their TeamMember row, DM-participant resolution
-    (SlackConnector._resolve_dm_other_participant) has no way to recognize
-    the manager in polled events, and reading silently returns nothing.
-
-    Bug found live 2026-07-23: this used to only UPDATE an existing
-    role="manager" TeamMember row, but nothing in the v2 provisioning flow
-    (app.tenancy.db.init_manager_db) ever creates one -- only "Harry" gets
-    auto-seeded there. So for every manager who connects Slack reading
-    without a pre-existing TeamMember(role contains "manager") row (i.e.
-    everyone, in practice), this silently no-op'd: get_manager() kept
-    returning None, _resolve_dm_other_participant's fast path never
-    fired, and every real DM's normalize() returned None
-    ("ignored_not_a_message") -- slack_poll reported fetched>0/stored=0
-    with no error anywhere. Now creates the row if missing. Deliberately
-    NOT moved into init_manager_db's provisioning-time seed (like "Harry"
-    is) -- that runs at every dev-login too, including in the test suite's
-    `client` fixture, where many tests manually seed their own manager
-    TeamMember row and expect to be the only role="manager" row
-    get_manager()'s `.first()` can find; scoping this to the real OAuth
-    callback path instead leaves every test that doesn't exercise this
-    exact route (i.e. that never calls this function) untouched."""
-    from app.tenancy.db import get_manager_session
-    from app.integrations.base import get_manager
-
-    db = get_manager_session(manager_id)
-    try:
-        member = get_manager(db)
-        if member is None:
-            from app.database import TeamMember
-
-            cdb = ControlPlaneSessionLocal()
-            try:
-                manager = cdb.get(Manager, manager_id)
-            finally:
-                cdb.close()
-            member = TeamMember(
-                id=manager_id,
-                name=manager.name if manager else manager_id,
-                role="manager",
-                slack_handle=slack_user_id,
-                outlook_email=manager.email if manager else None,
-                timezone="Asia/Kolkata",
-            )
-            db.add(member)
-            db.commit()
-            logger.info(f"[slack-auth] manager={manager_id} created TeamMember row, slack_handle={slack_user_id}")
-        elif member.slack_handle != slack_user_id:
-            member.slack_handle = slack_user_id
-            db.commit()
-            logger.info(f"[slack-auth] manager={manager_id} TeamMember.slack_handle set to {slack_user_id}")
-    finally:
-        db.close()
-
-
 @router.post("/disconnect")
-def slack_disconnect(manager: Manager = Depends(get_current_manager)):
+def slack_disconnect(manager: Employee = Depends(get_current_employee)):
     """Revokes the user token via Slack's auth.revoke (best-effort) and
     forgets our copy. Has nothing to do with any claimed Agent -- that
     bot's own install is admin-managed and unaffected by a manager turning
     off their own message tracking."""
     db = ControlPlaneSessionLocal()
     try:
-        installation = db.get(SlackReaderInstallation, manager.id)
-        if installation is None:
+        employee = get_employee_by_manager_id(db, manager.id)
+        if employee is None or not employee.slack_user_token:
             return {"status": "ok"}
 
         try:
             httpx.post(
                 "https://slack.com/api/auth.revoke",
-                headers={"Authorization": f"Bearer {installation.user_token}"},
+                headers={"Authorization": f"Bearer {employee.slack_user_token}"},
                 timeout=10,
             )
         except Exception:
             logger.exception(f"[slack-auth] auth.revoke failed for manager={manager.id}, disconnecting anyway")
 
-        db.delete(installation)
+        employee.slack_team_id = None
+        employee.slack_team_name = None
+        employee.slack_user_token = None
         db.commit()
         logger.info(f"[slack-auth] manager={manager.id} disconnected Slack reading")
     finally:

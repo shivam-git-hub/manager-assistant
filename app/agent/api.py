@@ -7,8 +7,8 @@ from sqlalchemy import select, delete
 from pydantic import BaseModel
 
 from app.database import ChatMessage
-from app.controlplane.auth import get_current_manager
-from app.controlplane.models import Manager
+from app.controlplane.auth import get_current_employee
+from app.controlplane.models import Employee
 from app.tenancy.db import get_manager_db
 from app.agent.harness import run_agent
 
@@ -44,7 +44,7 @@ class ChatResponse(BaseModel):
 def post_chat_message(
     payload: ChatRequest,
     db: Session = Depends(get_manager_db),
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
 ):
     """
     Submits a message to Harry. Loads the last 20 chat messages as conversation history,
@@ -147,14 +147,27 @@ heartbeat_router = APIRouter(tags=["Agent Heartbeat"])
 @heartbeat_router.post("/api/heartbeat/run")
 def force_heartbeat(
     db: Session = Depends(get_manager_db),
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
 ):
     """
     Manually triggers the personal agent's heartbeat tick (candidate
     selection + tool-calling action loop) for the logged-in manager.
     """
+    from app.projectkb.enums import JobName
     from app.projectkb.jobs.agent_heartbeat import run as run_agent_heartbeat
-    return run_agent_heartbeat(db, manager.id)
+    from app.projectkb.scheduler import get_job_lock
+
+    # agent_heartbeat is deliberately NOT in the scheduler's _JOBS (manual-
+    # trigger-only), but it's reachable from BOTH this endpoint and the
+    # debug page's generic job runner (app.api.dev_tools) -- same lock,
+    # same non-blocking-acquire-then-409 guard against a double-run.
+    lock = get_job_lock(JobName.AGENT_HEARTBEAT.value)
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="job already running")
+    try:
+        return run_agent_heartbeat(db, manager.id)
+    finally:
+        lock.release()
 
 @heartbeat_router.get("/api/agent/notes")
 def get_agent_notes(limit: int = Query(30), db: Session = Depends(get_manager_db)):

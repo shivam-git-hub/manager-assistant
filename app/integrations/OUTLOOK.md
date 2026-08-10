@@ -74,9 +74,9 @@ same as app-only mode, just with a different consent flow.
    `/connect.html?connected=outlook` with a session cookie set.
 
    This creates (or finds) a `Manager` row keyed by the signed-in email,
-   and stores the token cache on that manager's `OutlookInstallation` row
-   in the control-plane DB (`data/controlplane.sqlite`) -- no more
-   `data/outlook_token_cache.json` file. The connector silently reacquires
+   and stores the token cache in `Employee.outlook_token_cache_json` on
+   that manager's `Employee` row in the control-plane DB
+   (`data/controlplane.sqlite`). The connector silently reacquires
    access tokens from that cache afterward; repeat this step only if the
    refresh token is revoked or the row is deleted.
 

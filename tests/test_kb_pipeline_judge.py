@@ -33,11 +33,11 @@ from app.projectkb.jobs import ingestion, heartbeat, dream, lint
 from app.projectkb import blocklist
 from app.controlplane.models import (
     SessionLocal as ControlPlaneSessionLocal,
-    Manager,
     Project as RegistryProject,
-    ProjectMember,
     Employee,
     init_controlplane_db,
+    get_member_list,
+    set_member_list,
 )
 from app.projects.db import get_project_session
 from app.projects.models import Task, Suggestion, Concern, HealthLog
@@ -175,29 +175,25 @@ class KBTestHarness:
         
         # Create fresh control plane session
         cdb = ControlPlaneSessionLocal()
-        
+
         # Delete existing manager directories if they exist
         from app.tenancy.paths import manager_dir
-        
-        # Create fresh Manager in Control Plane
-        self.manager_id = uuid.uuid4().hex
-        mgr = Manager(
-            id=self.manager_id,
-            email=self.manager_email,
-            name="Judge Manager",
-            created_at=timeservice.now_ist(),
-        )
-        cdb.add(mgr)
-        
-        # Create corresponding Employee record for manager self-lookup
+
+        # Step 30: Employee.id IS the auth identity -- no separate Manager
+        # table. Creating the Employee row with is_manager=True makes its
+        # own id the manager_id.
         emp_mgr = Employee(
             id=uuid.uuid4().hex,
             email=self.manager_email,
             name="Judge Manager",
-            role="Manager"
+            role="Manager",
+            is_manager=True,
+            created_at=timeservice.now_ist(),
         )
         cdb.add(emp_mgr)
-        
+        cdb.flush()
+        self.manager_id = emp_mgr.id
+
         # Add team member employee records from employees.json definitions
         self.team_employees = {
             "alice@example.com": {"name": "Alice Chen", "slack_id": "U0000001", "role": "Backend Engineer"},
@@ -232,18 +228,16 @@ class KBTestHarness:
             cdb.flush()
             self.project_mappings[name] = proj.id
             ensure_project_scaffold(proj.id, proj.name, proj.description)
-            
-            # Map members
+
+            # Map members -- step 31 collapsed ProjectMember into
+            # Project.member_employee_ids (a JSON list of {employee_id, role}).
+            members = get_member_list(proj)
             for email in self.team_employees:
-                # Find matching employee
                 emp_row = cdb.query(Employee).filter(Employee.email == email).first()
                 assert emp_row is not None, f"Employee {email} should exist"
-                cdb.add(ProjectMember(
-                    id=uuid.uuid4().hex,
-                    project_id=proj.id,
-                    employee_id=emp_row.id,
-                ))
-                
+                members.append({"employee_id": emp_row.id, "role": "Member"})
+            set_member_list(proj, members)
+
         cdb.commit()
         cdb.close()
         
@@ -555,7 +549,7 @@ def run_dream_tests(harness: KBTestHarness) -> Dict[str, Any]:
         try:
             suggestions = psession.scalars(select(Suggestion)).all()
             concerns = psession.scalars(select(Concern)).all()
-            health_logs = psession.scalars(select(HealthLog).order_by(HealthLog.timestamp.desc())).all()
+            health_logs = psession.scalars(select(HealthLog).order_by(HealthLog.ts.desc())).all()
             
             project_evals[name] = {
                 "id": pid,

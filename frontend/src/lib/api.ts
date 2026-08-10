@@ -46,6 +46,13 @@ export function goToOutlookLogin() {
   window.location.href = `${API_PREFIX}/auth/outlook/login`;
 }
 
+// Step 29: separate from login -- this is the Connectors-page grant that
+// actually requests mailbox read access (Mail.Read). Signing in no longer
+// implies this.
+export function goToOutlookConnectMail() {
+  window.location.href = `${API_PREFIX}/auth/outlook/connect-mail`;
+}
+
 export function goToOutlookEnableSend() {
   window.location.href = `${API_PREFIX}/auth/outlook/enable-send`;
 }
@@ -255,7 +262,7 @@ export function getProjects(): Promise<ProjectSummary[]> {
 
 export function createProject(payload: {
   name: string;
-  description?: string;
+  description: string;
   kind: "team" | "personal";
   member_employee_ids?: { employee_id: string; role?: string }[];
 }): Promise<ProjectDetail> {
@@ -280,7 +287,7 @@ export function deleteProject(id: string): Promise<void> {
   return request(`/api/projects/${id}`, { method: "DELETE" });
 }
 
-// ── Portfolios (wireframes 4.png, 8.png) ─────────────────
+// ── Portfolios ───────────────────────────────────────────
 
 export interface Portfolio {
   id: string;

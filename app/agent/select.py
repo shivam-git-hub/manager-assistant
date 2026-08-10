@@ -1,6 +1,5 @@
-"""Deterministic candidate selection for the personal agent's heartbeat
-(step 28 -- prompts/step_28_personal_agent.md §3). Same standing rule as
-ingestion/heartbeat/dream: code decides WHAT might be due, the LLM only
+"""Deterministic candidate selection for the personal agent's heartbeat.
+Same standing rule as ingestion/heartbeat/dream: code decides WHAT might be due, the LLM only
 drafts WHAT TO SAY and (for meeting inference) judges natural-language
 mentions. Nothing here calls an LLM.
 """

@@ -8,8 +8,7 @@ Delegated login itself (the "Sign in with Microsoft" redirect flow) lives
 in app/controlplane/outlook_auth.py, not here -- it doubles as manager
 login + Outlook-connect, so it belongs with the rest of auth, not the
 connector. This module only knows how to *use* an already-connected
-manager's token, not how to establish one (device-code auth and its
-/device-login endpoints were removed in step 13, replaced by that flow).
+manager's token, not how to establish one.
 
 send() is a plain method, not an HTTP endpoint -- callers are app.outbound
 (quiet-hours gated) and, later, agent tools.
@@ -37,14 +36,13 @@ from typing import Optional, List, Dict, Any
 import httpx
 from fastapi import APIRouter, Depends, status, Response
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
-from app.database import UnifiedMessage, TeamMember
+from app.database import UnifiedMessage
 from app.tenancy.db import get_manager_db
-from app.controlplane.models import Manager
-from app.controlplane.auth import get_current_manager
+from app.controlplane.models import Employee
+from app.controlplane.auth import get_current_employee
 from app.config import IST
 from app import timeservice
 from app.integrations.base import ChannelConnector, NormalizedMessage, SendResult, ingest
@@ -58,14 +56,20 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 def _resolve_active_manager_id() -> Optional[str]:
     """Single-tenant convenience: use whichever manager most recently
-    connected Outlook. Real manager_id-scoped connector plumbing (each
-    caller passing its own manager_id instead of the connector guessing)
-    lands in step 15 alongside the rest of the per-manager data split."""
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, OutlookInstallation
+    connected Outlook (Employee.created_at is the seed/login time, not the
+    connection time, so this is an approximation -- fine for
+    the single-tenant callers that use this fallback; real manager_id-scoped
+    calls never hit this path)."""
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee
 
     db = ControlPlaneSessionLocal()
     try:
-        row = db.query(OutlookInstallation).order_by(OutlookInstallation.updated_at.desc()).first()
+        row = (
+            db.query(Employee)
+            .filter(Employee.outlook_mailbox_email.isnot(None))
+            .order_by(Employee.created_at.desc())
+            .first()
+        )
         return row.manager_id if row else None
     finally:
         db.close()
@@ -74,16 +78,16 @@ def _resolve_active_manager_id() -> Optional[str]:
 def load_token_cache_for_manager(manager_id: str):
     """DB-backed replacement for the old single-file
     data/outlook_token_cache.json -- one cache per manager, keyed by
-    OutlookInstallation.manager_id."""
+    Employee.manager_id."""
     import msal
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, OutlookInstallation
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
     cache = msal.SerializableTokenCache()
     db = ControlPlaneSessionLocal()
     try:
-        row = db.get(OutlookInstallation, manager_id)
-        if row and row.token_cache_json:
-            cache.deserialize(row.token_cache_json)
+        employee = get_employee_by_manager_id(db, manager_id)
+        if employee and employee.outlook_token_cache_json:
+            cache.deserialize(employee.outlook_token_cache_json)
     finally:
         db.close()
     return cache
@@ -92,13 +96,13 @@ def load_token_cache_for_manager(manager_id: str):
 def save_token_cache_for_manager(manager_id: str, cache) -> None:
     if not cache.has_state_changed:
         return
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, OutlookInstallation
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
     db = ControlPlaneSessionLocal()
     try:
-        row = db.get(OutlookInstallation, manager_id)
-        if row:
-            row.token_cache_json = cache.serialize()
+        employee = get_employee_by_manager_id(db, manager_id)
+        if employee:
+            employee.outlook_token_cache_json = cache.serialize()
             db.commit()
             logger.debug(f"[outlook] token cache updated for manager={manager_id}")
     finally:
@@ -255,7 +259,7 @@ class OutlookConnector(ChannelConnector):
 
     def send_allowed(self, manager_id: Optional[str] = None) -> bool:
         """Is Mail.Send in this manager's granted_scopes? The OUR-SIDE send
-        gate (step 20 follow-up): /auth/outlook/revoke-send removes the
+        gate: /auth/outlook/revoke-send removes the
         scope from granted_scopes, and this check is what makes that revoke
         real -- Microsoft's consent may still exist, but Pulse won't use it."""
         if self.auth_mode == "app":
@@ -263,12 +267,12 @@ class OutlookConnector(ChannelConnector):
         resolved = manager_id or _resolve_active_manager_id()
         if not resolved:
             return False
-        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, OutlookInstallation
+        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
         db = ControlPlaneSessionLocal()
         try:
-            row = db.get(OutlookInstallation, resolved)
-            return bool(row and "Mail.Send" in (row.granted_scopes or "").split(","))
+            employee = get_employee_by_manager_id(db, resolved)
+            return bool(employee and "Mail.Send" in (employee.outlook_granted_scopes or "").split(","))
         finally:
             db.close()
 
@@ -318,10 +322,17 @@ class OutlookConnector(ChannelConnector):
 
     # --- Inbound -------------------------------------------------------------
 
-    def _resolve_member(self, db: Session, email: str) -> Optional[TeamMember]:
-        return db.scalars(select(TeamMember).where(
-            (TeamMember.outlook_email == email) | (TeamMember.id == email)
-        )).first()
+    def _resolve_member(self, cdb, email: Optional[str]):
+        """Resolves an email address straight against the control-plane
+        Employee directory (Employee.email is always lowercase -- see its
+        docstring) -- connectors don't need the per-manager TeamMember
+        roster at all. `cdb` is a control-plane session opened once by the
+        caller (normalize()) and reused for both sender and receiver."""
+        if not email:
+            return None
+        from app.controlplane.models import get_employee_by_email
+
+        return get_employee_by_email(cdb, email)
 
     def normalize(self, db: Session, raw: Dict[str, Any], manager_id: Optional[str] = None) -> Optional[NormalizedMessage]:
         """`raw` is a Graph message resource (from a poll fetch, or the
@@ -340,8 +351,14 @@ class OutlookConnector(ChannelConnector):
             return None
         receiver_email = to_emails[0]
 
-        sender_member = self._resolve_member(db, sender_email)
-        receiver_member = self._resolve_member(db, receiver_email)
+        from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal
+
+        cdb = ControlPlaneSessionLocal()
+        try:
+            sender_member = self._resolve_member(cdb, sender_email)
+            receiver_member = self._resolve_member(cdb, receiver_email)
+        finally:
+            cdb.close()
 
         body = raw.get("body", {})
         content = body.get("content", "")
@@ -365,7 +382,7 @@ class OutlookConnector(ChannelConnector):
             content=content,
             timestamp=dt_ist,
             raw_metadata=json.dumps(raw),
-            # Graph's conversationId groups a whole mail thread (step 20) --
+            # Graph's conversationId groups a whole mail thread --
             # the ingest job batches per thread_key for claim context.
             thread_key=raw.get("conversationId"),
         )
@@ -502,7 +519,7 @@ async def outlook_mock_ingest(
     payload: OutlookEmailPayload,
     response: Response,
     db: Session = Depends(get_manager_db),
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
 ):
     """Dev/manual injection endpoint -- cookie-scoped like any other route,
     so it writes into the logged-in manager's own db.sqlite/tracked-contacts."""
@@ -520,7 +537,7 @@ async def outlook_mock_ingest(
 
 
 @router.post("/poll")
-async def outlook_poll(db: Session = Depends(get_manager_db), manager: Manager = Depends(get_current_manager)):
+async def outlook_poll(db: Session = Depends(get_manager_db), manager: Employee = Depends(get_current_employee)):
     """Manual trigger for real polling -- the scheduled version of this
     lives in app/projectkb/jobs/outlook_poll.py (runs per-manager there,
     same as here)."""

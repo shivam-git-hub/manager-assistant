@@ -15,7 +15,7 @@ import {
   type VaultFile,
 } from "@/lib/api";
 
-// Project Overview (wireframe 7.png): Overview / Milestones / KPIs from
+// Project Overview: Overview / Milestones / KPIs from
 // project.md, Timeline (dream-job output -- honest empty state for now),
 // Quick Links: Team, Project Vault, Add MoM. "Project Dashboard" button →
 // the tasks/panels page (6.png).

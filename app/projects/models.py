@@ -1,14 +1,10 @@
-"""Per-project db.sqlite tables (spec/architecture_v2_kb.md §3, step 18 --
-prompts/step_18_registry_and_scaffold.md). Own DeclarativeBase, separate
-from app.database.Base (per-manager) and app.controlplane.models
+"""Per-project db.sqlite tables. Own DeclarativeBase, separate from
+app.database.Base (per-manager) and app.controlplane.models
 .ControlPlaneBase (global registry) -- one project = one sqlite file under
 projects/<project_id>/db.sqlite (see app.projects.paths), engine-agnostic
 here same as the other model modules.
 
-Fresh package, not a rework of the orphaned app.projectkb.models sketch --
-see that module's docstring-equivalent note in app.projects.paths.
-
-All timestamp defaults read the sim-time service, never the wall clock --
+All timestamp defaults go through app.timeservice, never the wall clock --
 app/projects/ is not exempt from tests/test_timeservice.py's
 test_07_wall_clock_guard (only app/projectkb, app/controlplane,
 app/integrations, and app/api are)."""
@@ -27,13 +23,12 @@ class ProjectBase(DeclarativeBase):
 
 class Task(ProjectBase):
     """id is a uuid hex (not autoincrement) because parent_task_id is a
-    self-referencing FK for subtasks -- explicit in the step prompt. The
-    other five tables below use plain autoincrement ints, matching the
-    convention used everywhere else for per-store append/log tables
-    (app.database, the orphaned app.projectkb.models) -- nothing outside
-    this db.sqlite ever cites a task/archive/conflict/suggestion/concern/
-    health_log row by id except events.task_ids (task ids only, per
-    spec §2), so there is no cross-db uuid requirement for the rest."""
+    self-referencing FK for subtasks. The other five tables below use plain
+    autoincrement ints, matching the convention used everywhere else for
+    per-store append/log tables -- nothing outside this db.sqlite ever cites
+    a task/archive/conflict/suggestion/concern/health_log row by id except
+    events.task_ids (task ids only), so there is no cross-db uuid
+    requirement for the rest."""
 
     __tablename__ = "tasks"
 
@@ -41,11 +36,10 @@ class Task(ProjectBase):
     parent_task_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tasks.id"), nullable=True)
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Cross-db reference (controlplane.employees) -- no FK constraint, same
-    # reasoning as the orphaned app.projectkb.models.Claim.source_message_id.
+    # Cross-db reference (controlplane.employees) -- no FK constraint.
     assignee_employee_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="todo")  # todo|in_progress|blocked|done|pending_approval
-    priority: Mapped[str] = mapped_column(String(10), default="medium")  # low|medium|high (wireframe 6, step 21)
+    priority: Mapped[str] = mapped_column(String(10), default="medium")  # low|medium|high
     due: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[str] = mapped_column(String(20))  # "manager" | "agent"
     approved_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)

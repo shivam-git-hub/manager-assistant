@@ -1,349 +1,312 @@
-"""Dream job (spec/architecture_v2_kb.md §4.4, prompts/step_25_dream_job.md):
-daily per-user md synthesis (memory.md/events.md/dump.md) + per-managed-
-project summary regeneration, suggestions/concerns, and the health
-rubric. Runs every DREAM_INTERVAL_MINUTES per manager.
+"""Dream job: daily per-user md synthesis (memory.md/events.md) + per-owned-
+project summary regeneration, suggestions/concerns, and the health rubric.
+Runs every DREAM_INTERVAL_MINUTES per manager.
 
-Selection uses Event.dreamed, NOT a wall-clock cursor: job_schedule.py's
-get_last_run/set_last_run track REAL wall-clock time -- this job's own
-scheduling cadence, deliberately independent of sim time (see
-app/projectkb/scheduler.py's docstring) -- but Event.created_at is
-stamped in SIM time. Comparing the two would silently miscount "new since
-last dream" whenever the sim clock jumps. `dreamed` is the flag actually
-meant for this (added step 19), same shape as Claim.processed /
-UnifiedMessage.is_processed.
+Selection uses the Event.dreamed flag, NOT a wall-clock cursor: job
+cadence and event timestamps are different clocks, so comparing them would
+miscount "new since last dream". `dreamed` has the same shape as
+Claim.processed / UnifiedMessage.is_processed.
 
-Deliberate scope cut, same rationale as steps 23/24: one structured-
-output SMART_MODEL call per phase, not a tool loop.
+Step 36 rewrite: both halves are now agentic (app.agent.runner.run_spec)
+instead of one blind structured-output LLM call per phase, mirroring
+heartbeat.py's step-35 rewrite. The agent can probe the KB (search_events/
+get_event/search_claims/get_thread/get_project_state/list_projects, all in
+app.agent.kb_tools) before writing, instead of synthesizing off event
+titles alone -- that's what made the old prose thin and repetitive. Every
+write (write_memory/append_manager_events for the user pass,
+write_project_summary/append_project_events/add_suggestions/add_concerns/
+set_health_adjustment for the project pass) is a kb_tools.py tool handler,
+not something this file writes directly -- this file owns event batching,
+the agent runs' budgets/instructions/seed messages, and the mark-dreamed
+bookkeeping.
+
+dump.md is gone (step 36 Part 3) -- it had exactly one writer (this job)
+and nothing ever read it.
 """
-import json
 import logging
 from typing import Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import timeservice
-from app.config import DREAM_EVENT_BATCH_SIZE, SMART_MODEL
-from app.database import Event
 from app.agent.gemini_client import GeminiClient, get_client
-from app.projectkb.llm_json import parse_json_object
+from app.agent.kb_context import build_kb_context
+from app.agent.registry import registry
+from app.agent.runner import AgentRunResult, AgentSpec, run_spec
+from app.config import (
+    DREAM_EVENT_BATCH_SIZE,
+    KB_AGENT_DEADLINE_SECONDS,
+    KB_DREAM_MAX_LLM_CALLS,
+    KB_DREAM_PROJECT_MAX_LLM_CALLS,
+    SMART_MODEL,
+)
+from app.database import Event
 from app.projectkb.project_scope import manager_owned_projects_with_events
-from app.tenancy.paths import manager_dump_md_path, manager_events_md_path, manager_memory_md_path
+
+# Import side-effect: registers every kb_tools.py handler (the six read
+# probes, the five heartbeat write tools, and the seven dream write tools)
+# onto the shared registry -- same discipline as heartbeat.py's identical
+# import, must be explicit here rather than relied on via whatever else the
+# process happens to import first.
+import app.agent.kb_tools  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-PROGRESS_EVENT_TYPES = {"status_update", "commitment"}
-# No progress event ever recorded for a project -- treated as "a long
-# time," but still bounded by the rubric's own 30-day cap below, so this
-# just needs to be large enough to always saturate that cap.
-DAYS_SINCE_PROGRESS_SENTINEL = 999
+# Tool-call ceilings, one per phase -- generous relative to each phase's own
+# max_llm_calls (KB_DREAM_MAX_LLM_CALLS / KB_DREAM_PROJECT_MAX_LLM_CALLS) so
+# a probe-heavy run (several search_events/get_event calls before the final
+# writes) never gets cut short by this before the LLM-call budget would bind
+# anyway -- a safety ceiling, not a tuning knob, same role as
+# heartbeat.py's _PHASE1_MAX_TOOL_CALLS/_PHASE2_MAX_TOOL_CALLS.
+_USER_MAX_TOOL_CALLS = 30
+_PROJECT_MAX_TOOL_CALLS = 30
 
+_USER_TOOL_NAMES = (
+    "search_events",
+    "get_event",
+    "search_claims",
+    "get_thread",
+    "get_project_state",
+    "list_projects",
+    "write_memory",
+    "append_manager_events",
+)
 
-def _read_if_exists(path) -> str:
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+_PROJECT_TOOL_NAMES = (
+    "search_events",
+    "get_event",
+    "search_claims",
+    "get_thread",
+    "get_project_state",
+    "list_projects",
+    "write_project_summary",
+    "append_project_events",
+    "add_suggestions",
+    "add_concerns",
+    "set_health_adjustment",
+)
 
+# This is a deliberate widening of the pre-step-36 prompt (dream.py:55-70,
+# which only asked for "preferences, commitments, recurring patterns") --
+# see prompts/step_36_agentic_dream.md's "why". events.md stays a short,
+# separate running log and must not repeat memory.md's content.
+_USER_INSTRUCTIONS = (
+    "You maintain this person's durable memory.md: a durable picture of this person's working life -- the "
+    "projects they're involved in and their role in each, key events and decisions, commitments they made "
+    "or are owed, stated preferences and working style, and things inferable from their conversations that "
+    "would be costly to forget. Rewrite the whole file each time; merge and dedupe rather than appending; "
+    "drop nothing that is still true.\n\n"
+    "The events below are just a starting point -- probe search_events/get_event/search_claims/get_thread/"
+    "get_project_state/list_projects for detail before writing if the title alone isn't enough to judge "
+    "what's durable.\n\n"
+    "Call write_memory exactly ONCE with the full rewritten file (it refuses a blank one, so make sure "
+    "there's real content). Then call append_manager_events with short one-line entries for today's key "
+    "events -- events.md is a running log, NOT a repeat of memory.md's content, keep each line brief."
+)
 
-def _append_lines(path, lines: List[str]) -> None:
-    clean = [line.strip() for line in lines if isinstance(line, str) and line.strip()]
-    if not clean:
-        return
-    existing = _read_if_exists(path)
-    addition = "\n".join(f"- {line}" for line in clean)
-    with open(path, "a", encoding="utf-8") as f:
-        if existing and not existing.endswith("\n"):
-            f.write("\n")
-        f.write(addition + "\n")
-
-
-# ─── Per-user synthesis (memory.md / events.md / dump.md) ──────────────
-
-_USER_SYSTEM_INSTRUCTION = (
-    "You maintain a user's personal knowledge-base files for a work "
-    "assistant. Given the current memory.md and the day's new events, "
-    "produce strict JSON:\n"
-    '{"memory_md": "...", "events_lines": ["..."], "dump_lines": ["..."]}\n\n'
-    "memory_md: the FULL rewritten memory.md -- durable facts worth "
-    "remembering about this user across days (preferences, commitments, "
-    "recurring patterns). Merge new facts into the existing ones; never "
-    "restate a fact that's already there in different words -- dedupe "
-    "near-duplicates rather than appending a near-identical line. Return "
-    "the existing content essentially unchanged if nothing new belongs.\n"
-    "events_lines: short one-line summaries of today's key events, "
-    "appended to a running log (don't repeat memory_md's content here).\n"
-    "dump_lines: literal reference facts worth keeping verbatim for later "
-    "lookup (contact info, feature descriptions) -- empty list if none."
+_PROJECT_INSTRUCTIONS = (
+    "You maintain this project's summary.md: current goals, state, and notes an agent should load to "
+    "understand this project (NOT a full history -- that's what the events log is for). Rewrite the whole "
+    "file each time.\n\n"
+    "The events below are just a starting point -- probe get_project_state/search_events/get_event/"
+    "search_claims/get_thread for detail before writing if the title alone isn't enough.\n\n"
+    "Call write_project_summary exactly ONCE with the full rewritten file (it refuses a blank one). Then "
+    "append_project_events with short one-line log entries (not a repeat of summary.md), add_suggestions/"
+    "add_concerns for anything worth flagging to the manager (skip if there's nothing new), and "
+    "set_health_adjustment exactly once -- the base health score is computed deterministically for you "
+    "from open blockers/overdue tasks/conflicts/days since progress; you only supply a nudge of -1, 0, or "
+    "+1 with a reason required whenever it's not 0."
 )
 
 
-def _call_user_synthesis(client: GeminiClient, memory_md: str, events: List[Event]) -> Dict:
-    events_context = "\n".join(f"- [{e.type}] severity={e.severity}: {e.title}" for e in events) or "(none)"
-    prompt = (
-        f"### Current memory.md:\n{memory_md.strip() or '(empty)'}\n\n"
-        f"### Today's new events:\n{events_context}\n\n"
-        "Produce the JSON now."
-    )
-    res = client.chat(
-        model=SMART_MODEL,
-        messages=[
-            {"role": "system", "content": _USER_SYSTEM_INSTRUCTION},
-            {"role": "user", "content": prompt},
-        ],
-        json_mode=True,
-    )
-    return parse_json_object(res, "[projectkb.dream.user]")
-
-
-def _run_user_synthesis(manager_id: str, events: List[Event], client: GeminiClient) -> None:
-    memory_path = manager_memory_md_path(manager_id)
-    current_memory = _read_if_exists(memory_path)
-
-    result = _call_user_synthesis(client, current_memory, events)
-    if not result:
-        # parse_json_object() tolerates malformed/off-shape responses by
-        # returning {} rather than raising -- correct for jobs where a bad
-        # response should just skip a sub-batch, but here events are the
-        # TERMINAL synthesis stage: silently proceeding would mark this
-        # whole batch dreamed=True with nothing actually synthesized, and
-        # it would never be retried. Raise so run()'s except leaves the
-        # batch dreamed=False for a real retry next tick.
-        raise ValueError("dream user-level synthesis returned an unparseable/empty response")
-
-    memory_md = result.get("memory_md")
-    if isinstance(memory_md, str) and memory_md.strip():
-        memory_path.write_text(memory_md, encoding="utf-8")
-
-    _append_lines(manager_events_md_path(manager_id), result.get("events_lines") or [])
-    _append_lines(manager_dump_md_path(manager_id), result.get("dump_lines") or [])
-
-
-# ─── Per-project synthesis + health rubric ──────────────────────────────
-
-HEALTH_BAND_POINTS = 15  # score points per "band" -- the LLM nudges by at most one band, spec §4.4
-
-_PROJECT_SYSTEM_INSTRUCTION = (
-    "You maintain a project's knowledge-base summary for a work assistant. "
-    "Given the project's own project.md (manager-authored), its current "
-    "task list, recent archive excerpts, and new events, produce strict "
-    "JSON:\n"
-    '{"summary_md": "...", "events_lines": ["..."], "suggestions": ["..."], '
-    '"concerns": ["..."], "health_adjustment": -1|0|1, "health_reason": "..."}\n\n'
-    "summary_md: the FULL rewritten summary.md -- current goals, state, "
-    "and notes an agent should load to understand this project (NOT a "
-    "full history -- that's what the archive is for).\n"
-    "events_lines: short summaries of today's key events for this "
-    "project's own log.\n"
-    "suggestions: constructive suggestions for the manager, if any -- "
-    "empty list if none.\n"
-    "concerns: risks/issues worth flagging, if any -- empty list if none.\n"
-    "health_adjustment: a deterministic base health score is computed "
-    "separately from open blockers/overdue tasks/conflicts/days since "
-    "progress. You may nudge it by AT MOST one band -- -1 (worse), 0, or "
-    "+1 (better) -- based on qualitative signals those counts miss (e.g. "
-    "milestone slippage visible in project.md but not captured by the "
-    "counts). health_reason is REQUIRED (a short justification) whenever "
-    "health_adjustment is not 0, otherwise leave it null."
-)
-
-
-def _build_project_prompt(project_md: str, tasks: List, recent_archive: List, new_events: List[Event]) -> str:
-    tasks_context = "\n".join(f"- id={t.id} | {t.title} | status={t.status}" for t in tasks) or "(none)"
-    archive_context = "\n".join(f"- [{a.ts}] {a.kind}: {a.content}" for a in recent_archive) or "(none)"
-    events_context = "\n".join(f"- [{e.type}] severity={e.severity}: {e.title}" for e in new_events) or "(none)"
+def _user_seed_message(batch: List[Event]) -> str:
+    lines = [f"{i + 1}. [event_id={e.id}] [{e.type}] severity={e.severity}: {e.title}" for i, e in enumerate(batch)]
     return (
-        f"### project.md:\n{project_md.strip() or '(empty)'}\n\n"
-        f"### Current Tasks:\n{tasks_context}\n\n"
-        f"### Recent Archive (last 15):\n{archive_context}\n\n"
-        f"### New Events:\n{events_context}\n\n"
-        "Produce the JSON now."
+        "### New Events (since last dream)\n" + "\n".join(lines) + "\n\n"
+        "Probe get_event/search_claims/get_thread for detail on any you need, then call write_memory once "
+        "with the full rewritten memory.md, and append_manager_events with brief log lines."
     )
 
 
-def _call_project_synthesis(client: GeminiClient, project_md: str, tasks: List, recent_archive: List, new_events: List[Event]) -> Dict:
-    res = client.chat(
+def _project_seed_message(project_id: str, events: List[Event]) -> str:
+    lines = [
+        f"- id={e.id} | type={e.type} | severity={e.severity} | {e.title}" + (f" -- {e.body}" if e.body else "")
+        for e in events
+    ]
+    return (
+        f"### New Events tagged to project_id={project_id} (since last dream):\n" + "\n".join(lines) + "\n\n"
+        "Probe get_project_state/search_events/get_event for more context if useful, then call "
+        "write_project_summary once, append_project_events, add_suggestions/add_concerns if warranted, "
+        "and set_health_adjustment once."
+    )
+
+
+def _wrote_memory(result: AgentRunResult) -> bool:
+    """Whether the user-level run actually produced a memory.md write --
+    the real analog of pre-step-36 dream.py's failure condition
+    (dream.py:96-104: raise when there's nothing to write). A run that
+    called write_memory successfully and then hit budget/deadline on a
+    trailing turn HAS done its job; only a run that never got a successful
+    write_memory call in should be treated as having failed. Checked
+    against the tool_trace rather than stop_reason alone, since
+    stop_reason=="final" only tells you the run ended cleanly, not that it
+    ever called write_memory."""
+    return any(
+        t["name"] == "write_memory" and '"success"' in t["result_preview"] and "error" not in t["result_preview"]
+        for t in result.tool_trace
+    )
+
+
+def _run_user_synthesis(db: Session, manager_id: str, batch: List[Event], client: GeminiClient, context_text: str) -> AgentRunResult:
+    spec = AgentSpec(
+        name="kb_dream_user",
         model=SMART_MODEL,
-        messages=[
-            {"role": "system", "content": _PROJECT_SYSTEM_INSTRUCTION},
-            {"role": "user", "content": _build_project_prompt(project_md, tasks, recent_archive, new_events)},
-        ],
-        json_mode=True,
+        instructions=_USER_INSTRUCTIONS,
+        tool_names=_USER_TOOL_NAMES,
+        max_llm_calls=KB_DREAM_MAX_LLM_CALLS,
+        max_tool_calls=_USER_MAX_TOOL_CALLS,
+        deadline_seconds=KB_AGENT_DEADLINE_SECONDS,
     )
-    return parse_json_object(res, "[projectkb.dream.project]")
+    return run_spec(
+        spec,
+        db,
+        manager_id,
+        _user_seed_message(batch),
+        client=client,
+        context_text=context_text,
+        tool_registry=registry,
+    )
 
 
-def _events_for_project(
-    db: Session, project_id: str, types: Optional[set] = None, ui_states: Optional[set] = None
-) -> List[Event]:
-    """Events tagged to this project across ALL time (health reflects
-    current standing, not just this dream tick's new batch) -- Python-side
-    JSON-list filter, same convention as app.api.home's project_id filter."""
-    query = select(Event)
-    if types:
-        query = query.where(Event.type.in_(types))
-    if ui_states:
-        query = query.where(Event.ui_state.in_(ui_states))
-    all_matching = db.scalars(query.order_by(Event.created_at.desc())).all()
-    return [e for e in all_matching if e.project_ids and project_id in json.loads(e.project_ids)]
+def _run_project_synthesis(
+    db: Session, manager_id: str, project_id: str, events: List[Event], client: GeminiClient, context_text: str
+) -> AgentRunResult:
+    spec = AgentSpec(
+        name="kb_dream_project",
+        model=SMART_MODEL,
+        instructions=_PROJECT_INSTRUCTIONS,
+        tool_names=_PROJECT_TOOL_NAMES,
+        max_llm_calls=KB_DREAM_PROJECT_MAX_LLM_CALLS,
+        max_tool_calls=_PROJECT_MAX_TOOL_CALLS,
+        deadline_seconds=KB_AGENT_DEADLINE_SECONDS,
+    )
+    return run_spec(
+        spec,
+        db,
+        manager_id,
+        _project_seed_message(project_id, events),
+        client=client,
+        context_text=context_text,
+        tool_registry=registry,
+    )
 
 
-def _days_since_last_progress(db: Session, project_id: str, now) -> int:
-    progress_events = _events_for_project(db, project_id, types=PROGRESS_EVENT_TYPES)
-    if not progress_events:
-        return DAYS_SINCE_PROGRESS_SENTINEL
-    return max(0, (now - progress_events[0].created_at).days)
-
-
-def _is_overdue(task, now) -> bool:
-    if task.status in ("done", "blocked", "pending_approval"):
-        return False
-    return bool(task.due and task.due < now)
-
-
-def _compute_base_health_score(open_blockers: int, overdue_tasks: int, open_conflicts: int, days_since_progress: int) -> int:
-    """Deterministic, auditable health formula (spec §4.4) -- "why is this
-    project red" must always have a legible answer, not just a number:
-      - 15 pts per open blocker, capped at 4 (max 60 pts)
-      - 10 pts per overdue task, capped at 5 (max 50 pts)
-      - 20 pts per open conflict, capped at 3 (max 60 pts)
-      - 1 pt per day since the last progress-type event, capped at 30
-    Clamped to [0, 100]. Bands (for the frontend's green/yellow/red
-    glyph): >=70 green, >=40 yellow, else red."""
-    score = 100
-    score -= 15 * min(open_blockers, 4)
-    score -= 10 * min(overdue_tasks, 5)
-    score -= 20 * min(open_conflicts, 3)
-    score -= min(days_since_progress, 30)
-    return max(0, min(100, score))
-
-
-def _run_project_synthesis(db: Session, project_id: str, new_events: List[Event], client: GeminiClient) -> Dict:
-    from app.projects.db import get_project_session
-    from app.projects.models import ArchiveEntry, Concern, Conflict, HealthLog, Suggestion, Task
-    from app.projects.paths import events_md_path, project_md_path, summary_md_path
-
-    project_md = _read_if_exists(project_md_path(project_id))
-    now = timeservice.now_ist()
-
-    project_db = get_project_session(project_id)
-    try:
-        recent_archive = project_db.query(ArchiveEntry).order_by(ArchiveEntry.ts.desc()).limit(15).all()
-        tasks = project_db.query(Task).all()
-
-        result = _call_project_synthesis(client, project_md, tasks, recent_archive, new_events)
-
-        # DB writes (Suggestion/Concern/HealthLog) are staged and committed
-        # FIRST, file writes (summary.md overwrite, events.md append) only
-        # AFTER that commit succeeds -- ordered this way (not the more
-        # obvious "write then persist") so a mid-function failure can never
-        # leave summary.md looking freshly synthesized while the DB rows
-        # backing that synthesis silently rolled back. A failure between
-        # the commit and the file writes is a much smaller, accepted
-        # residual risk (DB ahead of the files by one tick's content,
-        # self-heals next tick) rather than the reverse.
-        suggestions_created = 0
-        for text in result.get("suggestions") or []:
-            if isinstance(text, str) and text.strip():
-                project_db.add(Suggestion(ts=now, text=text.strip(), status="open"))
-                suggestions_created += 1
-
-        concerns_created = 0
-        for text in result.get("concerns") or []:
-            if isinstance(text, str) and text.strip():
-                project_db.add(Concern(ts=now, text=text.strip(), status="open"))
-                concerns_created += 1
-
-        # Health rubric: deterministic base (current standing, not just
-        # this tick's batch) + a code-clamped LLM nudge.
-        open_blockers = len(_events_for_project(db, project_id, types={"blocker"}, ui_states={"shown", "promoted"}))
-        open_conflicts = project_db.query(Conflict).filter(Conflict.status == "open").count()
-        overdue_tasks = sum(1 for t in tasks if _is_overdue(t, now))
-        days_since_progress = _days_since_last_progress(db, project_id, now)
-        base_score = _compute_base_health_score(open_blockers, overdue_tasks, open_conflicts, days_since_progress)
-
-        try:
-            adjustment = int(result.get("health_adjustment", 0))
-        except (TypeError, ValueError):
-            adjustment = 0
-        adjustment = max(-1, min(1, adjustment))
-        reason = result.get("health_reason")
-        has_reason = isinstance(reason, str) and bool(reason.strip())
-        if adjustment != 0 and not has_reason:
-            # Spec requires a written reason for any non-zero nudge -- a
-            # model that adjusts without one gets floored back to 0 rather
-            # than silently landing an unexplained adjustment.
-            adjustment = 0
-        reason = reason if (adjustment != 0 and has_reason) else None
-        final_score = max(0, min(100, base_score + adjustment * HEALTH_BAND_POINTS))
-
-        project_db.add(
-            HealthLog(
-                ts=now,
-                rubric_inputs=json.dumps(
-                    {
-                        "open_blockers": open_blockers,
-                        "overdue_tasks": overdue_tasks,
-                        "open_conflicts": open_conflicts,
-                        "days_since_progress": days_since_progress,
-                    }
-                ),
-                base_score=base_score,
-                llm_adjustment=adjustment,
-                reason=reason,
-                final_score=final_score,
-            )
-        )
-
-        project_db.commit()
-
-        summary_md = result.get("summary_md")
-        summary_regenerated = isinstance(summary_md, str) and bool(summary_md.strip())
-        if summary_regenerated:
-            summary_md_path(project_id).write_text(summary_md, encoding="utf-8")
-        _append_lines(events_md_path(project_id), result.get("events_lines") or [])
-
-        return {
-            "summary_regenerated": summary_regenerated,
-            "suggestions_created": suggestions_created,
-            "concerns_created": concerns_created,
-        }
-    finally:
-        project_db.close()
+def _empty_result(stop_reason: str, *, llm_calls: int = 0, tokens_in: int = 0, tokens_out: int = 0) -> Dict:
+    return {
+        "events_dreamed": 0,
+        "projects_synthesized": 0,
+        "llm_calls": llm_calls,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "stop_reason": stop_reason,
+    }
 
 
 def run(db: Session, manager_id: str, client: Optional[GeminiClient] = None) -> Dict:
-    """Dream job: un-dreamed Event rows -> per-user md synthesis +
-    per-managed-project summary/suggestions/concerns/health. See
-    prompts/step_25_dream_job.md."""
+    """Agentic dream: un-dreamed Event rows -> one user-level agent run
+    (memory.md/events.md) + one agent run per owned project with events in
+    this batch (summary.md/events.md/suggestions/concerns/health). Zero LLM
+    calls when there are no un-dreamed events."""
     real_client = client if client is not None else get_client()
 
-    pending = list(db.scalars(select(Event).where(Event.dreamed.is_(False)).order_by(Event.created_at)).all())
+    pending = list(
+        db.scalars(
+            select(Event).where(Event.dreamed.is_(False)).order_by(func.coalesce(Event.occurred_at, Event.created_at))
+        ).all()
+    )
     if not pending:
-        return {"events_dreamed": 0, "projects_synthesized": 0}
+        return _empty_result("no_pending_events")
 
     batch = pending[:DREAM_EVENT_BATCH_SIZE]
 
-    try:
-        _run_user_synthesis(manager_id, batch, real_client)
-    except Exception:
-        logger.exception(f"[projectkb.dream] user-level synthesis failed for manager={manager_id}; leaving events undreamed")
-        return {"events_dreamed": 0, "projects_synthesized": 0}
+    # Built once and reused for both the user-level run and every
+    # per-project run -- build_kb_context is manager-scoped (not
+    # project-scoped) and opens every visible project's own db.sqlite for
+    # task/health counts, so rebuilding it per project would be
+    # O(projects^2) file opens in a single tick for no benefit (same
+    # reasoning as heartbeat.py's identical context_text reuse).
+    context_text = build_kb_context(db, manager_id, include_conventions=True)
 
-    # Per-project failures are isolated (logged, skipped) same as step
-    # 24's fan-out -- the user-level synthesis above already succeeded for
-    # this whole batch, so events still get marked dreamed regardless; a
-    # failed project just doesn't get a fresh summary/health entry this
-    # tick (it'll pick up again once new events accumulate).
+    try:
+        user_result = _run_user_synthesis(db, manager_id, batch, real_client, context_text)
+    except Exception:
+        logger.exception(
+            f"[projectkb.dream] user-level agent run failed to start for manager={manager_id}; "
+            "leaving events undreamed"
+        )
+        return _empty_result("error")
+
+    if not _wrote_memory(user_result):
+        # Mirrors pre-step-36 dream.py's hard-fail-on-user-synthesis
+        # semantics (dream.py:96-104, dream.py:318-322): the user-level
+        # pass is the terminal synthesis stage this run's write discipline
+        # depends on -- a run that never actually wrote memory.md (whether
+        # because the LLM call errored, or it ran out of budget/deadline/
+        # tool-cap/turns before ever calling write_memory) must not mark
+        # this batch dreamed=True, or a whole day's memory synthesis is
+        # silently skipped with no retry. Leave dreamed=False so next tick
+        # retries the same batch.
+        logger.error(
+            f"[projectkb.dream] user-level agent run for manager={manager_id} did not write memory.md "
+            f"(stop_reason={user_result.stop_reason}, error={user_result.error}); leaving events undreamed"
+        )
+        return _empty_result(
+            user_result.stop_reason,
+            llm_calls=user_result.llm_calls,
+            tokens_in=user_result.tokens_in,
+            tokens_out=user_result.tokens_out,
+        )
+
+    # Per-project failures are isolated (logged, skipped) -- same as
+    # pre-step-36 dream.py's fan-out (dream.py:333-336) and heartbeat.py's
+    # own project loop. The user-level synthesis above already succeeded
+    # for this whole batch, so events still get marked dreamed regardless;
+    # a failed project just doesn't get a fresh summary/health entry this
+    # tick (it picks back up once new events accumulate for it).
     events_by_project = manager_owned_projects_with_events(manager_id, batch)
     projects_synthesized = 0
+    project_llm_calls = 0
+    project_tokens_in = 0
+    project_tokens_out = 0
     for project_id, project_events in events_by_project.items():
         try:
-            _run_project_synthesis(db, project_id, project_events, real_client)
+            result = _run_project_synthesis(db, manager_id, project_id, project_events, real_client, context_text)
         except Exception:
             logger.exception(f"[projectkb.dream] project synthesis failed for project={project_id}, manager={manager_id}")
             continue
+        if result.stop_reason == "error":
+            logger.error(
+                f"[projectkb.dream] project agent run for project={project_id}, manager={manager_id} "
+                f"ended in error: {result.error}"
+            )
         projects_synthesized += 1
+        project_llm_calls += result.llm_calls
+        project_tokens_in += result.tokens_in
+        project_tokens_out += result.tokens_out
 
+    # Mark dreamed anyway (spec, preserved from dream.py:324-328): includes
+    # events whose project synthesis failed above -- otherwise a
+    # permanently-failing project would re-send its events every dream tick
+    # forever. Only the user-synthesis failure branch above skips this.
     for event in batch:
         event.dreamed = True
     db.commit()
 
-    return {"events_dreamed": len(batch), "projects_synthesized": projects_synthesized}
+    return {
+        "events_dreamed": len(batch),
+        "projects_synthesized": projects_synthesized,
+        "llm_calls": user_result.llm_calls + project_llm_calls,
+        "tokens_in": user_result.tokens_in + project_tokens_in,
+        "tokens_out": user_result.tokens_out + project_tokens_out,
+        "stop_reason": user_result.stop_reason,
+    }

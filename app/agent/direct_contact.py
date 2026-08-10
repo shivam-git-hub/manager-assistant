@@ -1,4 +1,4 @@
-"""Slack DM replies to Harry (step 28 §6B, confirmed in scope 2026-07-23).
+"""Slack DM replies to Harry.
 The webhook (app/integrations/slack.py::slack_webhook) already ingests any
 DM the manager's claimed bot receives -- this module is what turns that
 into a live reply: run the agent harness on the single inbound message (no

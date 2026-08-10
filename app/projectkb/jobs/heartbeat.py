@@ -1,454 +1,441 @@
-"""Heartbeat job (spec/architecture_v2_kb.md §4.3, prompts/
-step_23_heartbeat_user.md + step_24_heartbeat_project_fanout.md): claims
--> typed/tagged/severity events (user-level), then a project-scoped
+"""Heartbeat job: claims -> typed/tagged/severity events (user-level), then a project-scoped
 fan-out over the events just created (task status transitions, drafted
 subtasks, deterministic archive writes). Runs every
 HEARTBEAT_INTERVAL_MINUTES per manager -- both halves happen in the SAME
-tick/run(), not as separate scheduled jobs (step 24's design correction).
+tick/run(), not as separate scheduled jobs.
 
-Deliberate scope cut for BOTH halves (per the user's own sequencing: agent
-context-engineering + tool-based KB inspection is designed later,
-alongside testing this very job): a single structured-output smart-model
-call per phase, not the full tool-loop harness. Don't "fix" this into a
-tool loop without that design conversation happening first.
+Step 35 rewrite: both halves are now agentic (app.agent.runner.run_spec)
+instead of one blind structured-output LLM call per phase. The agent can
+probe the KB (search_events/get_event/search_claims/get_thread/
+get_project_state/list_projects, all in app.agent.kb_tools) before writing,
+so a recurring claim like "still waiting on the Kafka creds" can be
+recognised as the same open blocker instead of spawning a near-duplicate
+every tick. Every deterministic guardrail the old blind-call version had
+inline (type/severity/project/claim validation, the general=derived rule,
+ownership checks on project writes) now lives in the kb_tools.py tool
+handlers themselves, not here -- this file owns claim batching, the agent
+run's budgets/instructions, claim disposal after the run, and the
+non-LLM archive writes.
 """
-import json
 import logging
-import uuid
 from typing import Dict, List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import timeservice
-from app.config import HEARTBEAT_CLAIM_BATCH_SIZE, SMART_MODEL
-from app.database import Claim, Event
 from app.agent.gemini_client import GeminiClient, get_client
-from app.projectkb.llm_json import parse_json_list_field, parse_json_object
+from app.agent.kb_context import build_kb_context
+from app.agent.registry import registry
+from app.agent.runner import AgentRunResult, AgentSpec, run_spec
+from app.config import (
+    HEARTBEAT_CLAIM_BATCH_SIZE,
+    KB_AGENT_DEADLINE_SECONDS,
+    KB_HEARTBEAT_MAX_LLM_CALLS,
+    KB_HEARTBEAT_PROJECT_MAX_LLM_CALLS,
+    SMART_MODEL,
+)
+from app.database import Claim, Event
 from app.projectkb.project_scope import manager_owned_projects_with_events
-from app.tenancy.paths import manager_memory_md_path
+
+# Import side-effect: registers every kb_tools.py handler (the six read
+# probes plus emit_events/record_conflict/apply_task_transitions/
+# draft_tasks/link_request_to_task) onto the shared registry -- without
+# this import the registry never has these names, exactly the failure mode
+# app.agent.harness's own identical import-and-comment guards against for
+# the chat tools. Must be explicit here rather than relied on via whatever
+# else the process happens to import first.
+import app.agent.kb_tools  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
-VALID_EVENT_TYPES = {
-    "status_update",
-    "blocker",
-    "clarification",
-    "commitment",
-    "request",
-    "conflict",
-    "fyi",
-}
-# Severity doctrine floor (spec §4.3): these types are never allowed to
-# round down to a silent 0, even if the model under-scores them -- code-
-# enforced, not left to the prompt alone.
-FLOOR_SEVERITY_TYPES = {"blocker", "clarification", "conflict"}
-RECENT_EVENTS_CONTEXT_LIMIT = 10
+# Claim starvation guard (spec step 5): a claim that lands in a batch
+# without ever being cited by emit_events, run after run, is force-marked
+# processed once it's been offered this many times -- otherwise a claim the
+# model keeps declining to use is re-sent to the LLM forever.
+_STARVATION_ATTEMPTS_LIMIT = 3
 
+# Tool-call ceilings, one per phase. Generous relative to each phase's own
+# max_llm_calls (KB_HEARTBEAT_MAX_LLM_CALLS / KB_HEARTBEAT_PROJECT_MAX_LLM_CALLS)
+# so a probe-heavy run (several search_events/get_event calls before the
+# final write) never gets cut short by this before the LLM-call budget
+# would bind anyway -- a safety ceiling, not a tuning knob, same role as
+# app.agent.harness.CHAT_MAX_TOOL_CALLS.
+_PHASE1_MAX_TOOL_CALLS = 40
+_PHASE2_MAX_TOOL_CALLS = 30
 
-def _manager_projects(manager_id: str) -> List[Dict]:
-    """This manager's own + member-of projects (registry rows), just
-    id/name/kind -- enough for the model to tag events without inventing
-    ids. Mirrors app.api.projects_registry.list_projects' visibility
-    logic, its own short-lived control-plane session (jobs run outside
-    any request, so there's no Depends(get_controlplane_db) to borrow --
-    same pattern as app.integrations.slack's resolve_reader_by_manager)."""
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, Project as RegistryProject, ProjectMember, Employee
+_PHASE1_TOOL_NAMES = (
+    "search_events",
+    "get_event",
+    "search_claims",
+    "get_thread",
+    "get_project_state",
+    "list_projects",
+    "emit_events",
+    "record_conflict",
+)
 
-    cdb = ControlPlaneSessionLocal()
-    try:
-        manager = cdb.get(Manager, manager_id)
-        if manager is None:
-            return []
-        owned = cdb.query(RegistryProject).filter(RegistryProject.manager_user_id == manager_id).all()
-        owned_ids = {p.id for p in owned}
-        member_project_ids = {
-            row.project_id
-            for row in (
-                cdb.query(ProjectMember.project_id)
-                .join(Employee, ProjectMember.employee_id == Employee.id)
-                .filter(func.lower(Employee.email) == manager.email.lower())
-                .all()
-            )
-        }
-        member_only_ids = member_project_ids - owned_ids
-        member_projects = []
-        if member_only_ids:
-            member_projects = (
-                cdb.query(RegistryProject).filter(RegistryProject.id.in_(member_only_ids)).all()
-            )
-        return [{"id": p.id, "name": p.name, "kind": p.kind} for p in owned + member_projects]
-    finally:
-        cdb.close()
+_PHASE2_TOOL_NAMES = (
+    "search_events",
+    "get_event",
+    "search_claims",
+    "get_thread",
+    "get_project_state",
+    "list_projects",
+    "apply_task_transitions",
+    "draft_tasks",
+    "link_request_to_task",
+)
 
-
-def _read_memory_md(manager_id: str) -> str:
-    path = manager_memory_md_path(manager_id)
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
-def _recent_events_context(db: Session) -> List[Event]:
-    return list(
-        db.scalars(select(Event).order_by(Event.created_at.desc()).limit(RECENT_EVENTS_CONTEXT_LIMIT)).all()
-    )
-
-
-_SYSTEM_INSTRUCTION = (
-    "You are a judgment agent for a work knowledge base. Convert the given "
-    "claims into typed, tagged, severity-scored events for a dashboard "
-    "Updates panel.\n\n"
-    'Return strict JSON: {"events": [{"type": "...", "project_ids": [...], '
-    '"general": bool, "severity": 0-3, "title": "...", "body": "...", '
-    '"claim_ids": [...]}]}.\n\n'
-    "type must be exactly one of: status_update, blocker, clarification, "
-    "commitment, request, conflict, fyi.\n"
-    "conflict vs blocker -- a common judgment call, get this right: if two "
-    "different people's claims contradict each other about the same fact "
-    "(one says they sent/did/confirmed something, another says they never "
-    "received it / it never happened / it wasn't confirmed), that is ALWAYS "
-    "type=conflict, even though it also happens to be blocking someone's "
-    "work -- never downgrade a genuine claim-vs-claim contradiction to a "
-    "plain blocker just because one side frames it as being stuck. Reserve "
-    "blocker for a single-sided obstacle with no contradicting claim on the "
-    "other side (e.g. waiting on an external approval, a missing scope "
-    "grant, a dependency that hasn't shipped).\n"
-    "project_ids: only use ids from the Candidate Projects list given below, "
-    "verbatim -- never invent an id. If a claim isn't clearly about one of "
-    "those projects, leave project_ids empty and set general=true.\n"
-    "claim_ids must cite the claim_id(s) (from the Pending Claims list) this "
-    "event was derived from.\n\n"
-    "Severity doctrine -- follow exactly, this controls what interrupts the "
-    "user's day:\n"
-    "- Routine progress (\"x finished y\") -> severity 0-1, UNLESS recent "
-    "history (see Recent Events below) shows this thread was already "
-    "flagged important.\n"
-    "- blocker or clarification -> always at least severity 1.\n"
+# Lifted from the pre-step-35 _SYSTEM_INSTRUCTION (heartbeat.py:99-108,
+# tuned wording preserved) and extended with the probe-first directive that
+# is the entire point of this rewrite -- see prompts/step_35_agentic_heartbeat.md.
+_PHASE1_INSTRUCTIONS = (
+    "You are the KB heartbeat agent. Convert the numbered Pending Claims below into typed, tagged, "
+    "severity-scored events for a dashboard Updates panel. PROBE FIRST: check for an existing open "
+    "event before creating a near-duplicate -- prefer probing (search_events/get_event/search_claims/"
+    "get_thread/get_project_state) over guessing. When you're done judging, call emit_events exactly "
+    "ONCE with your full batch.\n\n"
+    "type must be exactly one of: status_update, blocker, clarification, commitment, request, "
+    "conflict, fyi.\n\n"
+    "conflict vs blocker -- a common judgment call, get this right: if two different people's claims "
+    "contradict each other about the same fact (one says they sent/did/confirmed something, another "
+    "says they never received it / it never happened / it wasn't confirmed), that is ALWAYS "
+    "type=conflict, even though it also happens to be blocking someone's work -- never downgrade a "
+    "genuine claim-vs-claim contradiction to a plain blocker just because one side frames it as being "
+    "stuck. Reserve blocker for a single-sided obstacle with no contradicting claim on the other side "
+    "(e.g. waiting on an external approval, a missing scope grant, a dependency that hasn't shipped).\n\n"
+    "When you find a genuine conflict, also call record_conflict with both claim ids. list_projects "
+    "tells you whether your role on a project is 'manager' (owned) or 'member' -- record_conflict only "
+    "accepts a project you manage; still emit the conflict EVENT either way, just skip record_conflict "
+    "for a project you don't own. record_conflict's severity argument is low|medium|high -- a "
+    "DIFFERENT scale from the event severity below (0-3), do not reuse the event's number there.\n\n"
+    "project_ids: only ids you've seen from list_projects or the PROJECTS section of your context, "
+    "verbatim -- never invent one. If a claim isn't clearly about one of those projects, leave "
+    "project_ids empty (general=true follows automatically, do not set it yourself).\n\n"
+    "claim_ids on each event must cite the claim_id(s) (from the Pending Claims list below) it was "
+    "derived from -- ids outside that list are never accepted.\n\n"
+    "Severity doctrine -- follow exactly, this controls what interrupts the user's day:\n"
+    "- Routine progress (\"x finished y\") -> severity 0-1, UNLESS a probe shows this thread was "
+    "already flagged important.\n"
+    "- blocker or clarification -> always at least severity 1 (code-enforced floor, you cannot go "
+    "lower).\n"
     "- An approval being granted -> severity 1.\n"
-    "- Urgent pending training, or repeated unanswered outreach -> "
-    "severity 3.\n"
-    "Multiple claims may combine into one event, or produce none, if "
-    "nothing is dashboard-worthy -- do not force an event per claim."
+    "- Urgent pending training, or repeated unanswered outreach -> severity 3.\n"
+    "Multiple claims may combine into one event, or produce none, if nothing is dashboard-worthy -- do "
+    "not force an event per claim."
+)
+
+# Lifted from the pre-step-35 _FANOUT_SYSTEM_INSTRUCTION, extended with the
+# ownership + "cite an event from THIS run" reminders that used to be
+# enforced silently by the job and are now enforced by the tool handlers
+# themselves (app.agent.kb_tools._require_owned_project /
+# apply_task_transitions_handler's known_event_ids restriction) -- restated
+# here so the agent doesn't waste a call attempting something the tool will
+# reject anyway.
+_PHASE2_INSTRUCTIONS = (
+    "You are the project fan-out agent for ONE project, already confirmed one you manage (own) -- "
+    "these tools only work for that project_id, never attempt a different one. Given this project's "
+    "Open Tasks and the New Events tagged to it this run (both below), propose task updates.\n\n"
+    "apply_task_transitions: task_id must be one of the Open Tasks listed below -- never a task "
+    "outside that list, and never a task you believe is already done (there is no Open Task for it). "
+    "event_id must be one of the New Events listed below and must actually support that transition "
+    "(e.g. an event reporting the task is done) -- never propose a transition without a citing event "
+    "from THIS run; an older or unrelated event_id is rejected.\n\n"
+    "draft_tasks: new tasks/subtasks this project's events imply are needed. Always created as "
+    "status=pending_approval for the manager to approve -- never assume acceptance.\n\n"
+    "link_request_to_task: for New Events of type=\"request\" that are literally asking to mark an "
+    "existing task/subtask as done or complete, cite which Open Task it refers to. Most requests won't "
+    "match any task -- only link when it's unambiguous.\n\n"
+    "Probe search_events/get_event/get_project_state for more context if useful before deciding."
 )
 
 
-def _build_user_prompt(
-    claims: List[Claim], projects: List[Dict], recent_events: List[Event], memory_md: str
-) -> str:
-    projects_context = "\n".join(f"- id={p['id']} | name={p['name']} | kind={p['kind']}" for p in projects) or "(none)"
-    recent_context = "\n".join(f"- [{e.type}] severity={e.severity}: {e.title}" for e in recent_events) or "(none)"
-    claims_context = "\n".join(f"- [claim_id={c.id}] {c.text}" for c in claims)
-    memory_section = memory_md.strip() or "(no memory.md yet)"
+def _phase1_seed_message(batch: List[Claim]) -> str:
+    lines = [f"{i + 1}. [claim_id={c.id}] {c.text}" for i, c in enumerate(batch)]
     return (
-        f"### Candidate Projects (this user's memberships):\n{projects_context}\n\n"
-        f"### Recent Events (most recent {RECENT_EVENTS_CONTEXT_LIMIT}):\n{recent_context}\n\n"
-        f"### memory.md:\n{memory_section}\n\n"
-        f"### Pending Claims:\n{claims_context}\n\n"
-        "Produce the events JSON now."
+        "### Pending Claims\n" + "\n".join(lines) + "\n\n"
+        "Probe as needed, then call emit_events once with your full judged batch."
     )
 
 
-def _call_llm(
-    client: GeminiClient, claims: List[Claim], projects: List[Dict], recent_events: List[Event], memory_md: str
-) -> List[Dict]:
-    res = client.chat(
-        model=SMART_MODEL,
-        messages=[
-            {"role": "system", "content": _SYSTEM_INSTRUCTION},
-            {"role": "user", "content": _build_user_prompt(claims, projects, recent_events, memory_md)},
-        ],
-        json_mode=True,
+def _phase2_seed_message(project_id: str, open_tasks: List, events: List[Event]) -> str:
+    tasks_lines = (
+        [f"- id={t.id} | {t.title} | status={t.status} | priority={t.priority}" for t in open_tasks]
+        or ["(none)"]
     )
-    return parse_json_list_field(res, "events", "[projectkb.heartbeat]")
-
-
-# ─── Project fan-out (step 24) ────────────────────────────────────────
-
-VALID_TASK_TRANSITION_STATUSES = {"todo", "in_progress", "blocked", "done"}
-VALID_TASK_PRIORITIES = {"low", "medium", "high"}
-
-_FANOUT_SYSTEM_INSTRUCTION = (
-    "You are a project-management agent. Given a project's summary, its "
-    "current open tasks, and new events tagged to this project, propose "
-    "task updates.\n\n"
-    'Return strict JSON: {"task_status_transitions": [{"task_id": "...", '
-    '"new_status": "todo|in_progress|blocked|done", "event_id": "..."}], '
-    '"task_drafts": [{"title": "...", "description": "...", "priority": '
-    '"low|medium|high", "assignee_employee_id": null, "parent_task_id": '
-    'null}], "request_task_links": [{"event_id": "...", "task_id": "..."}]}.\n\n'
-    "task_status_transitions: task_id must be one of the Open Tasks given; "
-    "event_id must be one of the New Events given and must actually "
-    "support that transition (e.g. an event reporting the task is done) -- "
-    "never propose a transition without a citing event.\n"
-    "task_drafts: new tasks/subtasks this project's events imply are "
-    "needed. These are always proposals for the manager to approve, never "
-    "assume they're accepted.\n"
-    "request_task_links: for New Events of type=\"request\" that are "
-    "literally asking to mark an existing task/subtask as done or "
-    "complete, cite which Open Task it refers to. Most requests won't "
-    "match any task -- only include a link when it's unambiguous."
-)
-
-
-def _build_fanout_prompt(summary_md: str, open_tasks: List, events: List[Event]) -> str:
-    tasks_context = (
-        "\n".join(f"- id={t.id} | title={t.title} | status={t.status} | priority={t.priority}" for t in open_tasks)
-        or "(none)"
-    )
-    events_context = (
-        "\n".join(f"- id={e.id} | type={e.type} | severity={e.severity} | {e.title}" for e in events) or "(none)"
-    )
-    summary_section = summary_md.strip() or "(no summary.md yet)"
+    events_lines = [
+        f"- id={e.id} | type={e.type} | severity={e.severity} | {e.title}" + (f" -- {e.body}" if e.body else "")
+        for e in events
+    ]
     return (
-        f"### summary.md:\n{summary_section}\n\n"
-        f"### Open Tasks:\n{tasks_context}\n\n"
-        f"### New Events (this project):\n{events_context}\n\n"
-        "Produce the JSON now."
+        f"### Open Tasks (project_id={project_id}):\n" + "\n".join(tasks_lines) + "\n\n"
+        "### New Events tagged to this project this run:\n" + "\n".join(events_lines) + "\n\n"
+        "Probe for more context if useful, then call apply_task_transitions/draft_tasks/"
+        "link_request_to_task as appropriate."
     )
 
 
-def _call_fanout_llm(client: GeminiClient, summary_md: str, open_tasks: List, events: List[Event]) -> Dict:
-    res = client.chat(
+def _run_phase1(
+    db: Session, manager_id: str, batch: List[Claim], client: GeminiClient, context_text: str
+) -> AgentRunResult:
+    run_context = {"offered_claim_ids": [c.id for c in batch]}
+    spec = AgentSpec(
+        name="kb_heartbeat",
         model=SMART_MODEL,
-        messages=[
-            {"role": "system", "content": _FANOUT_SYSTEM_INSTRUCTION},
-            {"role": "user", "content": _build_fanout_prompt(summary_md, open_tasks, events)},
-        ],
-        json_mode=True,
+        instructions=_PHASE1_INSTRUCTIONS,
+        tool_names=_PHASE1_TOOL_NAMES,
+        max_llm_calls=KB_HEARTBEAT_MAX_LLM_CALLS,
+        max_tool_calls=_PHASE1_MAX_TOOL_CALLS,
+        deadline_seconds=KB_AGENT_DEADLINE_SECONDS,
     )
-    return parse_json_object(res, "[projectkb.heartbeat.fanout]")
+    return run_spec(
+        spec,
+        db,
+        manager_id,
+        _phase1_seed_message(batch),
+        client=client,
+        run_context=run_context,
+        context_text=context_text,
+        tool_registry=registry,
+    )
 
 
-def _fanout_one_project(db: Session, project_id: str, events: List[Event], client: GeminiClient) -> Dict:
-    """Applies task transitions/drafts + deterministic archive writes for
-    one project's newly-tagged events. Runs against two databases: the
-    project's own (tasks/archive) and the manager's own `db` (Event.task_ids
-    backfill for request->task links) -- committed separately, in that
-    order, since a failure backfilling task_ids must not undo already-
-    applied task changes."""
+def _dispose_claims(db: Session, batch: List[Claim], stop_reason: Optional[str]) -> None:
+    """Anti-loop claim bookkeeping after one phase-1 run (spec step 5).
+    Claims actually cited by emit_events are already processed=True by that
+    tool's own commit (same session, so `claim.processed` here already
+    reflects it -- expire-on-commit refreshes the instances we hold). This
+    only decides what happens to the ones that were offered but NOT cited:
+
+    - stop_reason == "final": the agent finished and chose not to use them
+      -- mark them processed, they are not eternal.
+    - budget / deadline / tool_cap / error / empty_response: leave them
+      unprocessed, next tick retries them.
+
+    Every claim in the batch gets heartbeat_attempts incremented regardless
+    of outcome; any still-unprocessed claim that has now been offered
+    _STARVATION_ATTEMPTS_LIMIT times is force-marked processed and logged --
+    without this, a claim the model always declines under a budget/deadline
+    stop would be re-sent forever.
+    """
+    for claim in batch:
+        claim.heartbeat_attempts = (claim.heartbeat_attempts or 0) + 1
+
+    if stop_reason == "final":
+        for claim in batch:
+            if not claim.processed:
+                claim.processed = True
+
+    for claim in batch:
+        if not claim.processed and claim.heartbeat_attempts >= _STARVATION_ATTEMPTS_LIMIT:
+            claim.processed = True
+            logger.warning(
+                f"[projectkb.heartbeat] claim {claim.id} force-marked processed after "
+                f"{claim.heartbeat_attempts} heartbeat attempts without being cited"
+            )
+
+    db.commit()
+
+
+def _fanout_one_project(
+    db: Session, manager_id: str, project_id: str, events: List[Event], client: GeminiClient, context_text: str
+) -> Dict:
+    """Runs the phase-2 agent for one owned project, then writes the
+    deterministic (non-LLM) archive entries -- one per event, exactly
+    heartbeat.py's pre-step-35 behaviour, just relocated here since archive
+    writes were never something the model should decide. tasks_updated/
+    tasks_drafted are computed from a before/after diff of the project's
+    Task table rather than parsed out of the tool call trace, so the count
+    is correct regardless of how many apply_task_transitions/draft_tasks
+    calls the agent made."""
     from app.projects.db import get_project_session
     from app.projects.models import ArchiveEntry, Task
-    from app.projects.paths import summary_md_path
 
-    summary_path = summary_md_path(project_id)
-    summary_md = summary_path.read_text(encoding="utf-8") if summary_path.exists() else ""
-
-    project_db = get_project_session(project_id)
+    pdb = get_project_session(project_id)
     try:
-        open_tasks = project_db.query(Task).filter(Task.status != "done").all()
-        tasks_by_id = {t.id: t for t in open_tasks}
-        known_event_ids = {e.id for e in events}
+        open_tasks = pdb.query(Task).filter(Task.status != "done").all()
+        tasks_before = {t.id: t.status for t in pdb.query(Task).all()}
+    finally:
+        pdb.close()
 
-        result = _call_fanout_llm(client, summary_md, open_tasks, events)
+    run_context = {"known_event_ids": {e.id for e in events}}
+    spec = AgentSpec(
+        name="kb_heartbeat_fanout",
+        model=SMART_MODEL,
+        instructions=_PHASE2_INSTRUCTIONS,
+        tool_names=_PHASE2_TOOL_NAMES,
+        max_llm_calls=KB_HEARTBEAT_PROJECT_MAX_LLM_CALLS,
+        max_tool_calls=_PHASE2_MAX_TOOL_CALLS,
+        deadline_seconds=KB_AGENT_DEADLINE_SECONDS,
+    )
+    result = run_spec(
+        spec,
+        db,
+        manager_id,
+        _phase2_seed_message(project_id, open_tasks, events),
+        client=client,
+        run_context=run_context,
+        context_text=context_text,
+        tool_registry=registry,
+    )
 
-        tasks_updated = 0
-        for transition in result.get("task_status_transitions") or []:
-            task_id = transition.get("task_id")
-            new_status = transition.get("new_status")
-            event_id = transition.get("event_id")
-            # Evidence requirement: the transition must cite one of THIS
-            # run's events for this project -- never trust the model to
-            # self-police "did I actually see support for this."
-            if task_id not in tasks_by_id or new_status not in VALID_TASK_TRANSITION_STATUSES:
-                continue
-            if event_id not in known_event_ids:
-                continue
-            task = tasks_by_id[task_id]
-            task.status = new_status
-            task.updated_at = timeservice.now_ist()
-            tasks_updated += 1
-
-        tasks_drafted = 0
-        for draft in result.get("task_drafts") or []:
-            title = (draft.get("title") or "").strip()
-            if not title:
-                continue
-            parent_task_id = draft.get("parent_task_id")
-            priority = draft.get("priority") if draft.get("priority") in VALID_TASK_PRIORITIES else "medium"
-            project_db.add(
-                Task(
-                    id=uuid.uuid4().hex,
-                    parent_task_id=parent_task_id if parent_task_id in tasks_by_id else None,
-                    title=title,
-                    description=draft.get("description"),
-                    assignee_employee_id=draft.get("assignee_employee_id"),
-                    status="pending_approval",
-                    priority=priority,
-                    created_by="agent",
-                )
-            )
-            tasks_drafted += 1
+    pdb = get_project_session(project_id)
+    try:
+        tasks_after = pdb.query(Task).all()
+        tasks_updated = sum(1 for t in tasks_after if t.id in tasks_before and tasks_before[t.id] != t.status)
+        tasks_drafted = sum(1 for t in tasks_after if t.id not in tasks_before)
 
         # Archive: deterministic, one row per event, NO synthesis LLM call
-        # (spec correction 2026-07-23) -- just log what happened.
+        # -- just log what happened.
         for event in events:
             content = f"[{event.type}] {event.title}"
             if event.body:
                 content += f" -- {event.body}"
-            project_db.add(
-                ArchiveEntry(ts=timeservice.now_ist(), kind="event", content=content, source_ref=event.id)
-            )
-
-        project_db.commit()
-
-        # Second, separate commit against the MANAGER's own db (Event lives
-        # there, not in this project db) -- best-effort: if the process
-        # dies between the two commits, the task changes above are
-        # already durable and this linkage is simply never applied. The
-        # consequence is bounded (that request event just won't auto-mark
-        # a task done on Approve) and this run never retries the same
-        # events again, so there's no duplicate-write risk either way.
-        request_links_applied = 0
-        for link in result.get("request_task_links") or []:
-            event_id = link.get("event_id")
-            task_id = link.get("task_id")
-            if task_id not in tasks_by_id:
-                continue
-            event = next((e for e in events if e.id == event_id and e.type == "request"), None)
-            if event is None:
-                continue
-            # A single event can be tagged to multiple owned projects (each
-            # gets its own fan-out pass) -- accumulate task_ids rather than
-            # overwrite, so an earlier project's link isn't clobbered.
-            existing_task_ids = json.loads(event.task_ids) if event.task_ids else []
-            if task_id not in existing_task_ids:
-                existing_task_ids.append(task_id)
-                event.task_ids = json.dumps(existing_task_ids)
-                request_links_applied += 1
-        if request_links_applied:
-            db.commit()
-
-        return {"tasks_updated": tasks_updated, "tasks_drafted": tasks_drafted, "archive_entries": len(events)}
+            pdb.add(ArchiveEntry(ts=timeservice.now_ist(), kind="event", content=content, source_ref=event.id))
+        pdb.commit()
     finally:
-        project_db.close()
+        pdb.close()
+
+    return {
+        "tasks_updated": tasks_updated,
+        "tasks_drafted": tasks_drafted,
+        "archive_entries": len(events),
+        "llm_calls": result.llm_calls,
+        "tokens_in": result.tokens_in,
+        "tokens_out": result.tokens_out,
+    }
 
 
-def _run_project_fanout(db: Session, manager_id: str, tagged_events: List[Event], client: GeminiClient) -> Dict:
+def _run_project_fanout(
+    db: Session, manager_id: str, tagged_events: List[Event], client: GeminiClient, context_text: str
+) -> Dict:
     """Groups this tick's project-tagged events by project, restricts to
-    projects this manager actually manages (spec §4.3: manager-only
-    project truth -- a teammate's own DMs never feed project KB), and runs
-    the per-project fan-out for each. One project failing (e.g. its own
-    LLM call raises) is logged and skipped, never aborts the others."""
+    projects this manager actually manages (manager-only project truth --
+    a teammate's own DMs never feed project KB), and runs the phase-2 agent
+    for each. One project failing (its own agent run raising, or a bug in
+    the grouping/task-diff code) is logged and skipped, never aborts the
+    others or the events already committed in phase 1."""
+    totals = {
+        "projects_touched": 0,
+        "tasks_updated": 0,
+        "tasks_drafted": 0,
+        "archive_entries": 0,
+        "llm_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+    }
     events_by_project = manager_owned_projects_with_events(manager_id, tagged_events)
     if not events_by_project:
-        return {"projects_touched": 0, "tasks_updated": 0, "tasks_drafted": 0, "archive_entries": 0}
+        return totals
 
-    totals = {"projects_touched": 0, "tasks_updated": 0, "tasks_drafted": 0, "archive_entries": 0}
     for project_id, project_events in events_by_project.items():
         try:
-            stats = _fanout_one_project(db, project_id, project_events, client)
+            stats = _fanout_one_project(db, manager_id, project_id, project_events, client, context_text)
         except Exception:
             logger.exception(f"[projectkb.heartbeat.fanout] failed for project={project_id}, manager={manager_id}")
             continue
         totals["projects_touched"] += 1
-        totals["tasks_updated"] += stats["tasks_updated"]
-        totals["tasks_drafted"] += stats["tasks_drafted"]
-        totals["archive_entries"] += stats["archive_entries"]
+        for key in ("tasks_updated", "tasks_drafted", "archive_entries", "llm_calls", "tokens_in", "tokens_out"):
+            totals[key] += stats[key]
     return totals
 
 
+def _empty_result(stop_reason: str) -> Dict:
+    return {
+        "claims_consumed": 0,
+        "events_created": 0,
+        "users_processed": 1,
+        "projects_touched": 0,
+        "tasks_updated": 0,
+        "tasks_drafted": 0,
+        "archive_entries": 0,
+        "llm_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "stop_reason": stop_reason,
+    }
+
+
 def run(db: Session, manager_id: str, client: Optional[GeminiClient] = None) -> Dict:
-    """Heartbeat job, user-level half: unprocessed Claim rows -> typed/
-    tagged/severity-scored Event rows. See prompts/step_23_heartbeat_user.md."""
+    """Agentic heartbeat: unprocessed Claim rows -> typed/tagged/severity-
+    scored Event rows (phase 1, one agent run), then a fan-out over this
+    tick's owned-project events (phase 2, one agent run per affected
+    project). Zero LLM calls when there are no pending claims."""
     real_client = client if client is not None else get_client()
 
     pending = list(
         db.scalars(select(Claim).where(Claim.processed.is_(False)).order_by(Claim.created_at)).all()
     )
     if not pending:
-        return {"claims_consumed": 0, "events_created": 0, "users_processed": 1}
+        return _empty_result("no_pending_claims")
 
     batch = pending[:HEARTBEAT_CLAIM_BATCH_SIZE]
 
-    # Context assembly (control-plane query, recent-events read, memory.md
-    # read) is inside the same guard as the LLM call itself -- a control-
-    # plane hiccup must fail this run safe (claims stay unprocessed for
-    # next tick) exactly like an LLM failure does, not raise out of run()
-    # uncaught.
+    # Built once and reused for both phase 1 and every phase-2 project run
+    # -- build_kb_context is manager-scoped (not project-scoped) and opens
+    # every visible project's own db.sqlite for task/health counts, so
+    # rebuilding it per fan-out project would be O(projects^2) file opens
+    # in a single tick for no benefit (phase 2 not seeing blocker counts
+    # shifted by phase 1's own new events, in the same tick, is immaterial).
+    context_text = build_kb_context(db, manager_id, include_conventions=True)
+
+    # A watermark taken right before the phase-1 run starts, not a set of
+    # pre-existing event ids: this job processes one manager's own
+    # db.sqlite, one job at a time, single-threaded, so nothing else can
+    # insert an Event row here between the watermark and the query below --
+    # cheaper than diffing the whole events table and avoids an unbounded
+    # NOT IN(...) clause on a manager with a large event history.
+    run_started_at = timeservice.now_ist()
+
     try:
-        projects = _manager_projects(manager_id)
-        recent_events = _recent_events_context(db)
-        memory_md = _read_memory_md(manager_id)
-        raw_events = _call_llm(real_client, batch, projects, recent_events, memory_md)
+        phase1 = _run_phase1(db, manager_id, batch, real_client, context_text)
     except Exception:
         logger.exception(
-            f"[projectkb.heartbeat] judgment run failed for manager={manager_id}; "
+            f"[projectkb.heartbeat] phase-1 agent run failed to start for manager={manager_id}; "
             "leaving claims unprocessed for next tick"
         )
-        return {"claims_consumed": 0, "events_created": 0, "users_processed": 1}
+        return _empty_result("error")
 
-    known_project_ids = {p["id"] for p in projects}
-    known_claim_ids = {c.id for c in batch}
+    if phase1.stop_reason == "error":
+        logger.error(f"[projectkb.heartbeat] phase-1 agent run for manager={manager_id} ended in error: {phase1.error}")
 
-    events_created = 0
-    created_events: List[Event] = []
-    for raw in raw_events:
-        etype = raw.get("type")
-        if etype not in VALID_EVENT_TYPES:
-            continue
-        title = (raw.get("title") or "").strip()
-        if not title:
-            continue
+    created_events = list(
+        db.scalars(select(Event).where(Event.created_at >= run_started_at)).all()
+    )
 
-        try:
-            severity = int(raw.get("severity", 0))
-        except (TypeError, ValueError):
-            severity = 0
-        severity = max(0, min(3, severity))
-        if etype in FLOOR_SEVERITY_TYPES:
-            severity = max(severity, 1)
+    _dispose_claims(db, batch, phase1.stop_reason)
+    claims_consumed = sum(1 for c in batch if c.processed)
 
-        # project_ids only from the known-projects list handed to the model
-        # -- an id it invents (or a claim it left general anyway) never
-        # resolves, so the event correctly falls back to general=true
-        # rather than silently going untagged.
-        project_ids = [pid for pid in (raw.get("project_ids") or []) if pid in known_project_ids]
-        claim_ids = [cid for cid in (raw.get("claim_ids") or []) if cid in known_claim_ids]
-        # general is DERIVED, not read from the model's own "general" field --
-        # Event.general means "not tied to any project/task" (database.py),
-        # so an event with a resolved project_id can never be general=true,
-        # regardless of what the model claimed.
-        general = not project_ids
-
-        event = Event(
-            id=uuid.uuid4().hex,
-            type=etype,
-            severity=severity,
-            title=title,
-            body=raw.get("body"),
-            project_ids=json.dumps(project_ids) if project_ids else None,
-            # task_ids: left unpopulated here -- the fan-out below (step 24)
-            # is what can resolve a request event to a specific task, since
-            # it's the one with the project db's Task rows in context.
-            task_ids=None,
-            claim_ids=json.dumps(claim_ids) if claim_ids else None,
-            general=general,
-            dreamed=False,
-            ui_state="shown",
-        )
-        db.add(event)
-        created_events.append(event)
-        events_created += 1
-
-    for claim in batch:
-        claim.processed = True
-    db.commit()
-
-    fanout_stats = {"projects_touched": 0, "tasks_updated": 0, "tasks_drafted": 0, "archive_entries": 0}
     project_tagged_events = [e for e in created_events if not e.general]
+    fanout_totals = {
+        "projects_touched": 0,
+        "tasks_updated": 0,
+        "tasks_drafted": 0,
+        "archive_entries": 0,
+        "llm_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+    }
     if project_tagged_events:
         try:
-            fanout_stats = _run_project_fanout(db, manager_id, project_tagged_events, real_client)
+            fanout_totals = _run_project_fanout(db, manager_id, project_tagged_events, real_client, context_text)
         except Exception:
-            # Events are already committed successfully at this point --
-            # a fan-out failure must not be reported as if the whole
-            # heartbeat run failed (claims stay processed, events stay).
+            # Phase-1 events are already committed successfully at this
+            # point -- a fan-out failure must not be reported as if the
+            # whole heartbeat run failed (claims stay disposed, events stay).
             logger.exception(f"[projectkb.heartbeat] project fan-out failed for manager={manager_id}")
 
     return {
-        "claims_consumed": len(batch),
-        "events_created": events_created,
+        "claims_consumed": claims_consumed,
+        "events_created": len(created_events),
         "users_processed": 1,
-        **fanout_stats,
+        "projects_touched": fanout_totals["projects_touched"],
+        "tasks_updated": fanout_totals["tasks_updated"],
+        "tasks_drafted": fanout_totals["tasks_drafted"],
+        "archive_entries": fanout_totals["archive_entries"],
+        "llm_calls": phase1.llm_calls + fanout_totals["llm_calls"],
+        "tokens_in": phase1.tokens_in + fanout_totals["tokens_in"],
+        "tokens_out": phase1.tokens_out + fanout_totals["tokens_out"],
+        "stop_reason": phase1.stop_reason,
     }

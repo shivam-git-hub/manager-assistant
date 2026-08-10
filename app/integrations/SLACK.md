@@ -59,9 +59,9 @@ SLACK_REDIRECT_URI=http://localhost:3003/auth/slack/callback
 A logged-in manager visits `GET /auth/slack/install` (the Connectors
 page's Slack "Grant" button) -- no agent claim required. They land on
 Slack's consent screen, approve, and land back on
-`/connectors?connected=slack&workspace=...`. This writes a
-`SlackReaderInstallation(manager_id, team_id, user_token)` row in the
-control-plane DB. `app/projectkb/jobs/slack_poll.py` polls with that
+`/connectors?connected=slack&workspace=...`. This writes
+`slack_team_id`/`slack_team_name`/`slack_user_token` onto that manager's
+`Employee` row in the control-plane DB. `app/projectkb/jobs/slack_poll.py` polls with that
 token on the usual job cadence -- see app/controlplane/slack_auth.py.
 
 `POST /auth/slack/disconnect` revokes the user token and forgets it.
@@ -109,9 +109,10 @@ with each agent's `id`/`name`/`slack_app_id`/`slack_client_id`/
 for any agent you've already installed (step 2) -- an entry without them
 seeds a claimable-but-not-yet-installed agent. Then:
 
-```
-.venv/bin/python3 -m scripts.seed_agents
-```
+Insert a row directly into the control-plane `agents` table (`id`, `name`,
+`slack_app_id`, `slack_client_id`, `slack_client_secret`,
+`slack_signing_secret`, and once installed: `bot_token`, `team_id`,
+`installed_at`) — no seed script, this is a manual admin step.
 
 Re-run any time you add agents or finish installing one (it upserts by
 `id`, safe to re-run).

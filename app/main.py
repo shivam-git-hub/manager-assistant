@@ -9,11 +9,8 @@ import sys
 
 from app.config import PORT, HOST
 from app.integrations import slack, outlook
-from app.api import dashboard, team as team_api, projects_registry as projects_registry_api, home as home_api, project_detail as project_detail_api, dev_tools as dev_tools_api
-from app import timeservice, outbound, scheduler, followups, brief
-from app.kb import api as kb_api
-from app.kb import meetings as meetings_api
-from app.kb import workload as workload_api
+from app.api import dashboard, team as team_api, projects_registry as projects_registry_api, home as home_api, project_detail as project_detail_api, dev_tools as dev_tools_api, kb_synthesis as kb_synthesis_api
+from app import timeservice, outbound
 from app.agent import api as agent_api
 from app.projectkb import scheduler as projectkb_scheduler
 from app.projectkb import api as projectkb_api
@@ -29,7 +26,7 @@ from app.projects.db import init_project_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Control-plane DB (identity/sessions/installations) is the one global
-    # piece of state -- initialized once here, same as before step 15.
+    # piece of state -- initialized once here.
     init_controlplane_db()
 
     # Per-manager db.sqlite files are created at provisioning time (dev-login,
@@ -44,11 +41,10 @@ async def lifespan(app: FastAPI):
     # Same reasoning, one level over: each registry project has its own
     # db.sqlite (app.projects.db), created at project-creation time only --
     # a schema change added after a project already existed (e.g.
-    # Task.priority, step 21) never reached it since nothing re-ran
-    # init_project_db for pre-existing projects. Discovered live 2026-07-23
-    # (task creation 500ing on an old project with "no column named
-    # priority"). Sweep every registry project at boot, mirroring the
-    # manager-db sweep above.
+    # a new Task column) never reaches it, since nothing re-runs
+    # init_project_db for pre-existing projects -- which surfaces as task
+    # creation 500ing on an old project with "no column named X". Sweep
+    # every registry project at boot, mirroring the manager-db sweep above.
     db = ControlPlaneSessionLocal()
     try:
         project_ids = [p.id for p in db.query(RegistryProject.id).all()]
@@ -59,11 +55,9 @@ async def lifespan(app: FastAPI):
 
     if "pytest" not in sys.modules:
         # projectkb job scheduler: real wall-clock cadence (ingestion/heartbeat/
-        # dream/lint). The product runs on real time only -- the old sim-time
-        # tick loop and its scheduler.tick() wiring have been removed; sim
-        # time is a simulator/testing concern, not something production code
-        # depends on. As of step 15 it iterates every provisioned manager's
-        # own db.sqlite -- there's no single shared session to hand it anymore.
+        # dream/lint). The product runs on real wall-clock time only. It
+        # iterates every provisioned manager's own db.sqlite -- there is no
+        # single shared session to hand it.
         projectkb_task = asyncio.create_task(projectkb_scheduler.background_loop())
 
         yield
@@ -104,25 +98,21 @@ app.include_router(slack.router)
 app.include_router(outlook.router)
 app.include_router(dashboard.router)
 app.include_router(outbound.router)
-app.include_router(kb_api.router)
-app.include_router(scheduler.router)
-app.include_router(followups.router)
-app.include_router(brief.router)
 app.include_router(agent_api.router)
 app.include_router(agent_api.heartbeat_router)
-app.include_router(meetings_api.router)
-app.include_router(workload_api.router)
 app.include_router(projectkb_api.router)
 app.include_router(projects_registry_api.router)
 app.include_router(home_api.router)
 app.include_router(project_detail_api.router)
 app.include_router(dev_tools_api.router)
+app.include_router(kb_synthesis_api.router)
 
 # Ensure static files directory exists
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 
-# Mount static files to serve the Simulator UI
+# Mount the no-build pages (login/connect/debug). The product UI is the
+# React app in frontend/, served separately.
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 @app.exception_handler(Exception)

@@ -3,7 +3,7 @@ import { createProject, getEmployees, type Employee, type ProjectDetail } from "
 
 // Minimal create dialog so projects/tasks can actually be created and the
 // grid/home rails have real data to show. The full Create Project page
-// (wireframe 5.png) replaces/extends this later.
+// replaces/extends this later.
 export default function CreateProjectModal({
   kind,
   onClose,
@@ -21,6 +21,7 @@ export default function CreateProjectModal({
   const [error, setError] = useState<string | null>(null);
 
   const noun = kind === "team" ? "project" : "task";
+  const MIN_DESCRIPTION_LENGTH = 20;
 
   useEffect(() => {
     if (kind === "team") getEmployees().then(setEmployees).catch(() => setEmployees([]));
@@ -40,12 +41,16 @@ export default function CreateProjectModal({
       setError(`Give the ${noun} a name`);
       return;
     }
+    if (description.trim().length < MIN_DESCRIPTION_LENGTH) {
+      setError(`Description must be at least ${MIN_DESCRIPTION_LENGTH} characters`);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const created = await createProject({
         name: name.trim(),
-        description: description.trim() || undefined,
+        description: description.trim(),
         kind,
         member_employee_ids:
           kind === "team" ? [...selected].map((id) => ({ employee_id: id })) : undefined,
@@ -89,6 +94,9 @@ export default function CreateProjectModal({
             rows={2}
             className="mt-1 w-full rounded-md border border-cardline px-3 py-2 text-ink focus:outline-none focus:border-nav"
           />
+          <span className="mt-1 block text-xs text-inksoft">
+            {description.trim().length}/{MIN_DESCRIPTION_LENGTH} characters minimum
+          </span>
         </label>
 
         {kind === "team" && (

@@ -1,4 +1,4 @@
-"""Step 28 §5 -- send_message, dashboard_action, and the AgentActionLog
+"""send_message, dashboard_action, and the AgentActionLog
 dedup they write."""
 import json
 import uuid
@@ -13,7 +13,7 @@ from app.agent import tools as agent_tools
 
 @pytest.fixture
 def team_project(client, cleanup_projects):
-    r = client.post("/api/projects", json={"name": "Phoenix", "kind": "team"})
+    r = client.post("/api/projects", json={"name": "Phoenix", "kind": "team", "description": "Test project description for automated tests."})
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
     cleanup_projects.append(pid)
@@ -52,9 +52,9 @@ def test_send_message_slack_no_slack_id_errors(db_session, client):
     assert "error" in res
 
 
-def test_send_message_slack_quiet_hours_holds_and_logs_candidate(db_session, client, set_sim_time):
+def test_send_message_slack_quiet_hours_holds_and_logs_candidate(db_session, client, monkeypatch):
     emp_id = _make_employee("bob@example.com", "Bob", slack_id="U_BOB_SLACK")
-    set_sim_time(datetime(2026, 7, 12, 23, 0, 0))
+    monkeypatch.setattr(timeservice, "now_ist", lambda: datetime(2026, 7, 12, 23, 0, 0))
 
     from app.agent.select import Candidate
 

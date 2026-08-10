@@ -2,8 +2,38 @@ import pytest
 from app.integrations.outlook import clean_html
 
 
+def _seed_employee(email, name, slack_id=None):
+    """Connector resolution (SlackConnector/OutlookConnector._resolve_member)
+    now matches against the control-plane Employee directory, not the
+    per-manager TeamMember roster -- seed an Employee row directly."""
+    import uuid
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee
+
+    db = ControlPlaneSessionLocal()
+    try:
+        db.add(Employee(id=uuid.uuid4().hex, email=email.lower(), name=name, slack_id=slack_id))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _set_manager_slack_id(client, slack_id):
+    """DM-counterpart resolution's fast path compares the sender against
+    the calling manager's OWN Employee.slack_id (set at real Slack-connect
+    time in production; set directly here for tests)."""
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
+
+    db = ControlPlaneSessionLocal()
+    try:
+        employee = get_employee_by_manager_id(db, client.manager_id)
+        employee.slack_id = slack_id
+        db.commit()
+    finally:
+        db.close()
+
+
 def _seed_slack_installation(client, team_id="T_TEST", app_id="A_TEST"):
-    """An installed Agent is required for webhook routing (step 17 piece 2b)
+    """An installed Agent is required for webhook routing
     to resolve which manager's db.sqlite an event belongs to -- routed by
     api_app_id, not team_id (see slack_payload fixtures below)."""
     from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Agent
@@ -74,23 +104,14 @@ def test_slack_webhook_verification(client):
 
 
 def test_slack_webhook_ingestion(client):
-    # 0. A manager TeamMember is still needed for DM counterpart resolution
-    # (normalize's short-circuit); the tracked-contacts allowlist is gone
-    # (step 20 -- everything gets stored).
-    client.post("/api/team", json={
-        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
+    # 0. The manager's own Employee.slack_id is needed for DM counterpart
+    # resolution (normalize's short-circuit); the tracked-contacts allowlist
+    # is gone (everything gets stored).
+    _set_manager_slack_id(client, "U_MANAGER")
     _seed_slack_installation(client)
 
-    # 1. Create a matching team member
-    member_payload = {
-        "id": "USLACK_ALICE",
-        "name": "Alice Developer",
-        "role": "Backend dev",
-        "slack_handle": "U_ALICE_123",
-        "outlook_email": "alice@company.com"
-    }
-    client.post("/api/team", json=member_payload)
+    # 1. Create a matching Employee row
+    _seed_employee("alice@company.com", "Alice Developer", slack_id="U_ALICE_123")
 
     # 2. Mock a real Slack DM event (channel_type "im" is how Slack marks a
     # 1:1 DM; a public/private channel post never involves the manager the
@@ -132,12 +153,10 @@ def test_slack_webhook_ingestion(client):
 
 
 def test_slack_webhook_unknown_counterpart_now_stored(client):
-    """Step 20 inversion proof: a DM from someone with no TeamMember row
-    and (in v1 terms) no allowlist entry IS stored now -- track everything,
+    """A DM from someone with no Employee row and no blocklist entry IS
+    stored -- track everything,
     the blocklist decides what not to process later."""
-    client.post("/api/team", json={
-        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
-    })
+    _set_manager_slack_id(client, "U_MANAGER")
     _seed_slack_installation(client)
     slack_payload = {
         "team_id": "T_TEST",
@@ -163,7 +182,7 @@ def test_slack_webhook_unknown_counterpart_now_stored(client):
 
 
 def test_slack_webhook_channel_message_now_stored(client):
-    """Step 20: channel/group messages are stored too (v1 dropped them
+    """Channel/group messages are stored too (an allowlist design dropped them
     unless the channel was on an allowlist)."""
     client.post("/api/team", json={
         "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "slack_handle": "U_MANAGER"
@@ -193,20 +212,8 @@ def test_slack_webhook_channel_message_now_stored(client):
 
 
 def test_outlook_ingestion(client):
-    # 0. Manager TeamMember (name mapping only -- no allowlist since step 20).
-    client.post("/api/team", json={
-        "id": "U_MANAGER", "name": "Shivam", "role": "Manager", "outlook_email": "shivam@company.com"
-    })
-
-    # 1. Create matching team member
-    member_payload = {
-        "id": "UOUTLOOK_BOB",
-        "name": "Bob Product",
-        "role": "Product Manager",
-        "slack_handle": "U_BOB",
-        "outlook_email": "bob@company.com"
-    }
-    client.post("/api/team", json=member_payload)
+    # Matching Employee row (name mapping only -- no allowlist).
+    _seed_employee("bob@company.com", "Bob Product")
 
     # 2. Mock Outlook HTML email payload, addressed to the manager
     outlook_payload = {

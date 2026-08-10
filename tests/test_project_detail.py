@@ -1,4 +1,4 @@
-"""Step 21 (prompts/step_21_project_drilldown.md): per-project tasks,
+"""Project drill-down: per-project tasks,
 doc/notes, vault, insights, deletion, events project filter, MoM tagging."""
 import io
 import json
@@ -18,7 +18,7 @@ from app.projects.paths import project_dir
 def project(client):
     """A team project owned by the client's throwaway manager, cleaned up
     from disk afterwards (registry rows die with the controlplane wipe)."""
-    r = client.post("/api/projects", json={"name": "Drill Project", "kind": "team"})
+    r = client.post("/api/projects", json={"name": "Drill Project", "kind": "team", "description": "Test project description for automated tests."})
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
     yield pid
@@ -26,10 +26,17 @@ def project(client):
 
 
 def _seed_employee(email: str, name: str = "Emp") -> str:
+    """Upsert by email -- login (dev-login/Outlook) now also creates an
+    Employee row, so seeding the CLIENT's own email must update
+    that existing row rather than insert a duplicate."""
     db = ControlPlaneSessionLocal()
     try:
-        emp = Employee(id=uuid.uuid4().hex, email=email.lower(), name=name)
-        db.add(emp)
+        emp = db.query(Employee).filter(Employee.email == email.lower()).first()
+        if emp is None:
+            emp = Employee(id=uuid.uuid4().hex, email=email.lower(), name=name)
+            db.add(emp)
+        else:
+            emp.name = name
         db.commit()
         return emp.id
     finally:
@@ -105,8 +112,8 @@ def test_my_tasks_matches_logged_in_users_employee(client, project):
     # employee row with the logged-in manager's email
     db = ControlPlaneSessionLocal()
     try:
-        from app.controlplane.models import Manager
-        me = db.get(Manager, client.manager_id)
+        from app.controlplane.models import Employee
+        me = db.get(Employee, client.manager_id)
         my_email = me.email
     finally:
         db.close()

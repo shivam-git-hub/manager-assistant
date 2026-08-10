@@ -1,4 +1,4 @@
-"""Step 27 sub-item -- portfolios (wireframes 4.png, 8.png). A manager's
+"""Portfolios. A manager's
 personal, named grouping of their own visible projects -- real entity
 (CRUD + project add/remove), not a saved filter. See
 app/controlplane/models.py::Portfolio's docstring for the design fork

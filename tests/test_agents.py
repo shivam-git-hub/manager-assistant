@@ -43,7 +43,7 @@ def test_available_without_session_is_401(clean_controlplane_db):
 
 
 def test_available_lists_only_unassigned_agents_no_code_needed(client):
-    """Shivam 2026-07-23: users see the available agents WITHOUT the code;
+    """Users see the available agents WITHOUT the code;
     the code gates the claim, not the view."""
     _login(client)
     _seed_agent("atlas", "Atlas")
@@ -161,7 +161,7 @@ def test_mine_reflects_claim_and_admin_installation(client):
     assert body["agent_name"] == "Atlas"
     assert body["installed"] is False
 
-    # Admin installs it out of band (scripts/seed_agents.py) -- a plain DB
+    # Admin installs it out of band (a manual row insert) -- a plain DB
     # write, no OAuth call in this codebase touches this row.
     db = ControlPlaneSessionLocal()
     try:

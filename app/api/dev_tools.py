@@ -1,9 +1,9 @@
 """Manual job triggers + message/claim/event chain visualization for local
-testing (step 28 follow-up, 2026-07-23) -- NOT part of the manager-facing
+testing -- NOT part of the manager-facing
 product surface. Backs app/static/debug.html, a plain no-build test page in
 the same spirit as login.html/connect.html (CLAUDE.md: minimal test-the-flow
-UI, doesn't need the wireframe-driven React build). Every route is
-manager-scoped (cookie auth via get_current_manager/get_manager_db) --
+UI, doesn't need the React build). Every route is
+manager-scoped (cookie auth via get_current_employee/get_manager_db) --
 manually running a job runs it against the LOGGED-IN manager's own data,
 same as the existing POST /api/heartbeat/run.
 """
@@ -13,8 +13,8 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.controlplane.auth import get_current_manager
-from app.controlplane.models import Manager
+from app.controlplane.auth import get_current_employee
+from app.controlplane.models import Employee
 from app.database import Claim, ClaimSource, UnifiedMessage
 from app.tenancy.db import get_manager_db
 from app.projectkb.enums import JobName
@@ -39,10 +39,12 @@ JOB_MODULES = {
 
 
 @router.get("/jobs")
-def list_jobs(manager: Manager = Depends(get_current_manager)) -> dict:
-    """Job names + their currently-effective interval (env -> job_schedule.json
-    -> per-manager override, see app.projectkb.job_schedule's docstring),
-    for the debug page to render without hardcoding frequencies."""
+def list_jobs(manager: Employee = Depends(get_current_employee)) -> dict:
+    """Job names + their configured interval (env -> job_schedule.json ->
+    per-manager override, see app.projectkb.job_schedule's docstring), for
+    the debug page to render without hardcoding frequencies. Step 32: this
+    IS the scheduler's actual global cadence now, not just configured
+    intent -- see app.projectkb.scheduler."""
     cfg = load_job_schedule(manager.id)
     return {
         name: {"interval_minutes": cfg.get(name, {}).get("interval_minutes")}
@@ -53,16 +55,30 @@ def list_jobs(manager: Manager = Depends(get_current_manager)) -> dict:
 @router.post("/jobs/{job_name}/run")
 def run_job(
     job_name: str,
-    manager: Manager = Depends(get_current_manager),
+    manager: Employee = Depends(get_current_employee),
     db: Session = Depends(get_manager_db),
 ) -> dict:
     module = JOB_MODULES.get(job_name)
     if module is None:
         raise HTTPException(status_code=404, detail=f"Unknown job '{job_name}'. Must be one of {list(JOB_MODULES)}")
+
+    # Non-blocking acquire of the SAME lock the scheduler's own global pass
+    # holds for this job name (app.projectkb.scheduler.get_job_lock) --
+    # a manual single-manager trigger must never run concurrently with a
+    # scheduler pass already mid-flight for this job. Acquired BEFORE the
+    # try/except below so the 409 raise isn't caught and re-wrapped into a
+    # 500 by the generic "Job raised" handler.
+    from app.projectkb.scheduler import get_job_lock
+
+    lock = get_job_lock(job_name)
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="job already running")
     try:
         result = module.run(db, manager.id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Job '{job_name}' raised: {e}")
+    finally:
+        lock.release()
     return {"job": job_name, "result": result}
 
 

@@ -8,9 +8,8 @@ Split of responsibilities:
     Returns None only if the payload isn't a real message at all (e.g.
     Slack's url_verification, a bot message).
   - ingest() (below) is the one shared policy step every source goes
-    through afterwards: dedup, then insert. Step 20 inverted the old
-    allowlist philosophy (spec/architecture_v2_kb.md §4.2): everything the
-    pollers fetch is stored (the user's own mailbox/DMs/channels belong to
+    through afterwards: dedup, then insert. Everything the pollers fetch is
+    stored (the user's own mailbox/DMs/channels belong to
     them by construction); blocklist + noise filtering happens at
     ingest-JOB selection time via app.projectkb.blocklist.classify_message,
     marking rows with skip_reason instead of dropping them.
@@ -30,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import timeservice
-from app.database import TeamMember, UnifiedMessage
+from app.database import UnifiedMessage
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +46,12 @@ class NormalizedMessage:
     content: str
     timestamp: datetime
     raw_metadata: str
-    # "dm" | "channel" | "group" (step 17 piece 3). Defaults to "dm" so
-    # every existing connector (Outlook is inherently one-counterpart) needs
-    # no changes.
+    # "dm" | "channel" | "group". Defaults to "dm" since Outlook is
+    # inherently one-counterpart.
     conversation_type: str = "dm"
-    # Groups messages belonging to one conversation (step 20): Outlook's
+    # Groups messages belonging to one conversation: Outlook's
     # conversationId; Slack's "<channel>:<thread_ts or ts>". The ingest
-    # job batches per thread_key so claims get thread context (spec §4.2).
+    # job batches per thread_key so claims get thread context.
     thread_key: Optional[str] = None
 
 
@@ -62,24 +60,6 @@ class SendResult:
     ok: bool
     platform_msg_id: Optional[str] = None
     error: Optional[str] = None
-
-
-# Which TeamMember column holds this source's identifier for a person.
-_MANAGER_ID_FIELD = {
-    "slack": "slack_handle",
-    "outlook": "outlook_email",
-}
-
-
-def get_manager(db: Session) -> Optional[TeamMember]:
-    """The one TeamMember whose role marks them as the manager. Same
-    convention app/health.py already uses."""
-    return db.scalars(select(TeamMember).where(TeamMember.role.ilike("%manager%"))).first()
-
-
-def manager_identifier(manager: TeamMember, source: str) -> Optional[str]:
-    field = _MANAGER_ID_FIELD.get(source)
-    return getattr(manager, field, None) if field else None
 
 
 class ChannelConnector(ABC):
@@ -96,8 +76,8 @@ class ChannelConnector(ABC):
     def normalize(self, db: Session, raw: Dict[str, Any], manager_id: Optional[str] = None) -> Optional[NormalizedMessage]:
         """raw channel payload -> common shape, or None if this payload
         isn't a real message at all (bot message, non-message event, etc).
-        Purely descriptive -- storage policy (dedup, step 20's
-        store-everything) lives in ingest(). `manager_id` is optional and
+        Purely descriptive -- storage policy (dedup, store-everything)
+        lives in ingest(). `manager_id` is optional and
         unused by most connectors (Outlook doesn't need it) -- Slack needs
         it to resolve the reader token for a live conversations.members
         call when the manager themself is the sender of a DM (see
@@ -120,9 +100,8 @@ class PollableConnector(Protocol):
 
 
 def ingest(connector: ChannelConnector, raw: Dict[str, Any], db: Session, manager_id: str) -> Tuple[Optional[UnifiedMessage], str]:
-    """Shared policy step: normalize, dedup, insert. Stores EVERYTHING
-    (step 20's track-everything inversion, spec §4.2) -- what NOT to
-    process is decided later, at ingest-job selection time
+    """Shared policy step: normalize, dedup, insert. Stores EVERYTHING --
+    what NOT to process is decided later, at ingest-job selection time
     (app.projectkb.blocklist.classify_message), by marking rows with a
     skip_reason rather than never storing them, so blocklist edits never
     lose history. `manager_id` names whose db.sqlite (via `db`) and whose

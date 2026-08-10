@@ -36,13 +36,20 @@ def test_registry_operations(db_session: Session):
     res_fail = local_registry.execute("fail_tool", {"text": "abc"}, db_session, manager_id="m1")
     assert "ERROR: Something went wrong inside" in res_fail
 
+    # Step 33: the old blind str[:8000]+"... [truncated]" clamp was replaced
+    # by structure-aware compaction (app.agent.result_compaction) with a
+    # per-tool cap (default AGENT_DEFAULT_TOOL_RESULT_CHARS=4000, here
+    # unspecified so "heavy" gets that default) -- the guarantee is valid
+    # JSON + a hard size ceiling, not a specific byte count. See
+    # tests/test_result_compaction.py for the compaction unit tests proper.
     def heavy_handler(db, manager_id, run_context):
         return "A" * 9000
 
     local_registry.register("heavy", {"name": "heavy"}, heavy_handler)
     res_heavy = local_registry.execute("heavy", {}, db_session, manager_id="m1")
-    assert len(res_heavy) == 8015
-    assert res_heavy.endswith("... [truncated]")
+    assert len(res_heavy) <= 4000
+    parsed_heavy = json.loads(res_heavy)  # must always be valid JSON now
+    assert parsed_heavy["_truncated"] is True
 
 
 # -----------------------------------------------------------------------------
@@ -118,8 +125,8 @@ def test_harness_happy_path(db_session: Session, client):
 # -----------------------------------------------------------------------------
 
 
-def test_simulated_time_prompt_volatile(db_session: Session, client, set_sim_time):
-    set_sim_time(datetime(2026, 7, 12, 15, 30, 0))
+def test_prompt_reflects_current_time(db_session: Session, client, monkeypatch):
+    monkeypatch.setattr(timeservice, "now_ist", lambda: datetime(2026, 7, 12, 15, 30, 0))
     prompt = compile_system_prompt(db_session, client.manager_id)
     assert "2026-07-12 15:30:00 IST" in prompt
 

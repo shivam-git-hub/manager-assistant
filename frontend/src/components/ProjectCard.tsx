@@ -2,7 +2,7 @@ import StatusFlower from "@/components/StatusFlower";
 import { ALL_CLEAR, HEALTH_COLORS, NO_DATA_COLOR, SEVERITY_META } from "@/constants";
 import type { ProjectSummary } from "@/lib/api";
 
-// Card per wireframes 2/3: title, recent-activity bullets, then the
+// Card: title, recent-activity bullets, then the
 // health | Blockers | Actions flower row. health comes from the dream
 // job's HealthLog; blockers/actions come from open heartbeat-produced
 // Events tagged to this project (app.api.projects_registry._project_card_stats)

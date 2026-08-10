@@ -17,16 +17,26 @@ override on top of that via their own managers/<manager_id>/job_schedule.json
 hardcoded default -> .env override -> job_schedule.json (deployment-wide)
 override -> managers/<id>/job_schedule.json (per-manager) override.
 
-job_state.json (managers/<manager_id>/, step 15) is separate: it's runtime
-state (when did each job last actually run, per manager now that the
-scheduler iterates every manager's own DB), not configuration, so it lives
-alongside that manager's sqlite file rather than next to job_schedule.json
-(job_schedule.json itself -- the interval config -- stays a single
-deployment-wide file; only the last-run bookkeeping is per-manager).
+Step 32: app/projectkb/scheduler.py DOES gate on interval_minutes now --
+load_job_schedule()'s output is the actual cadence each job runs at
+globally (one pass across every manager when due), not just what
+app/api/dev_tools.py reports on the debug page.
+
+Step 34 caveat -- the per-manager layer is a NO-OP on real cadence: the
+scheduler's own _interval_minutes() calls load_job_schedule() with no
+manager_id (app/projectkb/scheduler.py), so the deployment-wide layer is
+the effective cadence for everyone. A manager's own job_schedule.json only
+ever gets read+shown by app/api/dev_tools.py's GET /api/dev/jobs (which
+DOES pass manager_id), so it changes what the debug page reports without
+changing when the job actually runs. The scheduler is architecturally one
+global pass per job across every manager -- per-manager intervals cannot
+fit that shape without restructuring it into per-manager scheduled tasks,
+which is out of scope here. Load-bearing docs, not a bug to silently
+"fix": don't wire manager_id into the scheduler's call without that
+restructuring conversation happening first.
 """
 import json
 import logging
-from datetime import datetime
 from typing import Dict, Optional
 
 from app.config import (
@@ -38,7 +48,6 @@ from app.config import (
     LINT_INTERVAL_MINUTES,
     OUTLOOK_POLL_INTERVAL_MINUTES,
     SLACK_POLL_INTERVAL_MINUTES,
-    AGENT_HEARTBEAT_INTERVAL_MINUTES,
 )
 from app.projectkb.enums import JobName
 
@@ -56,7 +65,6 @@ DEFAULT_JOB_SCHEDULE = {
     JobName.LINT.value: {"interval_minutes": LINT_INTERVAL_MINUTES},
     JobName.OUTLOOK_POLL.value: {"interval_minutes": OUTLOOK_POLL_INTERVAL_MINUTES},
     JobName.SLACK_POLL.value: {"interval_minutes": SLACK_POLL_INTERVAL_MINUTES},
-    JobName.AGENT_HEARTBEAT.value: {"interval_minutes": AGENT_HEARTBEAT_INTERVAL_MINUTES},
 }
 
 
@@ -88,52 +96,3 @@ def load_job_schedule(manager_id: Optional[str] = None) -> Dict:
     return merged
 
 
-def _load_job_state(manager_id: str) -> Dict[str, str]:
-    from app.tenancy.paths import manager_job_state_path
-
-    path = manager_job_state_path(manager_id)
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_job_state(manager_id: str, state: Dict[str, str]) -> None:
-    from app.tenancy.paths import manager_dir, manager_job_state_path
-
-    manager_dir(manager_id).mkdir(parents=True, exist_ok=True)
-    with open(manager_job_state_path(manager_id), "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-
-
-def get_last_run(manager_id: str, job_name: str) -> Optional[datetime]:
-    """Last real wall-clock time this job ran for this manager, or None if
-    it has never run."""
-    state = _load_job_state(manager_id)
-    raw = state.get(job_name)
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-
-
-def set_last_run(manager_id: str, job_name: str, when: Optional[datetime] = None) -> None:
-    when = when or datetime.now()
-    state = _load_job_state(manager_id)
-    state[job_name] = when.isoformat()
-    _save_job_state(manager_id, state)
-
-
-def is_due(manager_id: str, job_name: str, interval_minutes: int, now: Optional[datetime] = None) -> bool:
-    """A job with no recorded last-run is due immediately (first boot)."""
-    now = now or datetime.now()
-    last_run = get_last_run(manager_id, job_name)
-    if last_run is None:
-        return True
-    elapsed_minutes = (now - last_run).total_seconds() / 60.0
-    return elapsed_minutes >= interval_minutes

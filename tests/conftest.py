@@ -7,16 +7,18 @@ import os
 # prod run would use, silently deleting real signed-in sessions and OAuth
 # installations every time the suite runs.
 os.environ["CONTROLPLANE_DB_FILENAME"] = "test_controlplane.sqlite"
+os.environ["JOB_STATE_FILENAME"] = "test_job_state.json"
+# 0 = disabled (app.agent.rate_limit.RateLimiter is a no-op below 1) -- the
+# test suite makes hundreds of fake-transport LLM calls per run and must
+# never actually sleep waiting for a rate-limit slot.
+os.environ["LLM_MAX_CALLS_PER_MINUTE"] = "0"
 
 import pytest
 import shutil
-import time
 import uuid
-from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.config import IST
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +47,7 @@ def clean_controlplane_db():
 
 @pytest.fixture(scope="function")
 def client(clean_controlplane_db):
-    """Every manager-scoped route needs a logged-in manager as of step 15's
+    """Every manager-scoped route needs a logged-in manager (per-manager
     per-manager DB split -- there's no more global db.sqlite to fall back
     on. This fixture provisions a fresh throwaway manager (unique email per
     test) via the real dev-login endpoint, which also triggers
@@ -69,12 +71,12 @@ def client(clean_controlplane_db):
     # exists in THIS test's controlplane db (about to be wiped by
     # clean_controlplane_db's own teardown anyway) and remove all of their
     # scaffold dirs, not just the first one.
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee
     from app.tenancy.paths import manager_dir
 
     db = ControlPlaneSessionLocal()
     try:
-        manager_ids = [m.id for m in db.query(Manager.id).all()]
+        manager_ids = [e.id for e in db.query(Employee.id).filter(Employee.is_manager == True).all()]  # noqa: E712
     finally:
         db.close()
     for manager_id in manager_ids:
@@ -97,61 +99,26 @@ def db_session(client):
 
 @pytest.fixture
 def manager_employee_id(client):
-    """Creates an Employee row matching the logged-in test manager's own
-    email -- needed by any test that exercises the personal agent's
-    target='manager' resolution (app.agent.tools._resolve_target_employee_id),
-    which looks up the manager's own Employee row by email the same way
-    app.api.project_detail._my_employee_ids does. Real logins get this via
-    the Outlook-login Employee-upsert (see CLAUDE.md's 'Live-testing fixes'
-    entry); dev-login does not, so tests that need it create it explicitly."""
-    import uuid as _uuid
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Manager, Employee
+    """The Employee row matching the logged-in test manager's own email --
+    needed by any test that exercises the personal agent's target='manager'
+    resolution (app.agent.tools._resolve_target_employee_id), which looks
+    up the manager's own Employee row by email the same way
+    app.api.project_detail._my_employee_ids does. dev-login
+    (permissive, test/bootstrap-only unlike real Outlook login) upserts
+    this row itself -- this fixture just fills in the role/slack_id fields
+    that login doesn't set, rather than inserting a fresh row (which would
+    collide on the unique email)."""
+    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id
 
     db = ControlPlaneSessionLocal()
     try:
-        manager = db.get(Manager, client.manager_id)
-        emp = Employee(
-            id=_uuid.uuid4().hex,
-            email=manager.email.lower(),
-            name=manager.name,
-            role="Manager",
-            slack_id="U_TEST_MANAGER",
-        )
-        db.add(emp)
+        emp = get_employee_by_manager_id(db, client.manager_id)
+        emp.role = "Manager"
+        emp.slack_id = "U_TEST_MANAGER"
         db.commit()
         return emp.id
     finally:
         db.close()
-
-
-@pytest.fixture
-def set_sim_time(monkeypatch):
-    """Test-only clock control. Production app.timeservice.now_ist() tracks
-    real wall-clock time only (2026-07-23, sim time removed) -- this fixture
-    exists so time-dependent business logic (quiet hours, meeting briefs,
-    follow-up lifecycles, health decay, etc.) can still be tested
-    deterministically. Call set_sim_time(dt) to freeze now_ist() at dt; it
-    keeps flowing naturally with real elapsed time after that (same anchor
-    behavior the old sim clock had), so a test that sleeps/advances real
-    time mid-test still sees time move forward. Every app module reads
-    `timeservice.now_ist()` off the module object at call time (`from app
-    import timeservice`, never `from app.timeservice import now_ist`), so
-    patching the module attribute here reaches every call site."""
-    from app import timeservice
-
-    anchor = {"sim": None, "real": None}
-
-    def _now():
-        if anchor["sim"] is None:
-            return datetime.now(IST).replace(tzinfo=None)
-        return anchor["sim"] + timedelta(seconds=time.time() - anchor["real"])
-
-    def _set(dt: datetime):
-        anchor["sim"] = dt
-        anchor["real"] = time.time()
-
-    monkeypatch.setattr(timeservice, "now_ist", _now)
-    return _set
 
 
 @pytest.fixture
@@ -166,3 +133,51 @@ def cleanup_projects():
     yield created
     for pid in created:
         shutil.rmtree(project_dir(pid), ignore_errors=True)
+
+
+# -----------------------------------------------------------------------------
+# Step 38: shared fake-Gemini-transport idiom for the agentic KB job tests
+# (heartbeat/dream/lint/synthesis). Previously copy-pasted verbatim into
+# test_heartbeat_user.py/test_heartbeat_project_fanout.py/test_dream_job.py --
+# centralized here so every job test file scripts the same shape the same
+# way. `GeminiClient(api_key="fake-key", transport=FakeTransport([...]))` is
+# the injection point; a `response_dicts` entry that IS an Exception instance
+# is raised instead of returned, for LLM-failure tests.
+# -----------------------------------------------------------------------------
+
+
+class FakeTransport:
+    def __init__(self, response_dicts):
+        self.response_dicts = response_dicts
+        self.calls = []
+        self.call_count = 0
+
+    def __call__(self, url, json_payload):
+        self.calls.append((url, json_payload))
+        res = self.response_dicts[self.call_count]
+        self.call_count += 1
+        if isinstance(res, Exception):
+            raise res
+        return res
+
+
+def _gemini_response_text(text):
+    """A plain-text turn -- when this is the LAST scripted response in a
+    run, the agent loop ends with stop_reason="final" and .reply == text."""
+    return {"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}]}
+
+
+def _gemini_tool_call_response(name, args):
+    """A turn that calls exactly one tool. The runner loop keeps going after
+    this (echoes the call, executes the tool, sends the functionResponse
+    back for the next turn) -- a script needs a following response (usually
+    _gemini_response_text("done")) to end the run, or another tool call to
+    chain a second write."""
+    return {
+        "candidates": [
+            {
+                "content": {"parts": [{"functionCall": {"name": name, "args": args}}]},
+                "finishReason": "STOP",
+            }
+        ]
+    }

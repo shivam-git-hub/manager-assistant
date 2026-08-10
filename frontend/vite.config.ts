@@ -4,8 +4,11 @@ import path from "path";
 
 // Dev server proxies API/auth calls straight to the FastAPI backend
 // (app/main.py, port 3003) so the frontend never needs CORS config.
-export default defineConfig({
-  base: "/api/manager-assistant-dashboard/",
+export default defineConfig(({ command }) => ({
+  // Only the production build lives behind the reverse-proxy prefix; the
+  // local dev server is hit directly at localhost:5173, so it must serve
+  // from "/" or Vite refuses every request outside the configured base.
+  base: command === "build" ? "/api/manager-assistant-dashboard/" : "/",
   plugins: [react()],
   resolve: {
     alias: {
@@ -36,4 +39,4 @@ export default defineConfig({
       "/auth": "http://localhost:3003",
     },
   },
-});
+}));
