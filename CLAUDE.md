@@ -11,7 +11,13 @@ Product name **Pulse.ai**; every org member is a user, not just managers.
 ## Non-negotiable rules
 
 - No agent frameworks (no LangChain/LangGraph). Harness written from scratch,
-  Hermes-inspired (lifting their patterns/snippets is fine).
+  Hermes-inspired (lifting their patterns/snippets is fine). **Exception:**
+  the company-laptop LLM transport (`app/agent/safechain_client.py`, see
+  below) goes through the company's mandated `safechain` package, which is
+  itself LangChain-based — this is an external, unavoidable transport-layer
+  dependency (same category as MSAL for Outlook), not a repeal of the rule.
+  `app.agent.runner`'s tool-calling loop remains the one and only harness;
+  nothing routes through LangChain's own agent/chain abstractions.
 - All datetimes: naive IST (Asia/Kolkata), always via `app.timeservice.now_ist()`
   — direct `datetime.now()`/`.utcnow()`/`time.time()` reads are FORBIDDEN in
   new code (one call site to swap, consistent stamping across every table/job).
@@ -20,9 +26,33 @@ Product name **Pulse.ai**; every org member is a user, not just managers.
   pages stay no-build. **Exception:** the manager-facing product frontend
   (`frontend/`) is React + Vite + build tooling — an explicit, scoped
   override of this rule, not a repeal of it.
-- LLM: Gemini via `GEMINI_API_KEY`. Two tiers: `smart_model` (agent
-  reasoning, synthesis) and `flash_model` (claim extraction, judging),
-  env-overridable in `app/config.py`.
+- LLM: `app.agent.gemini_client.get_client()` returns one of two clients,
+  chosen by `LLM_PROVIDER` (env, default `"gemini"`): Gemini directly via
+  `GEMINI_API_KEY` (`GeminiClient`), or — on the company laptop, where
+  direct Gemini access isn't available — `LLM_PROVIDER=safechain` routes
+  every call through `app/agent/safechain_client.py::SafeChainClient`, an
+  enterprise LangChain/`safechain` gateway to an internal Llama-3.3-70B
+  deployment (verified: real tool-calling works against it). Both clients
+  expose the identical `.chat(model, messages, tools=None, temperature=...,
+  max_output_tokens=..., json_mode=False) -> {content, tool_calls,
+  finish_reason, usage}` contract, so nothing downstream (runner.py, every
+  agent, every projectkb job) needs to know which one is active. The
+  `safechain` package itself is conda-env-only (not in requirements.txt);
+  every import of it is lazy (inside functions, never at module top) so
+  this repo imports and tests cleanly without it installed. Gemini has two
+  model tiers, `smart_model` (agent reasoning, synthesis) and `flash_model`
+  (claim extraction, judging), env-overridable in `app/config.py`; safechain
+  currently has only one YAML `models:` catalog index
+  (`SAFECHAIN_MODEL_INDEX`, default `"1"`), so both tiers collapse onto the
+  same deployment there until a second, cheaper catalog entry exists.
+  safechain's own config (`CONFIG_PATH`, `DEPLOY_ENV`, `CIBIS_*` IDaaS
+  creds) is read directly by safechain's `ee_config.Config.from_env()`, not
+  by this app — see `.env.example`. `app.projectkb.llm_json.parse_json_object`
+  tolerates a `json_mode` response that isn't strict JSON (markdown fence,
+  leading/trailing prose) via a best-effort `{...}` substring extraction —
+  needed because the Llama-behind-a-gateway backend doesn't always honor
+  `json_mode` as strictly as Gemini does; a still-unparseable response still
+  degrades to `{}` rather than crashing the job.
 - **KEEP THIS FILE UPDATED** — after every change: record new conventions,
   endpoints, tables, gotchas, decisions. Edit the relevant section in place;
   describe current state, never a dated narrative of how it got there.
@@ -132,7 +162,10 @@ manager feed the project KB. Known blind spot, accepted.
   `UPDATE ... WHERE manager_id IS NULL`) and released
   (`POST /api/agents/release`). `manager_id` unique+nullable (an
   `Employee.id`). `user_token`/`user_id` on this table are vestigial —
-  nothing writes them.
+  nothing writes them. `slack_app_token` (added alongside Socket Mode
+  ingress) is a DIFFERENT credential from `bot_token` — Socket Mode's
+  `xapp-...` app-level token, set the same manual-insert way, null on any
+  deployment using the webhook path instead — see Connectors section.
 - `Project` (registry) — global projects registry (name, description,
   `kind` team|personal, `manager_user_id`, `supervisors` JSON list of
   employee ids). `member_employee_ids` is a JSON list of
@@ -207,6 +240,36 @@ so editing the blocklist never loses history.
 
 **Credentials** live on the `Employee` row (control-plane), never in a
 per-manager DB.
+
+**Slack ingress has two paths.** The Events API webhook
+(`POST /api/integrations/slack/webhook`) is the default — Slack pushes
+events to a public URL. `app/integrations/slack_socket.py` is the
+alternative for a deployment with no reachable public webhook URL (the
+company-laptop case: a corp-network laptop can't accept inbound HTTPS, but
+CAN hold an outbound websocket): one `slack_bolt` `SocketModeHandler` per
+claimed `Agent` that has both `bot_token` and an app-level token
+(`Agent.slack_app_token`, a DIFFERENT credential from `bot_token` — Socket
+Mode's `xapp-...` grant, set the same manual-DB-insert way; falls back to
+the `SLACK_APP_TOKEN`/`SLACK_BOT_TOKEN` env vars for a single-agent demo
+when that column is still null). Both paths converge on the same routing
+function, `app.integrations.slack::handle_agent_event(agent, event)`
+(manager DM → `cos_agent.run_cos_agent`, known-teammate DM → followup
+reply, else → normal `ingest()`) — the webhook route is now a thin wrapper
+around it, so the two ingress mechanisms can never drift in behavior.
+Started/stopped from `app.main`'s lifespan (`slack_socket.start_all()`/
+`stop_all()`); loudly logs (not silently no-ops) when slack_bolt isn't
+installed, no agent is claimed, or an agent has no resolvable app token.
+`requirements.txt` includes `slack_bolt`/`slack_sdk` (public PyPI packages,
+unlike `safechain`) for this.
+
+**Corp-network egress**: `app.config.AEXP_PROXY_URL`/`SLACK_INSECURE_SSL`
+(both no-ops when unset) are threaded through every Slack HTTP call
+(`SlackConnector._api_call`) and the Socket Mode `WebClient`/
+`SocketModeHandler`. `_api_call` also logs at ERROR (not DEBUG) whenever
+Slack returns `ok: false` — Slack reports an auth/scope failure
+(`invalid_auth`, `missing_scope`, ...) as HTTP 200 with `ok: false`, which
+`raise_for_status()` never catches, so this was previously invisible
+("Slack unauthorized" with no logged cause).
 
 **Sender/receiver/manager resolution** matches the control-plane `Employee`
 directory directly — `SlackConnector._resolve_member`/
@@ -422,9 +485,12 @@ polling is failing for that employee.
 
 ## Agents
 
-There are **five** agents, all driven by the same `run_spec` loop, separated
+There are **six** agents, all driven by the same `run_spec` loop, separated
 by their `AgentSpec.tool_names` allowlist — which is the only thing that
-bounds what each one can do, so read the spec to know the blast radius:
+bounds what each one can do, so read the spec to know the blast radius.
+(Previously documented as five — the Chief of Staff agent below was added
+undocumented in an earlier step; backfilled here since Socket Mode ingress
+now routes through it too, see Connectors section.)
 
 | Agent | Trigger | Writes |
 |---|---|---|
@@ -432,7 +498,89 @@ bounds what each one can do, so read the spec to know the blast radius:
 | `kb_dream` (+ per-project) | scheduled, 24h | memory.md, summary.md, events.md, suggestions/concerns, health nudge |
 | `kb_lint` coherence pass | scheduled, 7d | `AgentNote(kind="lint_finding")` only |
 | Knowledge Synthesis | **manual**, `POST /api/kb/ask` | nothing, unless `allow_writes=true` |
-| personal agent ("Harry") | `POST /api/chat`, Slack DM, manual heartbeat | messages + dashboard mutations |
+| **Chief of Staff** (`cos_agent.py`) | `POST /api/chat` (portal), Slack DM from the manager, scheduled `CronJob` ticks | chat replies, `user.md`/`memory.md`, spawns Followup Chat Agents, crons/workflows |
+| personal agent ("Harry", `harness.py`/`tools.py`) | manual heartbeat only (`agent_heartbeat` job) | dashboard mutations, `send_message` |
+
+**The personal-agent table row above is narrower than it used to be.** The
+Chief of Staff agent (below) now owns both entry points this row used to
+own — `POST /api/chat` and Slack DM replies (`app.agent.api.py` still
+imports `harness.run_agent` but never calls it; `app.agent.direct_contact.
+handle_agent_dm` has no call sites left anywhere in the codebase, i.e. dead
+code, not currently wired to anything). `harness.run_agent`/`tools.py`'s 9
+tools are exercised today only via the manual-trigger `agent_heartbeat` job
+(pre-meeting briefs, task follow-ups, conflict escalation, deterministic
+candidate selection via `app/agent/select.py`) — still real, just narrower
+than "the chat/Slack-DM agent" the original docs described it as.
+
+### Chief of Staff agent (`app/agent/cos_agent.py`)
+
+The manager's always-on assistant — distinct from the KB jobs (which
+synthesize project truth) and from the personal agent above (which only
+acts on `agent_heartbeat`-selected candidates). `run_cos_agent(db,
+manager_id, user_message, channel)` compiles a dedicated system prompt
+(`compile_cos_system_prompt`: `user.md` + `memory.md` + owned/member
+projects + active `Workflow`/`CronJob`/`FollowupAgent` rows), replays
+compacted chat history (`get_compacted_history` — beyond 20 `ChatMessage`
+rows, the oldest are flash-summarized into `managers/<id>/chat_summary.json`
+and deleted, keeping only the summary + last 5 verbatim), and runs
+`run_spec` with its own tool allowlist (`COS_TOOL_NAMES`): the six read-only
+KB probes (same `kb_tools.py` handlers `kb_heartbeat` uses),
+`trigger_knowledge_synthesis_agent`, `web_search` (Brave Search, no-ops
+without `BRAVE_SEARCH_API_KEY`), `read_memory`/`update_memory` (writes
+`user.md`/`memory.md` directly — this agent has WRITE access to its own
+memory files, unlike its read-only KB access), `schedule_one_time_reminder`/
+`create_workflow`/`list_cron_jobs`/`delete_cron_job`, and
+`spawn_followup_chat_agent`/`list_active_followups`. `channel` is
+`"portal"` (`POST /api/chat`), `"slack"` (manager DM), or `"cron"` (a
+scheduled tick, see below) — `"slack"` and `"cron"` both additionally
+deliver the reply to the manager's Slack DM (`Employee.slack_id`) since a
+cron-triggered reply otherwise has no visible surface at all.
+
+**Followup delegation** (`spawn_followup_chat_agent` → a `FollowupAgent`
+row, `status: active|reported|completed|failed`): the Chief of Staff never
+messages a teammate directly (command directive #1 in its own prompt) — it
+delegates to a lightweight, separate chat loop instead. Spawning drafts a
+greeting (flash model) and sends it via Slack (falls back to email); a
+reply from that teammate (routed by `handle_agent_event`/the webhook, see
+Connectors section, keyed on `FollowupAgent.recipient_employee_id` +
+`status="active"`) is handled by `handle_team_member_reply`, a small
+scoped chat loop instructed to append `[REPORT_COS: ...]` to its own reply
+once it has gathered a real update or learned of a blocker. That tag is
+stripped before the teammate sees it, sets `FollowupAgent.status="reported"`
++ `cos_context`, writes `AgentActionLog(action_type="followup_reported")`,
+and proactively DMs the manager. Both `send()` call sites (spawn + reply)
+check `SendResult.ok` explicitly — `SlackConnector.send()`/
+`OutlookConnector.send()` do NOT raise on a delivery failure
+(missing_scope/invalid_auth/...), only return `ok=False`, so treating "the
+call didn't throw" as delivery success (the pre-fix behavior) silently
+marked failed followups as sent. `AgentActionLog(action_type=
+"followup_initiated")` is written on a successful spawn (Agents-tab
+visibility — "followup initiated with X").
+
+**Crons** (`CronJob`, `Workflow`): `check_and_run_manager_crons()`
+(`cos_agent.py`) sweeps every provisioned manager for due `CronJob` rows
+and runs `run_cos_agent(..., channel="cron")` — called unconditionally on
+**every** scheduler tick (`app.projectkb.scheduler.check_and_run_due_jobs`,
+step "1. Run manager-scoped cron jobs/reminders"), not gated by
+`job_schedule.py`'s per-job interval system the way `_JOBS` is. A
+`CronJob.schedule` is `"Nm"`/`"Nh"` (interval) or `"MM HH * * *"` (daily) —
+parsed by `calculate_next_run`. `POST /api/dev/seed-demo-cron`
+(`dev_tools.py`) creates one recurring `CronJob` directly (demo
+convenience — this is the "agent invokes periodically and updates the
+manager" tick without needing to ask the agent to schedule itself in chat
+first); the admin.html "Agents & Cron" tab has a "Seed Demo Cron" button
+for it. `Workflow` rows are a `create_workflow`-tool-created higher-level
+grouping (name + `task_type` + `cron_expression` + free-form `config`) —
+`check_and_run_manager_crons` itself only reads/executes `CronJob` rows,
+not `Workflow` rows directly (a `Workflow` is currently prompt-context and
+manual bookkeeping, not itself scheduled).
+
+**`AgentActionLog` writes** (Agents-tab visibility, `GET /api/agent/actions`,
+rendered by `frontend/src/pages/Agents.tsx`): `followup_initiated` (spawn),
+`followup_reported` (teammate reported back), and `kb_updated` (written by
+`app/projectkb/jobs/heartbeat.py` itself, "Knowledge base updated with N
+event(s)" — the heartbeat job did not write to this ledger before; only the
+personal agent's tool handlers did).
 
 **Knowledge Synthesis agent** (`app/agent/synthesis.py::run_synthesis(db,
 manager_id, question, *, allow_writes=True)`, exposed at `POST /api/kb/ask`
@@ -599,25 +747,43 @@ unrelated to it).
 
 **Run & test:**
 - `.venv/bin/python3 -m app.main` (port 3003)
-- `.venv/bin/python3 -m pytest tests/` — should be 0 failures on a clean tree
-  (currently 242 passing).
+- `.venv/bin/python3 -m pytest tests/` — 371 collected; 9 known-failing on a
+  clean tree, not 0: 4 are the documented live-`GEMINI_API_KEY`-required
+  judge tests (`test_kb_pipeline_judge.py`, see Pending work), 5 are
+  pre-existing/unrelated to any of the areas this file's steps touch
+  (`test_heartbeat_user.py::test_13_memory_md_is_included_in_the_prompt`,
+  4x `test_kb_context.py` — a stale `ContextBudget`/`_project_task_counts_
+  and_health` API mismatch between the test file and `app/agent/
+  kb_context.py`, not yet reconciled). Verified via `git stash` that all 9
+  fail identically on the unmodified tree. `test_heartbeat_project_fanout.py`
+  passes in isolation but can ERROR when run in the same session as the slow
+  live-Gemini judge suite — a test-isolation issue in that suite, not a real
+  failure (passes standalone: `pytest tests/test_heartbeat_project_fanout.py`).
 
 **Stack:** FastAPI + SQLAlchemy 2.0 + SQLite.
 
 **Login/connect:** dev-login (`POST /api/auth/dev-login`, gated by
-`DEV_AUTH_ENABLED`) or Outlook sign-in (`GET /auth/outlook/login`, identity
-only — `User.Read`, no mailbox access); both call `ensure_manager_scaffold`
-+ `ensure_employee_for_manager` on first login. Login never implies any
-connector grant — mailbox/Slack access are both separate, explicit
-Connectors-page actions: `GET /auth/outlook/connect-mail` (Mail.Read) and
-`GET /auth/slack/install` (Slack reading), both require login first. Real
-(Outlook) login rejects any email not already in the seeded Employee
-directory; dev-login stays permissive. Minimal test UI:
-`app/static/login.html` → `app/static/connect.html`, driven by
-`GET /api/auth/connections`.
+`DEV_AUTH_ENABLED`, default on) or Outlook sign-in (`GET /auth/outlook/login`,
+identity only — `User.Read`, no mailbox access); both call
+`ensure_manager_scaffold` + `ensure_employee_for_manager` on first login.
+Login never implies any connector grant — mailbox/Slack access are both
+separate, explicit Connectors-page actions: `GET /auth/outlook/connect-mail`
+(Mail.Read) and `GET /auth/slack/install` (Slack reading), both require
+login first. Real (Outlook) login rejects any email not already in the
+seeded Employee directory; dev-login stays permissive — the intended path
+on a company laptop where Outlook OAuth can't complete (no reachable Azure
+redirect off the corp network). Both `app/static/login.html` (no-build
+test page) and `frontend/src/pages/Login.tsx` (the real product page) have
+a dev-login form (email + optional name) below the Outlook button; both
+`POST /api/auth/dev-login` then land on Connectors
+(`frontend/src/lib/api.ts::devLogin`, full page navigation not
+client-side `navigate()` — `App.tsx` only fetches `getMe()` once on mount).
+`app/static/connect.html`, driven by `GET /api/auth/connections`.
 
-**LLM:** Gemini via `GEMINI_API_KEY`: `smart_model` (gemini-3.5-flash) +
-`flash_model` (gemini-3.5-flash-lite).
+**LLM:** see the Non-negotiable rules section above (`LLM_PROVIDER`
+gemini/safechain switch) — `smart_model`/`flash_model` (Gemini:
+gemini-3.5-flash / gemini-3.5-flash-lite) only meaningfully separate tiers
+when `LLM_PROVIDER=gemini`.
 
 ## Critical bugs (prevent regressions)
 
@@ -658,6 +824,28 @@ directory; dev-login stays permissive. Minimal test UI:
 - **Three different things are named `Project`/`Task`** — `app/database.py`'s
   legacy int-id pair, the control-plane registry `Project`, and the
   per-project-db `Task`. Don't confuse them when reading `app/api/dashboard.py`.
+- **App loggers are invisible without `logging.basicConfig`** — every
+  `logging.getLogger(__name__)` call in this codebase sits at WARNING with
+  no handler until something configures the root logger, so INFO logs
+  (which is most of what these jobs/connectors log) silently vanish even
+  though the code runs fine. `app/main.py` now calls
+  `logging.basicConfig(..., force=True)` at module scope, and
+  `uvicorn.run(..., log_config=None)` so uvicorn's own dictConfig doesn't
+  re-clobber it. `LOG_LEVEL` env var overrides the level (default INFO).
+  If logs go quiet again after some future change, check both of those
+  first before assuming a job silently stopped running.
+- **Slack `ok: false` is an HTTP 200`** — `_api_call`'s `raise_for_status()`
+  never fires on an application-layer Slack rejection (`invalid_auth`,
+  `missing_scope`, `channel_not_found`, ...); it logs those at ERROR now
+  (see Connectors section) specifically because this was previously the
+  invisible cause behind a "Slack unauthorized" symptom with nothing in the
+  logs to explain it.
+- **`SendResult.ok` must be checked, not just "the call didn't raise"** —
+  `SlackConnector.send()`/`OutlookConnector.send()` return
+  `SendResult(ok=False, error=...)` on a delivery failure rather than
+  raising; code that wraps a `send()` call in `try/except` and treats
+  "no exception" as success (the pre-fix bug in `cos_agent.py`, see Agents
+  section) will silently mark a failed delivery as sent.
 
 ## Pending work
 
@@ -665,6 +853,34 @@ directory; dev-login stays permissive. Minimal test UI:
   workload view. Nothing surfaces `summary.md` (dream writes it, no read
   endpoint exposes it), lint findings (`GET /api/agent/notes` exists but no
   UI reads it), or `POST /api/kb/ask`.
+- **safechain PII redaction** — `safechain.core.models.redaction`/
+  `safechain.utils.redaction` exist in the installed package but were
+  deliberately not investigated or wired in (explicitly out of scope for
+  the initial company-laptop port) — unknown whether safechain already
+  redacts PII at the transport layer, or whether that's needed on top for
+  the Amex AI firewall/DLP rejections referenced in `safechain_client.py`'s
+  `_dump_payload`/`_log_payload` diagnostics. If firewall rejections show
+  up in practice, `LLM_LOG_PAYLOAD=true` dumps the exact outgoing payload
+  to logs as the first diagnostic step.
+- **`Workflow` rows are not scheduled** — only `CronJob` rows are read by
+  `check_and_run_manager_crons()`; `create_workflow`'s tool creates a
+  `Workflow` row but nothing turns it into an executing `CronJob`
+  automatically (see Agents section's Chief-of-Staff subsection).
+- **`SafeChainClient.chat` has never executed against the real gateway** —
+  `bind_tools`'s round-trip was confirmed working via a standalone script
+  during setup (real `tool_calls` come back), but `_to_langchain_messages`'
+  `ToolMessage` branch (mapping a tool RESULT back into the conversation,
+  keyed on `tool_call_id`) was written from scratch, since the pasted
+  reference code for that exact piece was corrupted/inconsistent, and has
+  not been exercised against a real multi-turn tool-calling loop. This is
+  the single most likely first breakage on the company laptop — check it
+  before anything else if `run_spec` misbehaves under `LLM_PROVIDER=safechain`.
+- **Socket Mode is unverified against a live corp-network websocket** —
+  `AEXP_PROXY_URL` is threaded through `WebClient`/`SocketModeHandler`
+  construction per the working reference pattern shared during setup, but
+  whether Slack's Socket Mode websocket itself traverses that proxy
+  correctly is a real-environment thing that could only be confirmed on
+  the actual company laptop, not from this session.
 - **Meeting action-items have no home** — no table stores them.
 - **Ingestion noise filtering** — `classify_message` is user-blocklist-only,
   so automated mail (calendar accept/decline, Dependabot, invoices, list

@@ -47,7 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.database import UnifiedMessage
-from app.config import IST
+from app.config import IST, AEXP_PROXY_URL, SLACK_INSECURE_SSL
 from app import timeservice
 from app.integrations.base import ChannelConnector, NormalizedMessage, SendResult, ingest
 
@@ -130,15 +130,37 @@ class SlackConnector(ChannelConnector):
         return "pytest" in sys.modules or not self.is_configured()
 
     def _api_call(self, method: str, params: Optional[dict] = None, json_body: Optional[dict] = None, token: Optional[str] = None) -> dict:
-        headers = {"Authorization": f"Bearer {token or self.bot_token}"}
+        used_token = token or self.bot_token
+        headers = {"Authorization": f"Bearer {used_token}"}
+        # Corp-network egress proxy (Amex laptop) -- see app.config's
+        # AEXP_PROXY_URL/SLACK_INSECURE_SSL docstrings. Both are no-ops
+        # (None / False) off that network.
+        proxy = AEXP_PROXY_URL
+        verify = not SLACK_INSECURE_SSL
         logger.debug(f"[slack] API call: {method} params={params} json={json_body}")
         if json_body is not None:
-            resp = httpx.post(f"{SLACK_API_BASE}/{method}", headers=headers, json=json_body, timeout=10)
+            resp = httpx.post(f"{SLACK_API_BASE}/{method}", headers=headers, json=json_body, proxy=proxy, verify=verify, timeout=10)
         else:
-            resp = httpx.get(f"{SLACK_API_BASE}/{method}", headers=headers, params=params, timeout=10)
+            resp = httpx.get(f"{SLACK_API_BASE}/{method}", headers=headers, params=params, proxy=proxy, verify=verify, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        logger.debug(f"[slack] API response: {method} ok={data.get('ok')}")
+        # Slack's API returns HTTP 200 even on failure (`ok: false` +
+        # an `error` code) -- raise_for_status() above never catches an
+        # auth/scope problem, which is exactly what a silent "401
+        # unauthorized" symptom turns out to be: the request succeeded at
+        # the HTTP layer, Slack rejected it at the application layer. Log
+        # it loudly (not DEBUG) so it's visible without needing to enable
+        # debug logging, and call out the token's last few chars so it's
+        # possible to tell WHICH agent/reader token is bad without ever
+        # logging the full secret.
+        if not data.get("ok"):
+            token_hint = f"...{used_token[-6:]}" if used_token else "(none)"
+            logger.error(
+                f"[slack] API call FAILED: {method} error={data.get('error')!r} "
+                f"needed={data.get('needed')} provided={data.get('provided')} token={token_hint}"
+            )
+        else:
+            logger.debug(f"[slack] API response: {method} ok=True")
         return data
 
     def open_dm(self, slack_user_id: str, manager_id: Optional[str] = None) -> Optional[str]:
@@ -504,7 +526,7 @@ class SlackConnector(ChannelConnector):
             subject=None,
             content=content,
             timestamp=timeservice.now_ist(),
-            created_at=datetime.now(),
+            created_at=timeservice.now_ist(),
             is_processed=False,
             raw_metadata=json.dumps({"channel": to, "text": content}),
         )
@@ -525,11 +547,18 @@ class SlackConnector(ChannelConnector):
         try:
             resp = self._api_call("chat.postMessage", json_body={"channel": to, "text": content})
             ok = bool(resp.get("ok"))
-            if not ok:
-                logger.error(f"[slack] chat.postMessage failed: {resp.get('error')}")
+            if ok:
+                # Explicit, INFO-level confirmation that the bot actually
+                # delivered a message -- requested specifically so a
+                # followup/report send to a teammate who isn't otherwise
+                # connected to this deployment is verifiable in the logs
+                # ("message sent to Slack via bot", not just "we tried").
+                logger.info(f"[slack] send: delivered to {to} (platform_msg_id={platform_msg_id})")
+            else:
+                logger.error(f"[slack] send: chat.postMessage FAILED to {to}: {resp.get('error')}")
             return SendResult(ok=ok, platform_msg_id=platform_msg_id, error=resp.get("error"))
         except Exception as e:
-            logger.exception("[slack] real chat.postMessage call failed")
+            logger.exception(f"[slack] send: chat.postMessage raised for {to}")
             return SendResult(ok=False, platform_msg_id=platform_msg_id, error=str(e))
 
 
@@ -591,6 +620,18 @@ async def slack_webhook(request: Request):
     if not event:
         return {"status": "ok", "detail": "no event in payload"}
 
+    return handle_agent_event(agent, event)
+
+
+def handle_agent_event(agent, event: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared routing for one Slack event already resolved to a claimed
+    Agent -- the same logic regardless of whether the event arrived via the
+    Events API webhook above or the Socket Mode ingress
+    (app.integrations.slack_socket, the company-laptop path where no public
+    webhook URL is reachable). Three cases: a DM from the manager runs the
+    Chief of Staff chat loop; a DM from a known team member is routed as a
+    reply to their active FollowupAgent; anything else goes through the
+    normal ingestion pipeline (normalize -> dedup -> store)."""
     from app.tenancy.db import get_manager_session
     from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, get_employee_by_manager_id, get_employee_by_slack_id
 
@@ -610,12 +651,12 @@ async def slack_webhook(request: Request):
             try:
                 manager_emp = get_employee_by_manager_id(cp_db, agent.manager_id)
                 manager_slack_id = manager_emp.slack_id if manager_emp else None
-                
+
                 sender_slack_id = event.get("user")
-                
+
                 if manager_slack_id and sender_slack_id == manager_slack_id:
                     # Case A: Manager DMed the COS Agent. Run COS Agent chat loop.
-                    logger.info(f"[slack] Manager DMed the COS agent. Processing directly (bypass unified_messages).")
+                    logger.info("[slack] DM from %s: manager, routing to Chief of Staff chat loop", sender_slack_id)
                     from app.agent.cos_agent import run_cos_agent
                     run_cos_agent(db, agent.manager_id, event.get("text", ""), channel="slack")
                     return {"status": "ok", "detail": "manager_cos_chat_handled"}
@@ -623,7 +664,10 @@ async def slack_webhook(request: Request):
                     # Case B: Other team member DMed our bot. This is a reply to an active FollowupAgent.
                     sender_emp = get_employee_by_slack_id(cp_db, sender_slack_id)
                     if sender_emp:
-                        logger.info(f"[slack] Team member {sender_emp.name} replied to followup. Processing (bypass unified_messages).")
+                        logger.info(
+                            "[slack] DM received from team member %s (slack_id=%s) -- routing as followup reply",
+                            sender_emp.name, sender_slack_id,
+                        )
                         from app.agent.cos_agent import handle_team_member_reply
                         handle_team_member_reply(db, agent.manager_id, sender_emp.id, event.get("text", ""), source_channel="slack")
                         return {"status": "ok", "detail": "team_member_followup_handled"}
@@ -640,7 +684,10 @@ async def slack_webhook(request: Request):
     finally:
         db.close()
 
-    logger.debug(f"[slack] webhook ingest result: {ingest_status}")
+    if ingest_status == "ok":
+        logger.info(f"[slack] DM/message polled and stored: message_id={message_id} sender={sender_mapped}")
+    else:
+        logger.debug(f"[slack] webhook ingest result: {ingest_status}")
 
     if ingest_status == "ignored_duplicate":
         return {"status": "ignored", "detail": "duplicate message"}

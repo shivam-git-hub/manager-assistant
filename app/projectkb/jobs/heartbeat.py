@@ -35,8 +35,9 @@ from app.config import (
     KB_HEARTBEAT_PROJECT_MAX_LLM_CALLS,
     SMART_MODEL,
 )
-from app.database import Claim, Event
+from app.database import AgentActionLog, Claim, Event
 from app.projectkb.project_scope import manager_owned_projects_with_events
+import uuid
 
 # Import side-effect: registers every kb_tools.py handler (the six read
 # probes plus emit_events/record_conflict/apply_task_transitions/
@@ -440,6 +441,28 @@ def run(db: Session, manager_id: str, client: Optional[GeminiClient] = None) -> 
             # point -- a fan-out failure must not be reported as if the
             # whole heartbeat run failed (claims stay disposed, events stay).
             logger.exception(f"[projectkb.heartbeat] project fan-out failed for manager={manager_id}")
+
+    if created_events:
+        # Agent-tab visibility ("Knowledge base updated with N events") --
+        # the heartbeat job itself didn't write to AgentActionLog before
+        # this; that ledger was only ever written by the personal agent's
+        # tool handlers. A run that produced no events isn't worth a row
+        # (would just be noise on a 1-minute demo cadence).
+        db.add(AgentActionLog(
+            id=uuid.uuid4().hex,
+            action_type="kb_updated",
+            ref_key=f"heartbeat:{manager_id}:{run_started_at.isoformat()}",
+            detail=(
+                f"Knowledge base updated with {len(created_events)} event(s) "
+                f"from {claims_consumed} claim(s)"
+                + (f"; {fanout_totals['tasks_updated']} task(s) updated, "
+                   f"{fanout_totals['tasks_drafted']} drafted"
+                   if fanout_totals["tasks_updated"] or fanout_totals["tasks_drafted"] else "")
+            ),
+        ))
+        db.commit()
+        logger.info(f"[projectkb.heartbeat] manager={manager_id}: {len(created_events)} event(s) created "
+                    f"from {claims_consumed} claim(s)")
 
     return {
         "claims_consumed": claims_consumed,

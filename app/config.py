@@ -75,6 +75,27 @@ SMART_MODEL = os.getenv("SMART_MODEL", smart_model_val)
 FLASH_MODEL = os.getenv("FLASH_MODEL", flash_model_val)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", gemini_api_key_val)
 
+# Company-laptop environment: "safechain" routes every LLM call through
+# app.agent.safechain_client (enterprise LangChain gateway) instead of
+# GeminiClient -- see app.agent.gemini_client.get_client(). Read directly
+# via os.getenv at the two call sites that need it (gemini_client.py,
+# safechain_client.py) rather than as a constant here, so nothing in this
+# module needs to know safechain exists; documented here for discoverability.
+# LLM_PROVIDER=safechain also requires CONFIG_PATH and DEPLOY_ENV to be set
+# (safechain's own ee_config.Config.from_env() reads those, not this app)
+# and SAFECHAIN_MODEL_INDEX to select the YAML `models:` catalog entry --
+# see .env.example.
+
+# Corporate egress proxy (Amex-laptop specific). Used by the Slack connector
+# for every httpx call (chat.postMessage, conversations.*) since slack.com
+# isn't reachable directly from inside the corp network. Empty/unset is a
+# no-op everywhere it's used (off-network / non-corporate deployments).
+AEXP_PROXY_URL = os.getenv("AEXP_PROXY_URL") or None
+# The proxy does TLS interception with a self-signed root cert on some
+# corporate networks -- set true to skip cert verification on Slack calls
+# (dev/demo only; never enable this for a real production deployment).
+SLACK_INSECURE_SSL = os.getenv("SLACK_INSECURE_SSL", "false").strip().lower() in ("1", "true", "yes")
+
 # Outbound Quiet Hours config (IST)
 WORK_HOURS_START = 9
 WORK_HOURS_END = 19

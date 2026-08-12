@@ -40,6 +40,18 @@ export function logout(): Promise<void> {
   return request("/api/auth/logout", { method: "POST" });
 }
 
+// Testing/demo only -- real login is Outlook OAuth. Gated server-side on
+// DEV_AUTH_ENABLED (defaults on); a 404 here means it's disabled for this
+// deployment. Exists for environments where Outlook OAuth genuinely can't
+// work (e.g. a corporate laptop with no reachable Azure redirect), not as
+// a general login shortcut.
+export function devLogin(email: string, name?: string): Promise<Manager> {
+  return request("/api/auth/dev-login", {
+    method: "POST",
+    body: JSON.stringify({ email, name: name || "Dev Manager" }),
+  });
+}
+
 // Full-page navigations, not fetches -- these kick off an OAuth redirect
 // round trip, so the browser itself needs to leave the SPA.
 export function goToOutlookLogin() {

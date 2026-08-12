@@ -5,7 +5,25 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
 import asyncio
+import logging
 import sys
+
+# Demo/company-laptop gotcha: without this, every `logging.getLogger(__name__)`
+# call across the app (Slack polling, LLM client, agent runs, cron ticks --
+# basically every [tag]-prefixed log line referenced throughout this codebase)
+# sits at the default WARNING level with no attached handler, so INFO logs
+# are silently dropped and nothing shows up in the terminal even though the
+# code is running fine. `force=True` because uvicorn.run() below is passed
+# log_config=None specifically so it does NOT clobber this with its own
+# logging dictConfig (which otherwise wins if uvicorn configures itself
+# after this call). Configured at module scope so it's live for import-time
+# code too, not just request handlers.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 
 from app.config import PORT, HOST
 from app.integrations import slack, outlook
@@ -22,6 +40,8 @@ from app.controlplane.models import init_controlplane_db, SessionLocal as Contro
 from app.tenancy.db import list_provisioned_manager_ids
 from app.tenancy.paths import ensure_manager_scaffold
 from app.projects.db import init_project_db
+
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +80,16 @@ async def lifespan(app: FastAPI):
         # single shared session to hand it.
         projectkb_task = asyncio.create_task(projectkb_scheduler.background_loop())
 
+        # Slack Socket Mode ingress (company-laptop path: no public webhook
+        # URL is reachable behind the corp network, so the bot receives
+        # events over an outbound websocket instead of Events API POSTs to
+        # /api/integrations/slack/webhook). No-ops loudly (logged, not
+        # silent) if slack_bolt isn't installed or no agent has both a
+        # bot_token and an app-level token configured -- see
+        # app.integrations.slack_socket's module docstring.
+        from app.integrations import slack_socket
+        slack_socket.start_all()
+
         yield
 
         # Clean shutdown
@@ -68,6 +98,7 @@ async def lifespan(app: FastAPI):
             await projectkb_task
         except Exception:
             pass
+        slack_socket.stop_all()
     else:
         yield
 
@@ -124,4 +155,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True)
+    # log_config=None: don't let uvicorn install its own logging dictConfig,
+    # which otherwise overrides the logging.basicConfig(force=True) call at
+    # the top of this module and silences every app logger again.
+    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True, log_config=None)

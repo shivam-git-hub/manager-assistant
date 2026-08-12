@@ -124,12 +124,35 @@ def test_cos_agent_crons_and_workflows(db_session, client, monkeypatch):
     # 3. Force cron to be due (move next_run_at back by 1 hour)
     cron.next_run_at = timeservice.now_ist() - timedelta(hours=1)
     db_session.commit()
-    
+
     # Mock LLM response for run_cos_agent (invoked by cron)
     transport = SequenceTransport([_text_response("Here is your morning brief.")])
     gclient = GeminiClient(api_key="fake", transport=transport)
     monkeypatch.setattr("app.agent.cos_agent.get_client", lambda: gclient)
-    
+
+    # A cron reply's only observable delivery surface is the manager's
+    # Slack DM (see run_cos_agent's channel="cron" branch -- it no longer
+    # writes ChatMessage, see the assertion below), so give the manager a
+    # slack_id and capture what gets sent, the same pattern
+    # test_cos_agent_spawning_followups uses below.
+    cp_db = ControlPlaneSessionLocal()
+    try:
+        manager_emp = cp_db.get(Employee, manager_id)
+        manager_emp.slack_id = "USLACKMANAGER_CRON"
+        cp_db.commit()
+    finally:
+        cp_db.close()
+
+    slack_sends = []
+
+    def fake_send(db, channel_id, text, subject=None):
+        slack_sends.append((channel_id, text))
+        from app.integrations.base import SendResult
+        return SendResult(ok=True, platform_msg_id="fake_slack_out")
+
+    from app.integrations.slack import connector as slack_connector
+    monkeypatch.setattr(slack_connector, "send", fake_send)
+
     # 4. Run background cron sweeper
     # We mock list_provisioned_managers to return our mock manager
     from app.controlplane.models import list_provisioned_managers
@@ -151,10 +174,14 @@ def test_cos_agent_crons_and_workflows(db_session, client, monkeypatch):
     # Next run time should be from_time + 30 minutes
     assert cron.next_run_at > timeservice.now_ist()
     
-    # Verify assistant response was recorded in ChatMessage
+    # A cron tick's own directive/reply is deliberately NOT recorded in
+    # ChatMessage (see run_cos_agent's channel="cron" branch) -- persisting
+    # it there would bury the dashboard chat's real history under repeated
+    # cron chatter on a fast cadence. Positive evidence the agent actually
+    # ran and produced a reply is the Slack delivery instead.
     msgs = db_session.query(ChatMessage).order_by(ChatMessage.id.desc()).all()
-    assert msgs[0].role == "assistant"
-    assert "Here is your morning brief." in msgs[0].content
+    assert msgs == []
+    assert slack_sends == [("USLACKMANAGER_CRON", "Here is your morning brief.")]
 
 
 def test_cos_agent_spawning_followups(db_session, client, monkeypatch):

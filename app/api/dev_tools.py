@@ -7,6 +7,7 @@ manually running a job runs it against the LOGGED-IN manager's own data,
 same as the existing POST /api/heartbeat/run.
 """
 import json
+import logging
 import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -15,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from app import timeservice
 from app.controlplane.auth import get_current_employee
 from app.controlplane.models import Employee, get_controlplane_db
 from app.database import Claim, ClaimSource, UnifiedMessage, Workflow, CronJob, FollowupAgent, TeamMember
@@ -23,6 +25,8 @@ from app.tenancy.paths import manager_dir, manager_memory_md_path
 from app.projectkb.enums import JobName
 from app.projectkb.jobs import ingestion, heartbeat, dream, lint, outlook_poll, slack_poll, agent_heartbeat
 from app.projectkb.job_schedule import load_job_schedule
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dev", tags=["Dev Tools"])
 
@@ -74,6 +78,53 @@ def run_job(
     finally:
         lock.release()
     return {"job": job_name, "result": result}
+
+
+class SeedDemoCronPayload(BaseModel):
+    prompt: str = (
+        "Review the knowledge base for stalled work owned by team members and, for anything "
+        "genuinely stalled, follow up with the responsible person using spawn_followup_chat_agent."
+    )
+    schedule: str = "5m"
+
+
+@router.post("/seed-demo-cron")
+def seed_demo_cron(
+    payload: SeedDemoCronPayload,
+    manager: Employee = Depends(get_current_employee),
+    db: Session = Depends(get_manager_db),
+) -> dict:
+    """Demo convenience: creates one recurring CronJob for the logged-in
+    manager, so the Chief of Staff agent (app.agent.cos_agent.run_cos_agent)
+    gets invoked periodically without the manager having to type a chat
+    message asking it to schedule itself. Ticks are picked up by
+    check_and_run_manager_crons(), which already runs unconditionally on
+    every scheduler pass (app.projectkb.scheduler.check_and_run_due_jobs) --
+    no new scheduler wiring needed, just a row to act on. Calling this
+    again while a pending cron with the same prompt already exists is a
+    no-op (returns the existing row) rather than stacking duplicates."""
+    from app.agent.cos_agent import calculate_next_run
+
+    existing = db.query(CronJob).filter(
+        CronJob.prompt == payload.prompt, CronJob.status == "pending"
+    ).first()
+    if existing:
+        return {"status": "already_exists", "cron_id": existing.id, "next_run_at": str(existing.next_run_at)}
+
+    now = timeservice.now_ist()
+    cron = CronJob(
+        task_type="followup",
+        prompt=payload.prompt,
+        schedule=payload.schedule,
+        is_recurring=True,
+        next_run_at=calculate_next_run(payload.schedule, now),
+        status="pending",
+    )
+    db.add(cron)
+    db.commit()
+    db.refresh(cron)
+    logger.info(f"[dev_tools] seeded demo CronJob #{cron.id} for manager={manager.id} (schedule={payload.schedule})")
+    return {"status": "created", "cron_id": cron.id, "next_run_at": str(cron.next_run_at)}
 
 
 def _message_preview(db: Session, message_id: int) -> Optional[dict]:

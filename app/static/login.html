@@ -39,12 +39,47 @@
   }
   a.btn:hover { background: #0a5aa0; }
   #status { margin-top: 16px; font-size: 13px; color: #888; }
+  .divider { display: flex; align-items: center; margin: 20px 0; color: #bbb; font-size: 12px; }
+  .divider::before, .divider::after { content: ""; flex: 1; border-bottom: 1px solid #e5e5e5; }
+  .divider span { padding: 0 10px; }
+  #dev-login input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button.btn {
+    width: 100%;
+    padding: 12px 16px;
+    background: #52525b;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  button.btn:hover { background: #3f3f46; }
+  #dev-error { color: #c0392b; font-size: 12px; margin-top: 6px; min-height: 14px; }
 </style>
 </head>
 <body>
   <div class="box">
     <h1>LOGIN</h1>
     <a class="btn" href="/auth/outlook/login">Sign in with Outlook</a>
+
+    <div class="divider"><span>or (dev/demo -- Outlook won't work off the corp network)</span></div>
+
+    <form id="dev-login">
+      <input type="email" id="dev-email" placeholder="you@company.com" required>
+      <input type="text" id="dev-name" placeholder="Display name (optional)">
+      <button type="submit" class="btn">Dev Login</button>
+      <div id="dev-error"></div>
+    </form>
+
     <div id="status"></div>
   </div>
 
@@ -61,6 +96,31 @@ async function checkExistingSession() {
   }
 }
 checkExistingSession();
+
+document.getElementById("dev-login").addEventListener("submit", async (evt) => {
+  evt.preventDefault();
+  const errorEl = document.getElementById("dev-error");
+  errorEl.textContent = "";
+  const email = document.getElementById("dev-email").value.trim();
+  const name = document.getElementById("dev-name").value.trim() || "Dev Manager";
+  try {
+    const res = await fetch("/api/auth/dev-login", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name }),
+    });
+    if (!res.ok) {
+      // 404 means DEV_AUTH_ENABLED=false on this deployment.
+      const detail = res.status === 404 ? "Dev login is disabled on this server (DEV_AUTH_ENABLED=false)." : await res.text();
+      errorEl.textContent = detail;
+      return;
+    }
+    window.location.href = "/connect.html";
+  } catch (e) {
+    errorEl.textContent = "Dev login failed: " + e.message;
+  }
+});
 </script>
 </body>
 </html>

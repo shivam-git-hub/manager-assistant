@@ -80,6 +80,15 @@ class Agent(ControlPlaneBase):
     manager_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("employees.id"), unique=True, nullable=True)
     team_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     bot_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # App-level token ("xapp-...", Socket Mode's `connections:write` grant) --
+    # a DIFFERENT credential from bot_token, only needed on deployments with
+    # no reachable public webhook URL (the company-laptop case: Socket Mode
+    # ingress, app.integrations.slack_socket, replaces the Events API POST
+    # to /api/integrations/slack/webhook). Populated the same way as
+    # bot_token/slack_signing_secret -- a manual admin row insert, using the
+    # token from this Slack app's "Socket Mode" settings page. Left null on
+    # any deployment that uses the webhook path instead.
+    slack_app_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Vestigial -- see docstring above. No longer written.
     user_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
@@ -221,6 +230,8 @@ def init_controlplane_db() -> None:
             conn.execute(text("ALTER TABLE agents ADD COLUMN user_token TEXT"))
         if "user_id" not in agent_cols:
             conn.execute(text("ALTER TABLE agents ADD COLUMN user_id VARCHAR(50)"))
+        if "slack_app_token" not in agent_cols:
+            conn.execute(text("ALTER TABLE agents ADD COLUMN slack_app_token TEXT"))
 
         employee_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(employees)")).fetchall()]
         employee_migrations = {

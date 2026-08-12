@@ -426,6 +426,14 @@
 
   <!-- Tab 4: Agents & Crons (Tenant State) -->
   <div id="state-tab" class="tab-content">
+    <div class="flex-header">
+      <p style="font-size: 12px; color: var(--text-muted); max-width: 60ch;">
+        The Chief of Staff agent only ticks on a schedule if a recurring CronJob exists for it to run.
+        Seed one for the demo (defaults to every 5 minutes) so it periodically reviews the knowledge
+        base and follows up on stalled work without needing to be asked in chat first.
+      </p>
+      <button class="primary" onclick="seedDemoCron()">+ Seed Demo Cron (5m)</button>
+    </div>
     <div class="grid-2">
       <!-- Active Workflows & Crons -->
       <section>
@@ -874,6 +882,18 @@
   }
 
   // --- TAB 4: Agents, Workflows & Scheduled Crons ---
+  async function seedDemoCron() {
+    try {
+      const res = await api("/api/dev/seed-demo-cron", { method: "POST", body: JSON.stringify({}) });
+      alert(res.status === "already_exists"
+        ? `Demo cron already exists (#${res.cron_id}), next run at ${res.next_run_at}`
+        : `Demo cron #${res.cron_id} created -- next run at ${res.next_run_at}`);
+      loadTenantState();
+    } catch (e) {
+      alert("Failed to seed demo cron: " + e.message);
+    }
+  }
+
   async function loadTenantState() {
     try {
       const state = await api("/api/dev/tenant-state");

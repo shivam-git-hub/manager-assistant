@@ -297,10 +297,31 @@ class GeminiClient:
 
 
 # Cache client instance
-_client_singleton: Optional[GeminiClient] = None
+_client_singleton: Optional[Any] = None
 
-def get_client() -> GeminiClient:
+def get_client() -> Any:
+    """Returns the active LLM client -- GeminiClient by default, or the
+    safechain-backed enterprise-gateway client when LLM_PROVIDER=safechain
+    (the company-laptop environment: no direct Gemini access, LLM calls go
+    through safechain/LangChain to an internal Llama deployment instead --
+    see app.agent.safechain_client's module docstring). Both expose the
+    identical `.chat(model, messages, tools=None, temperature=...,
+    max_output_tokens=..., json_mode=False) -> {content, tool_calls,
+    finish_reason, usage}` contract, so every caller (runner.py, cos_agent.py,
+    the projectkb jobs) is unaffected by which one this returns.
+
+    The safechain import is deliberately lazy (inside this branch, not at
+    module top) -- safechain is a company-conda-env-only package, not in
+    this repo's requirements.txt, so importing app.agent.gemini_client (done
+    almost everywhere) must never fail on a machine that doesn't have it
+    installed. Default stays "gemini" so every existing test/deployment is
+    unaffected unless LLM_PROVIDER is explicitly set."""
     global _client_singleton
     if _client_singleton is None:
-        _client_singleton = GeminiClient()
+        provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+        if provider == "safechain":
+            from app.agent.safechain_client import get_safechain_client
+            _client_singleton = get_safechain_client()
+        else:
+            _client_singleton = GeminiClient()
     return _client_singleton

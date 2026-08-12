@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import amexLogo from "@/assets/amex.png";
 import outlookIcon from "@/assets/outlook_icon.png";
-import { goToOutlookLogin } from "@/lib/api";
+import { ApiError, devLogin, goToOutlookLogin } from "@/lib/api";
 
 const ERROR_MESSAGES: Record<string, string> = {
   not_recognized_employee:
@@ -12,6 +13,33 @@ export default function Login() {
   const [searchParams] = useSearchParams();
   const errorCode = searchParams.get("error");
   const errorMessage = errorCode ? ERROR_MESSAGES[errorCode] ?? "Sign-in failed. Please try again." : null;
+
+  const [devEmail, setDevEmail] = useState("");
+  const [devName, setDevName] = useState("");
+  const [devError, setDevError] = useState<string | null>(null);
+  const [devBusy, setDevBusy] = useState(false);
+
+  async function handleDevLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setDevError(null);
+    setDevBusy(true);
+    try {
+      await devLogin(devEmail.trim(), devName.trim());
+      // Full page navigation, not client-side navigate(): App.tsx only
+      // fetches getMe() once on mount to decide whether to render Login vs
+      // the authenticated app -- a SPA-internal navigate() would land on
+      // /connectors while App.tsx still thinks there's no manager.
+      window.location.href = "/connectors";
+    } catch (err) {
+      setDevError(
+        err instanceof ApiError && err.status === 404
+          ? "Dev login is disabled on this server (DEV_AUTH_ENABLED=false)."
+          : "Dev login failed. Check the email and try again.",
+      );
+    } finally {
+      setDevBusy(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 text-zinc-950">
@@ -49,6 +77,38 @@ export default function Login() {
               <span>Continue with Outlook</span>
             </button>
           </div>
+
+          <div className="flex items-center gap-3 text-[11px] text-zinc-400">
+            <div className="h-px flex-1 bg-zinc-200" />
+            <span>dev / demo -- no corporate network required</span>
+            <div className="h-px flex-1 bg-zinc-200" />
+          </div>
+
+          <form onSubmit={handleDevLogin} className="flex flex-col gap-2">
+            <input
+              type="email"
+              required
+              placeholder="you@company.com"
+              value={devEmail}
+              onChange={(e) => setDevEmail(e.target.value)}
+              className="rounded-lg border border-zinc-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-950"
+            />
+            <input
+              type="text"
+              placeholder="Display name (optional)"
+              value={devName}
+              onChange={(e) => setDevName(e.target.value)}
+              className="rounded-lg border border-zinc-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-950"
+            />
+            {devError && <div className="text-xs text-red-600">{devError}</div>}
+            <button
+              type="submit"
+              disabled={devBusy}
+              className="rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-900 transition-colors px-6 py-2.5 font-medium text-sm disabled:opacity-50"
+            >
+              {devBusy ? "Signing in..." : "Dev Login"}
+            </button>
+          </form>
 
           <div className="text-center text-[11px] text-zinc-400 leading-relaxed">
             By signing in, you authorize Pulse.ai to access your work context and synchronize with your tenant's secure workspace.

@@ -664,12 +664,25 @@ def spawn_followup_chat_agent_handler(
     finally:
         cp_db.close()
         
-    # 2. Check if there is already an active followup with this employee
+    # 2. Check if there is already an active OR a just-reported followup
+    # with this employee. Guarding on "active" alone re-opened a real gap
+    # on a fast cron cadence (e.g. the 5-minute demo cron): the moment a
+    # teammate reports back, status flips to "reported" and the very next
+    # tick's "review the KB and follow up on stalled work" sweep would spawn
+    # a brand new followup to the SAME person -- a real colleague getting
+    # messaged again minutes after they just answered. A recent report
+    # still blocks a re-spawn; an old one (>6h) doesn't, so a genuinely new
+    # stall days later isn't blocked forever by one old followup.
+    recent_cutoff = timeservice.now_ist() - timedelta(hours=6)
     existing = db.scalars(
-        select(FollowupAgent).where(FollowupAgent.recipient_employee_id == recipient_employee_id, FollowupAgent.status == "active")
+        select(FollowupAgent).where(
+            FollowupAgent.recipient_employee_id == recipient_employee_id,
+            (FollowupAgent.status == "active") |
+            ((FollowupAgent.status.in_(["reported", "completed"])) & (FollowupAgent.updated_at >= recent_cutoff)),
+        )
     ).first()
     if existing:
-        return {"status": "already_active", "followup_id": existing.id, "detail": "There is already an active followup running for this person."}
+        return {"status": "already_active", "followup_id": existing.id, "detail": "There is already an active or recently-reported followup for this person."}
         
     # 3. Create FollowupAgent row
     agent = FollowupAgent(
@@ -694,38 +707,71 @@ def spawn_followup_chat_agent_handler(
         resp = client.chat(model=FLASH_MODEL, messages=[{"role": "user", "content": draft_prompt}], temperature=0.3)
         greeting = resp.get("content") or f"Hi {recipient_name}, I am reaching out to follow up on your tasks. Could you give me an update?"
         
-        # 5. Send message via Slack or Email (using existing connector fallback)
+        # 5. Send message via Slack or Email (using existing connector fallback).
+        # SlackConnector.send()/OutlookConnector.send() do NOT raise on a
+        # delivery failure (missing_scope, invalid_auth, channel_not_found,
+        # ...) -- they return SendResult(ok=False, error=...). The original
+        # version of this code treated "the call returned without throwing"
+        # as success, which marked every followup "spawned_successfully"
+        # even when Slack rejected it with a 401/invalid_auth and nothing
+        # was actually delivered. Check .ok explicitly.
         from app.integrations.slack import connector as slack_connector
         sent_ok = False
         channel_used = "slack"
+        send_error = None
         if recipient_slack_id:
             try:
-                slack_connector.send(db, recipient_slack_id, greeting)
-                sent_ok = True
+                result = slack_connector.send(db, recipient_slack_id, greeting)
+                sent_ok = result.ok
+                send_error = result.error
+                if sent_ok:
+                    logger.info(f"[followup] initial message sent to {recipient_name} (slack_id={recipient_slack_id}) via bot")
+                else:
+                    logger.error(f"[followup] Slack delivery FAILED for followup #{agent.id} to {recipient_name}: {send_error}")
             except Exception as e:
-                logger.warning(f"Slack delivery failed for followup #{agent.id}: {e}")
-                
+                send_error = str(e)
+                logger.error(f"[followup] Slack delivery raised for followup #{agent.id}: {e}", exc_info=True)
+
         if not sent_ok and recipient_email:
             # Fallback to email
             from app.integrations.outlook import connector as outlook_connector
             try:
-                outlook_connector.send(db, recipient_email, greeting, subject="Task Followup Update Request")
+                result = outlook_connector.send(db, recipient_email, greeting, subject="Task Followup Update Request")
+                sent_ok = result.ok
+                send_error = result.error
                 channel_used = "email"
-                sent_ok = True
+                if sent_ok:
+                    logger.info(f"[followup] initial message sent to {recipient_name} ({recipient_email}) via email")
+                else:
+                    logger.error(f"[followup] Outlook delivery FAILED for followup #{agent.id}: {send_error}")
             except Exception as e:
-                logger.warning(f"Outlook delivery failed for followup #{agent.id}: {e}")
-                
+                send_error = str(e)
+                logger.error(f"[followup] Outlook delivery raised for followup #{agent.id}: {e}", exc_info=True)
+
         if sent_ok:
             # Add to history
             history = [{"role": "assistant", "content": greeting, "timestamp": timeservice.now_utc_iso()}]
             agent.chat_history = json.dumps(history)
             agent.last_message_sent_at = timeservice.now_ist()
             db.commit()
+
+            # Agent-tab visibility: "followup initiated with <team member>",
+            # requested explicitly since the recipient may not be connected
+            # to this deployment themselves -- this ledger entry is the only
+            # place that confirms the send actually happened.
+            db.add(AgentActionLog(
+                id=uuid.uuid4().hex,
+                action_type="followup_initiated",
+                ref_key=f"followup:{agent.id}",
+                detail=f"Followup initiated with {recipient_name} via {channel_used}: {instructions[:200]}",
+            ))
+            db.commit()
+
             return {"status": "spawned_successfully", "followup_id": agent.id, "channel": channel_used, "initial_message": greeting}
         else:
             agent.status = "failed"
             db.commit()
-            return {"error": "Failed to deliver initial message via Slack or Email."}
+            return {"error": f"Failed to deliver initial message via Slack or Email: {send_error or 'no delivery channel available'}"}
     except Exception as e:
         logger.error(f"Failed to spawn followup chat agent: {e}", exc_info=True)
         return {"error": f"Failed to spawn followup: {e}"}
@@ -911,12 +957,21 @@ def run_cos_agent(db: Session, manager_id: str, user_message: str, channel: str 
     compaction trigger, history compilation, tool running, and response delivery.
     """
     client = get_client()
-    
-    # 1. Append new user message to chat history DB (first, so it lands in context)
-    user_msg = ChatMessage(role="user", content=user_message)
-    db.add(user_msg)
-    db.commit()
-    
+
+    # 1. Append new user message to chat history DB (first, so it lands in
+    # context) -- EXCEPT for channel="cron": a scheduled tick's own
+    # directive prompt ("Review the knowledge base for stalled work...")
+    # is not a real user turn, and persisting it here means every cron tick
+    # (as often as every 1-5 minutes on a demo cadence) adds a row to the
+    # exact history GET /api/chat/history renders on the dashboard chat --
+    # burying real conversation under repeated cron chatter and tripping
+    # get_compacted_history's 20-row compaction threshold on cron noise
+    # alone.
+    if channel != "cron":
+        user_msg = ChatMessage(role="user", content=user_message)
+        db.add(user_msg)
+        db.commit()
+
     # 2. Get compacted history list (includes summary prepending)
     history = get_compacted_history(db, manager_id)
     
@@ -949,19 +1004,29 @@ def run_cos_agent(db: Session, manager_id: str, user_message: str, channel: str 
     )
     
     reply_text = result.reply or "I apologize, but I encountered an error formulating my reply."
-    
-    # 6. Persist assistant reply
-    assistant_msg = ChatMessage(
-        role="assistant",
-        content=reply_text,
-        tool_trace=json.dumps(result.tool_trace) if result.tool_trace else None
-    )
-    db.add(assistant_msg)
-    db.commit()
-    db.refresh(assistant_msg)
-    
-    # 7. Deliver directly over Slack if the origin is Slack
-    if channel == "slack":
+
+    # 6. Persist assistant reply -- skipped for channel="cron" for the same
+    # reason step 1 skips the user turn (see comment there); a cron reply
+    # still reaches the manager via Slack in step 7 below, it just doesn't
+    # also occupy a row in the dashboard-chat history.
+    assistant_msg = None
+    if channel != "cron":
+        assistant_msg = ChatMessage(
+            role="assistant",
+            content=reply_text,
+            tool_trace=json.dumps(result.tool_trace) if result.tool_trace else None
+        )
+        db.add(assistant_msg)
+        db.commit()
+        db.refresh(assistant_msg)
+
+    # 7. Deliver directly over Slack if the origin was Slack, OR a
+    # scheduled cron tick ("cron" -- see check_and_run_manager_crons()):
+    # a cron-triggered COS run otherwise has no visible surface at all --
+    # its reply just sat in ChatMessage with nobody watching the portal --
+    # so the periodic-agent-updates-the-manager-on-slack behavior the demo
+    # depends on requires this too, not just live "channel"="slack" DMs.
+    if channel in ("slack", "cron"):
         # Lookup manager's slack ID to find their channel ID (IM)
         from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal
         cp_db = ControlPlaneSessionLocal()
@@ -969,14 +1034,25 @@ def run_cos_agent(db: Session, manager_id: str, user_message: str, channel: str 
             m = get_employee_by_manager_id(cp_db, manager_id)
             if m and m.slack_id:
                 from app.integrations.slack import connector as slack_connector
-                slack_connector.send(db, m.slack_id, reply_text)
+                # Named send_result, NOT result -- `result` above is the
+                # AgentRunResult from run_spec and is still read below
+                # (result.tool_trace); reusing the name here previously
+                # would have shadowed it and crashed every Slack/cron
+                # delivery with AttributeError.
+                send_result = slack_connector.send(db, m.slack_id, reply_text)
+                if send_result.ok:
+                    logger.info(f"[cos_agent] reply delivered to manager={manager_id} via Slack (channel={channel})")
+                else:
+                    logger.error(f"[cos_agent] Slack delivery to manager={manager_id} FAILED: {send_result.error}")
+            else:
+                logger.warning(f"[cos_agent] manager={manager_id} has no slack_id -- cannot deliver {channel} reply")
         finally:
             cp_db.close()
-            
+
     return {
         "reply": reply_text,
         "tool_trace": result.tool_trace,
-        "created_at": assistant_msg.created_at
+        "created_at": assistant_msg.created_at if assistant_msg else timeservice.now_ist(),
     }
 
 
@@ -997,7 +1073,9 @@ def handle_team_member_reply(db: Session, manager_id: str, recipient_employee_id
     if not agent:
         logger.warning(f"Received reply from team member={recipient_employee_id} but no active followup agent was found.")
         return
-        
+
+    logger.info(f"[followup] reply RECEIVED from team member (employee_id={recipient_employee_id}) for followup #{agent.id}: {message_text[:200]!r}")
+
     # 2. Append incoming message to followup history
     history = json.loads(agent.chat_history)
     history.append({
@@ -1013,7 +1091,12 @@ def handle_team_member_reply(db: Session, manager_id: str, recipient_employee_id
     scoped_projects = json.loads(agent.scoped_project_ids)
     projects_backlog_data = []
     for pid in scoped_projects:
-        proj_context = get_project_state_handler(db, manager_id="", run_context={}, project_id=pid)
+        # manager_id must be the REAL calling manager, not "" -- an empty
+        # manager_id fails get_project_state_handler's project-visibility
+        # gate (kb_tools._require_visible_project), so the followup bot
+        # silently got back an error dict instead of project context on
+        # every call before this fix.
+        proj_context = get_project_state_handler(db, manager_id=manager_id, run_context={}, project_id=pid)
         projects_backlog_data.append(f"Project #{pid} Context:\n{json.dumps(proj_context)}")
     scoped_data_text = "\n\n".join(projects_backlog_data)
     
@@ -1076,24 +1159,36 @@ def handle_team_member_reply(db: Session, manager_id: str, recipient_employee_id
         agent.last_message_sent_at = timeservice.now_ist()
         db.commit()
         
-        # 9. Deliver reply to the team member
+        # 9. Deliver reply to the team member. SendResult.ok is checked
+        # explicitly (send() does not raise on a Slack/Outlook delivery
+        # failure -- see spawn_followup_chat_agent_handler's comment above
+        # for the same fix) so a 401/invalid_auth/missing_scope failure is
+        # visible in the logs instead of silently reporting "delivered".
         delivered = False
         if source_channel == "slack" and recipient and recipient.slack_id:
             try:
                 from app.integrations.slack import connector as slack_connector
-                slack_connector.send(db, recipient.slack_id, clean_reply)
-                delivered = True
+                result = slack_connector.send(db, recipient.slack_id, clean_reply)
+                delivered = result.ok
+                if delivered:
+                    logger.info(f"[followup] reply sent to {recipient_name} (slack_id={recipient.slack_id}) via bot")
+                else:
+                    logger.error(f"[followup] Slack reply delivery FAILED to {recipient_name}: {result.error}")
             except Exception:
-                pass
-                
+                logger.error(f"[followup] Slack reply delivery raised for {recipient_name}", exc_info=True)
+
         if not delivered and recipient and recipient.email:
             # Email fallback
             from app.integrations.outlook import connector as outlook_connector
             try:
-                outlook_connector.send(db, recipient.email, clean_reply, subject="Task Followup Update")
+                result = outlook_connector.send(db, recipient.email, clean_reply, subject="Task Followup Update")
+                if result.ok:
+                    logger.info(f"[followup] reply sent to {recipient_name} ({recipient.email}) via email")
+                else:
+                    logger.error(f"[followup] Outlook reply delivery FAILED to {recipient_name}: {result.error}")
             except Exception:
-                pass
-                
+                logger.error(f"[followup] Outlook reply delivery raised for {recipient_name}", exc_info=True)
+
         # 10. Proactively notify manager if reported
         if agent.status == "reported" and agent.cos_context:
             notification = (
@@ -1110,14 +1205,19 @@ def handle_team_member_reply(db: Session, manager_id: str, recipient_employee_id
                 detail=notification[:500]
             ))
             db.commit()
-            
+            logger.info(f"[followup] #{agent.id} reported by {recipient_name}: {agent.cos_context[:200]}")
+
             # Send live FYI to manager's Slack IM
             if manager_slack_id:
                 try:
                     from app.integrations.slack import connector as slack_connector
-                    slack_connector.send(db, manager_slack_id, notification)
+                    result = slack_connector.send(db, manager_slack_id, notification)
+                    if not result.ok:
+                        logger.error(f"[followup] manager notification delivery FAILED: {result.error}")
                 except Exception:
-                    pass
+                    logger.error("[followup] manager notification delivery raised", exc_info=True)
+            else:
+                logger.warning(f"[followup] #{agent.id} reported but manager has no slack_id -- notification not sent")
     except Exception as e:
         logger.error(f"Failed to handle team member reply for followup #{agent.id}: {e}", exc_info=True)
 
