@@ -58,8 +58,8 @@ logger = logging.getLogger(__name__)
 # writes) never gets cut short by this before the LLM-call budget would bind
 # anyway -- a safety ceiling, not a tuning knob, same role as
 # heartbeat.py's _PHASE1_MAX_TOOL_CALLS/_PHASE2_MAX_TOOL_CALLS.
-_USER_MAX_TOOL_CALLS = 30
-_PROJECT_MAX_TOOL_CALLS = 30
+_USER_MAX_TOOL_CALLS = 100
+_PROJECT_MAX_TOOL_CALLS = 100
 
 _USER_TOOL_NAMES = (
     "search_events",
@@ -120,7 +120,10 @@ _PROJECT_INSTRUCTIONS = (
 
 
 def _user_seed_message(batch: List[Event]) -> str:
-    lines = [f"{i + 1}. [event_id={e.id}] [{e.type}] severity={e.severity}: {e.title}" for i, e in enumerate(batch)]
+    lines = []
+    for i, e in enumerate(batch):
+        body_text = f" | description={e.body}" if e.body else ""
+        lines.append(f"{i + 1}. [event_id={e.id}] [{e.type.upper()}] severity={e.severity}: {e.title}{body_text}")
     return (
         "### New Events (since last dream)\n" + "\n".join(lines) + "\n\n"
         "Probe get_event/search_claims/get_thread for detail on any you need, then call write_memory once "

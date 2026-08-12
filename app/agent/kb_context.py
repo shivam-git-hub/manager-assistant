@@ -1,27 +1,28 @@
-"""Context engineering for the KB agents (Phase A foundation for the
-heartbeat/dream/lint rewrites, not yet wired to any job). Deliberately a
-SEPARATE builder from app.agent.context.build_agent_context, which stays
-exactly as-is for the chat/Slack-DM agent (a different surface with a
-different, already-tuned prompt shape).
-
-The goal here is narrower and more load-bearing: hand a job agent all the
-information it needs to decide WHERE TO LOOK, and only that -- never full
-project prose. A tool-using agent that starts with full summary.md text for
-every project already has the depth it would otherwise spend a tool call
-pulling on demand (get_project_state / get_project_doc), which just
-bloats the prompt for the common case where it only needs to act on 1-2 of
-them. Ids, names, and a health/blocker signal are what it needs to choose;
-depth is one tool call away.
-"""
+import os
 import json
+import logging
 from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
+from pathlib import Path
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import timeservice
-from app.agent.context import team_roster_for_manager, visible_projects_for_manager
-from app.database import Event
+from app.database import Event, Claim
+from app.controlplane.models import (
+    SessionLocal as ControlPlaneSessionLocal,
+    Project as RegistryProject,
+    Employee,
+    get_member_list,
+)
+from app.projects.db import get_project_session
+from app.projects.models import Task, Conflict, HealthLog
+from app.projects.paths import project_md_path, summary_md_path, notes_md_path
+from app.tenancy.paths import manager_memory_md_path
+
+logger = logging.getLogger(__name__)
 
 EVENT_TYPE_DOCS = (
     ("status_update", "routine progress, no action implied"),
@@ -37,123 +38,36 @@ KB_CONVENTIONS_TEXT = (
     "## KB CONVENTIONS\n"
     "Event types:\n"
     + "\n".join(f"- {t}: {d}" for t, d in EVENT_TYPE_DOCS)
-    + "\n"
+    + "\n\n"
     "Severity is 0-3 (0=routine, 3=critical); blocker/clarification are code-floored "
     "to at least 1, never model-supplied below that.\n"
     "`general` on an event is DERIVED from project_ids being empty -- never set it "
     "yourself, it falls out of which project_ids you tag."
 )
 
-TRUNCATION_MARKER = "[context truncated to fit budget]"
-
 
 @dataclass(frozen=True)
 class ContextBudget:
-    max_total_chars: int = 6000
-    max_projects: int = 15
-    max_roster: int = 40
-    max_memory_chars: int = 1500
+    max_total_chars: int = 30000
+    max_memory_chars: int = 5000
+    max_project_md_chars: int = 3000
+    max_summary_md_chars: int = 5000
+    max_notes_md_chars: int = 3000
+    max_events_chars: int = 3000
+    max_events_count: int = 20
 
 
-def _owner_section(manager_id: str) -> str:
-    from app.controlplane.models import SessionLocal as ControlPlaneSessionLocal, Employee
-
-    cdb = ControlPlaneSessionLocal()
+def _read_if_exists(path: Any, max_chars: int) -> str:
+    if not path or not Path(path).exists():
+        return ""
     try:
-        employee = cdb.get(Employee, manager_id)
-    finally:
-        cdb.close()
-    name = employee.name if employee else manager_id
-    role = (employee.role if employee else None) or "manager"
-    return f"## OWNER\n{name} | employee_id={manager_id} | {role}"
-
-
-def _blocker_counts_by_project(db: Session) -> dict[str, int]:
-    """One pass over the manager's open blocker events, tallied per project.
-
-    Counted here rather than per-project because Event.project_ids is a
-    JSON-text column that SQL can't filter on, so a per-project count means
-    re-scanning every blocker row once per project -- O(projects x events)
-    for a section that's rebuilt on every job tick.
-    """
-    counts: dict[str, int] = {}
-    rows = db.query(Event.project_ids).filter(Event.type == "blocker").filter(Event.ui_state != "dismissed").all()
-    for row in rows:
-        for pid in (json.loads(row.project_ids) if row.project_ids else []):
-            counts[pid] = counts.get(pid, 0) + 1
-    return counts
-
-
-def _project_task_counts_and_health(project_id: str) -> tuple[int, Optional[int]]:
-    """Open-task count and latest health score in ONE project-db session --
-    these are two reads of the same sqlite file, so opening it twice per
-    project per context build is pure overhead. Open tasks come from the
-    project's own db.sqlite; blockers come from the manager's Event table
-    (see _blocker_counts_by_project) -- two different stores, matching how
-    the codebase splits project-scoped vs manager-scoped state (CLAUDE.md's
-    Data layout section)."""
-    from app.projects.db import get_project_session
-    from app.projects.models import HealthLog, Task
-
-    pdb = get_project_session(project_id)
-    try:
-        open_tasks = pdb.query(Task).filter(Task.status != "done").count()
-        latest = pdb.query(HealthLog).order_by(HealthLog.ts.desc()).first()
-        return open_tasks, (latest.final_score if latest else None)
-    finally:
-        pdb.close()
-
-
-def _projects_section(db: Session, manager_id: str, budget: ContextBudget) -> str:
-    projects = visible_projects_for_manager(manager_id)
-    lines = ["## PROJECTS"]
-    rendered = projects[: budget.max_projects]
-    overflow = len(projects) - len(rendered)
-    blocker_counts = _blocker_counts_by_project(db) if rendered else {}
-    for p in rendered:
-        role = "manager" if p["is_manager"] else "member"
-        open_tasks, health = _project_task_counts_and_health(p["id"])
-        blockers = blocker_counts.get(p["id"], 0)
-        health_str = str(health) if health is not None else "n/a"
-        lines.append(
-            f"- id={p['id']} | {p['name']} | {p['kind']} | you are {role} | "
-            f"open_tasks={open_tasks} | blockers={blockers} | health={health_str}"
-        )
-    if overflow > 0:
-        lines.append(f"- … {overflow} more projects, use list_projects to see them")
-    if len(rendered) == 0 and overflow == 0:
-        lines.append("- (none)")
-    return "\n".join(lines)
-
-
-def _team_section(manager_id: str, budget: ContextBudget) -> str:
-    roster = team_roster_for_manager(manager_id)
-    lines = ["## TEAM"]
-    rendered = roster[: budget.max_roster]
-    overflow = len(roster) - len(rendered)
-    for r in rendered:
-        lines.append(f"- {r['id']} | {r['name']} | {r['role'] or 'no role'} | slack:{'yes' if r['has_slack'] else 'no'}")
-    if overflow > 0:
-        lines.append(f"- … {overflow} more teammates, use list_team to see them")
-    if len(rendered) == 0 and overflow == 0:
-        lines.append("- (none)")
-    return "\n".join(lines)
-
-
-def _memory_section(manager_id: str, budget: ContextBudget) -> Optional[str]:
-    from app.tenancy.paths import manager_memory_md_path
-
-    path = manager_memory_md_path(manager_id)
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
-    if not text.strip():
-        return None
-    tail = text[-budget.max_memory_chars :] if len(text) > budget.max_memory_chars else text
-    return f"## YOUR DURABLE MEMORY\n{tail}"
-
-
-def _now_section() -> str:
-    now = timeservice.now_ist()
-    return f"## NOW\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')} IST ({now.strftime('%A')})"
+        content = Path(path).read_text(encoding="utf-8")
+        if len(content) > max_chars:
+            return content[:max_chars] + "\n... [content truncated to fit budget]"
+        return content
+    except Exception as e:
+        logger.warning(f"Error reading path {path}: {e}")
+        return ""
 
 
 def build_kb_context(
@@ -164,63 +78,211 @@ def build_kb_context(
     include_memory: bool = True,
     include_conventions: bool = True,
 ) -> str:
-    """Assembles the bounded job-agent context, sections in order:
-    OWNER, PROJECTS, TEAM, [YOUR DURABLE MEMORY], [KB CONVENTIONS], NOW.
+    now = timeservice.now_ist()
+    one_day_ago = now - timedelta(days=1)
 
-    `## NOW` is always emitted last, deliberately: recency information
-    landing at the very end of the prompt (right before the model has to
-    act) is a well-known way to keep it from getting lost in the middle of
-    a longer context -- do not reorder this.
+    # 1. OWNER DETAILS
+    cdb = ControlPlaneSessionLocal()
+    employee_map = {}
+    try:
+        manager = cdb.get(Employee, manager_id)
+        # Cache employees for teammate lookup
+        all_employees = cdb.query(Employee).all()
+        for emp in all_employees:
+            employee_map[emp.id] = emp
+    finally:
+        cdb.close()
 
-    If the assembled string still exceeds `budget.max_total_chars`, sections
-    are dropped whole (never blind-sliced -- a half-cut section reads worse
-    to the model than an absent one) in priority order: memory, then
-    conventions, then re-rendering PROJECTS at a smaller max_projects. A
-    `[context truncated to fit budget]` marker is inserted immediately
-    before `## NOW` (so NOW still ends up last) whenever anything was
-    dropped or shrunk.
-    """
-    owner = _owner_section(manager_id)
-    team = _team_section(manager_id, budget)
-    memory = _memory_section(manager_id, budget) if include_memory else None
-    conventions = KB_CONVENTIONS_TEXT if include_conventions else None
-    now = _now_section()
+    owner_lines = ["## OWNER DETAILS"]
+    if manager:
+        owner_lines.append(f"- Name: {manager.name}")
+        owner_lines.append(f"- Role: {manager.role or 'no role'}")
+        owner_lines.append(f"- Slack ID: {manager.slack_id or 'N/A'}")
+        owner_lines.append(f"- Outlook ID: {manager.email or manager.outlook_mailbox_email or 'N/A'}")
+    else:
+        owner_lines.append(f"- ID: {manager_id}")
+    owner_section = "\n".join(owner_lines)
 
-    def assemble(projects_budget: ContextBudget, keep_memory: bool, keep_conventions: bool, truncated: bool) -> str:
-        parts = [owner, _projects_section(db, manager_id, projects_budget), team]
-        if keep_memory and memory:
-            parts.append(memory)
-        if keep_conventions and conventions:
-            parts.append(conventions)
-        if truncated:
-            parts.append(TRUNCATION_MARKER)
-        parts.append(now)
-        return "\n\n".join(parts)
+    # 2. MEMORY
+    memory_section = ""
+    if include_memory:
+        mem_path = manager_memory_md_path(manager_id)
+        mem_content = _read_if_exists(mem_path, budget.max_memory_chars)
+        if mem_content.strip():
+            memory_section = f"## YOUR DURABLE MEMORY (memory.md)\n{mem_content}"
 
-    text = assemble(budget, True, True, False)
-    if len(text) <= budget.max_total_chars:
-        return text
+    # 3. KB CONVENTIONS
+    conventions_section = ""
+    if include_conventions:
+        conventions_section = KB_CONVENTIONS_TEXT
 
-    # Drop memory first (recomputable synthesis, least essential to a
-    # single job-agent tick), then conventions (static, re-derivable from
-    # this same docstring/prompt), then shrink the PROJECTS section itself.
-    text = assemble(budget, False, True, True)
-    if len(text) <= budget.max_total_chars:
-        return text
+    # 4. PROJECTS DETAILS
+    project_sections = []
+    
+    # Re-open control plane to query visible projects
+    cdb = ControlPlaneSessionLocal()
+    try:
+        owned = cdb.query(RegistryProject).filter(RegistryProject.manager_user_id == manager_id).all()
+        owned_ids = {p.id for p in owned}
+        member_ids = {
+            p.id for p in cdb.query(RegistryProject).all()
+            if any(m["employee_id"] == manager_id for m in get_member_list(p))
+        }
+        all_ids = owned_ids | member_ids
+        projects = cdb.query(RegistryProject).filter(RegistryProject.id.in_(all_ids)).all() if all_ids else []
+        
+        # Load all blockers and conflicts from manager's DB to filter per project
+        db_events = db.query(Event).filter(Event.ui_state != "dismissed").all()
+        blockers = [e for e in db_events if e.type == "blocker"]
+        conflict_events = [e for e in db_events if e.type == "conflict"]
 
-    text = assemble(budget, False, False, True)
-    if len(text) <= budget.max_total_chars:
-        return text
+        for p in projects:
+            p_lines = []
+            p_lines.append(f"============================================================")
+            p_lines.append(f"PROJECT: {p.name} (id={p.id})")
+            p_lines.append(f"============================================================")
+            p_lines.append(f"Description: {p.description or 'No description'}")
+            
+            # Teammates
+            members = get_member_list(p)
+            teammate_lines = []
+            for m in members:
+                emp_id = m.get("employee_id")
+                role = m.get("role") or "Member"
+                emp_obj = employee_map.get(emp_id)
+                if emp_obj:
+                    teammate_lines.append(f"- Name: {emp_obj.name} (ID: {emp_id}, Role: {emp_obj.role or role})")
+                else:
+                    teammate_lines.append(f"- ID: {emp_id} (Role: {role})")
+            p_lines.append("\nTeammates:")
+            p_lines.extend(teammate_lines if teammate_lines else ["- (none)"])
 
-    shrink_budget = budget
-    while shrink_budget.max_projects > 0:
-        shrink_budget = ContextBudget(
-            max_total_chars=budget.max_total_chars,
-            max_projects=max(shrink_budget.max_projects // 2, 0),
-            max_roster=shrink_budget.max_roster,
-            max_memory_chars=shrink_budget.max_memory_chars,
+            # project.md / summary.md / notes.md
+            proj_md = _read_if_exists(project_md_path(p.id), budget.max_project_md_chars)
+            summ_md = _read_if_exists(summary_md_path(p.id), budget.max_summary_md_chars)
+            nt_md = _read_if_exists(notes_md_path(p.id), budget.max_notes_md_chars)
+            
+            p_lines.append("\nProject Documents:")
+            p_lines.append("--- project.md ---")
+            p_lines.append(proj_md.strip() if proj_md.strip() else "(empty)")
+            p_lines.append("\n--- summary.md ---")
+            p_lines.append(summ_md.strip() if summ_md.strip() else "(empty)")
+            p_lines.append("\n--- notes.md ---")
+            p_lines.append(nt_md.strip() if nt_md.strip() else "(empty)")
+
+            # Project DB query
+            pdb = get_project_session(p.id)
+            try:
+                # Open Tasks
+                open_tasks_query = pdb.query(Task).filter(Task.status != "done")
+                open_tasks_count = open_tasks_query.count()
+                recent_tasks = open_tasks_query.order_by(Task.created_at.desc()).limit(5).all()
+                
+                # Conflicts
+                open_conflicts_query = pdb.query(Conflict).filter(Conflict.status == "open")
+                open_conflicts_count = open_conflicts_query.count()
+                recent_conflicts = open_conflicts_query.order_by(Conflict.created_at.desc()).limit(5).all()
+
+                # Health score
+                latest_health = pdb.query(HealthLog).order_by(HealthLog.ts.desc()).first()
+                health_score = (latest_health.base_score + latest_health.llm_adjustment) if latest_health else None
+                health_reason = latest_health.reason if latest_health else "N/A"
+            finally:
+                pdb.close()
+
+            # Filter blockers
+            p_blockers = []
+            for b in blockers:
+                try:
+                    pids = json.loads(b.project_ids or "[]")
+                    if p.id in pids:
+                        p_blockers.append(b)
+                except Exception:
+                    pass
+            p_blockers_count = len(p_blockers)
+            recent_p_blockers = sorted(
+                p_blockers, 
+                key=lambda x: x.occurred_at or x.created_at, 
+                reverse=True
+            )[:5]
+
+            p_lines.append("\nProject Backlog & Metrics:")
+            p_lines.append(f"- Open Tasks Count: {open_tasks_count}")
+            if recent_tasks:
+                p_lines.append("  Recent Open Tasks:")
+                for t in recent_tasks:
+                    p_lines.append(f"    * ID: {t.id} | Title: {t.title} | Status: {t.status} | Priority: {t.priority} | Assignee: {t.assignee_employee_id or 'Unassigned'}")
+            
+            p_lines.append(f"- Active Blockers Count: {p_blockers_count}")
+            if recent_p_blockers:
+                p_lines.append("  Recent Active Blockers:")
+                for b in recent_p_blockers:
+                    p_lines.append(f"    * Severity: {b.severity} | Title: {b.title} | Body: {b.body or 'None'} | Occurred: {b.occurred_at or b.created_at}")
+
+            p_lines.append(f"- Active Conflicts Count: {open_conflicts_count}")
+            if recent_conflicts:
+                p_lines.append("  Recent Active Conflicts:")
+                for c in recent_conflicts:
+                    p_lines.append(f"    * ID: {c.id} | Claim A: '{c.claim_a_ref}' | Claim B: '{c.claim_b_ref}' | Severity: {c.severity} | Created At: {c.created_at}")
+
+            # Health Score
+            health_str = f"{health_score}" if health_score is not None else "N/A"
+            p_lines.append(f"- Project Health Score: {health_str} (Reason: {health_reason})")
+            p_lines.append("\n")
+
+            project_sections.append("\n".join(p_lines))
+    finally:
+        cdb.close()
+
+    projects_section = "## PROJECTS DETAIL\n" + "\n\n".join(project_sections) if project_sections else "## PROJECTS DETAIL\n- (none)"
+
+    # 5. ALL EVENTS FOR LAST DAY FOR THE MANAGER
+    last_day_events = (
+        db.query(Event)
+        .filter(func.coalesce(Event.occurred_at, Event.created_at) >= one_day_ago)
+        .order_by(func.coalesce(Event.occurred_at, Event.created_at).desc())
+        .limit(budget.max_events_count)
+        .all()
+    )
+    
+    event_lines = []
+    for e in last_day_events:
+        ts = e.occurred_at or e.created_at
+        event_lines.append(
+            f"- [{ts.strftime('%Y-%m-%d %H:%M:%S')}] [{e.type.upper()}/severity={e.severity}] "
+            f"{e.title}: {e.body or 'No detail'}"
         )
-        text = assemble(shrink_budget, False, False, True)
-        if len(text) <= budget.max_total_chars or shrink_budget.max_projects == 0:
-            return text
-    return text
+    
+    events_content = "\n".join(event_lines) if event_lines else "(No events occurred in the last 24 hours)"
+    if len(events_content) > budget.max_events_chars:
+        events_content = events_content[:budget.max_events_chars] + "\n... [events truncated to fit budget]"
+    events_section = f"## RECENT EVENTS (LAST 24 HOURS)\n{events_content}"
+
+    # 6. NOW TIMESTAMP
+    now_section = f"## NOW\nCurrent date and time: {now.strftime('%Y-%m-%d %H:%M:%S')} IST ({now.strftime('%A')})"
+
+    # Assembling all sections
+    all_parts = [
+        owner_section,
+        memory_section,
+        conventions_section,
+        projects_section,
+        events_section,
+        now_section
+    ]
+    # Filter empty sections
+    all_parts = [p.strip() for p in all_parts if p.strip()]
+    final_text = "\n\n".join(all_parts)
+
+    # 7. ENFORCE OVERALL BUDGET LIMIT (30,000 characters)
+    if len(final_text) > budget.max_total_chars:
+        # If we exceed the budget, truncate and append truncation warning + NOW section at the end
+        allowed_len = budget.max_total_chars - len(now_section) - 100
+        truncated_body = final_text[:allowed_len]
+        final_text = (
+            truncated_body + 
+            "\n\n... [context truncated to fit overall budget of 30,000 chars]\n\n" + 
+            now_section
+        )
+
+    return final_text

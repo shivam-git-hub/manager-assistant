@@ -151,10 +151,25 @@ _PHASE2_INSTRUCTIONS = (
 )
 
 
-def _phase1_seed_message(batch: List[Claim]) -> str:
-    lines = [f"{i + 1}. [claim_id={c.id}] {c.text}" for i, c in enumerate(batch)]
+def _phase1_seed_message(batch: List[Claim], db: Session) -> str:
+    from app.database import UnifiedMessage
+    lines = []
+    for i, c in enumerate(batch):
+        thread_messages = []
+        if c.thread_key:
+            rows = db.query(UnifiedMessage).filter(UnifiedMessage.thread_id == c.thread_key).order_by(UnifiedMessage.timestamp.asc()).all()
+            for m in rows:
+                sender = m.sender_mapped_name or m.sender_raw_id
+                content = m.content or ""
+                thread_messages.append(f"    * {sender} ({m.timestamp}): {content}")
+        
+        thread_block = "\n".join(thread_messages) if thread_messages else "    (No source thread messages found)"
+        lines.append(
+            f"{i + 1}. [claim_id={c.id}] [thread_key={c.thread_key or 'None'}] {c.text}\n"
+            f"  Source Thread Messages:\n{thread_block}"
+        )
     return (
-        "### Pending Claims\n" + "\n".join(lines) + "\n\n"
+        "### Pending Claims & Source Threads\n" + "\n\n".join(lines) + "\n\n"
         "Probe as needed, then call emit_events once with your full judged batch."
     )
 
@@ -193,7 +208,7 @@ def _run_phase1(
         spec,
         db,
         manager_id,
-        _phase1_seed_message(batch),
+        _phase1_seed_message(batch, db),
         client=client,
         run_context=run_context,
         context_text=context_text,

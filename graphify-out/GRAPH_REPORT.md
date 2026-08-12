@@ -1,104 +1,107 @@
-# Graph Report - .  (2026-07-29)
+# Graph Report - manager-assistant-feature  (2026-08-10)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 147 files · ~120,303 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1877 nodes · 5065 edges · 136 communities (94 shown, 42 thin omitted)
-- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 360 edges (avg confidence: 0.53)
-- Token cost: 6,891 input · 1,542 output
+- 2514 nodes · 6839 edges · 157 communities (113 shown, 44 thin omitted)
+- Extraction: 94% EXTRACTED · 6% INFERRED · 0% AMBIGUOUS · INFERRED: 444 edges (avg confidence: 0.52)
+- Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `0c606e18`
+- Built from commit: `32c75eee`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- Gemini Client and Extraction
-- Morning Briefing Service
-- Team Management API
-- Candidate Selection Logic
-- Contact Blocklist API
-- Event and Todo Management
-- Outlook Authentication
-- Slack Authentication
-- Shared Enums and Models
-- Database Schema Definitions
-- Project Synthesis Engine
-- Project Database Plumbing
-- Simulated Time Service
+- Entity
+- tenancy/db.py
+- kb/api.py
+- get_project_session
+- test_poll_completion.py
+- Session
+- test_outlook_auth.py
+- get_employee_by_manager_id
+- JobName
+- TeamMember
+- Event
+- project_dir
+- timeservice.py
 - Frontend Dependencies
-- Meetings and Action Items
-- Outlook Connector Implementation
-- Project Detail API
-- Claim Ingestion Pipeline
-- Slack Connector Implementation
-- User Synthesis Job
-- Portfolio and Project Registry
-- Control Plane Models
-- Work Hours and Scheduling
-- Connection Management UI
-- Project Heartbeat Fanout
-- Manager Authentication API
-- Project Creation UI
-- User Heartbeat Job
-- Dashboard Backend Tests
-- Navigation and Layout Components
+- UnifiedMessage
+- OutlookConnector
+- project_detail.py
+- run
+- test_slack_channels.py
+- test_dream_job.py
+- projects_registry.py
+- test_kb_pipeline_judge.py
+- outbound.py
+- Connectors.tsx
+- test_heartbeat_project_fanout.py
+- controlplane/models.py
+- api.ts
+- GeminiClient
+- test_home_backend.py
+- constants.ts
 - TypeScript Configuration
-- Base Connector Interface
-- Agent Chat API
-- Agent Assignment Flow
-- HTML Processing Utilities
-- Meeting Brief Handlers
+- config.py
+- Employee
+- _write_assignment_mirror
+- test_connectors.py
+- build_kb_context
 - Project Task UI
 - Agent Management Tests
-- Developer Debug Tools
-- Project Knowledge Models
-- Agent Tool Registry
-- Project Detail Tests
-- Message Polling Jobs
-- Database Initialization and Auth Tests
-- Slack API Utilities
-- Manager Data Tenancy
-- Dashboard API
-- Agent Context Assembly
-- Job Scheduling Logic
+- list_claims
+- test_lint_job.py
+- AgentSpec
+- test_project_detail.py
+- test_projectkb_scheduler.py
+- Agent
+- SlackConnector
+- get_manager_session
+- dashboard.py
+- run_agent
+- job_schedule.py
 - Workload Visualization
-- Portfolio Management UI
-- Iteration Budgeting
-- Gemini API Mapping
-- Background Job Scheduler
+- PortfolioDetail.tsx
+- IterationBudget
+- map_tools_to_gemini
+- projectkb/scheduler.py
 - Project Truth UI
-- Todo List UI
+- Home.tsx
 - Portfolio Management Tests
-- Time Service Tests
-- Test Configuration and Fixtures
-- Pollable Connector Protocol
+- test_timeservice.py
+- outlook_auth.py
+- run_spec
 - Meeting Calendar UI
-- Agent Direct Messaging
-- App Lifecycle and Exceptions
-- Manager Database Plumbing
-- Login and Auth UI
+- test_result_compaction.py
+- global_exception_handler
+- _engine_for
+- App.tsx
 - Chat Dock UI
 - Chat Widget Components
 - Frontend Routing
 - Meeting Detail UI
-- Slack Webhook Handling
+- slack_webhook
 - Briefs List UI
 - Conflict Resolution UI
 - Architecture Documentation
 - Agent Notes Service
+- home.py
 - Feature Roadmap
 - Agent Harness Documentation
-- Clock Mocking Fixtures
-- Clock Mocking Fixtures
-- Clock Mocking Fixtures
-- Clock Mocking Fixtures
-- Clock Mocking Fixtures
+- test_agent_select.py
+- CLAUDE.md — Manager Assistant ("Harry" / Pulse.ai)
+- test_agent_tools.py
+- test_projects_registry.py
+- Part 2: Agents (the bot pool)
 - AI Assistant Branding
 - Ingestion Feature Docs
 - Slack Branding
 - Teams Branding
+- .normalize
 - Extraction Pipeline Overview
 - Agent Identity and Messaging
 - Knowledge Base Schema
@@ -128,6 +131,7 @@
 - Frontend Development Tasks
 - Personal Agent Interface
 - Pulse AI Platform
+- test_gemini_client_retry.py
 - Integration Simulator
 - Agent Messaging Identity
 - Truth Synthesis Engine
@@ -135,18 +139,37 @@
 - System Architecture Specification
 - User Authentication UI
 - Project Timeline Visualization
+- select.py
+- Step 33 — Agentic runner foundation (Phase A)
+- Connecting Outlook
+- .fetch_since
+- test_registry_allowlist.py
+- ask_kb
+- agent_heartbeat.py
+- Part 1 — `Event.occurred_at`
+- get_job_lock
+- Step 35 — KB probe tools + agentic heartbeat (Phases C & D)
+- Step 36 — Agentic dream job (Phase E)
+- Step 38 — Consolidated test pass for the agentic KB refactor
+- Pulse.ai — Manager Assistant ("Harry")
+- Step 30 — remove `Manager` table; `Employee.id` is the identity key
+- Step 37 — Lint job + Knowledge Synthesis agent (Phases F & G)
+- _health_band
+- test_ingest_channel_message_stored_without_any_list
+- AGENTS.md
+- test_channel_top_level_messages_after_gap_start_new_thread
 
 ## God Nodes (most connected - your core abstractions)
-1. `GeminiClient` - 141 edges
-2. `TeamMember` - 89 edges
-3. `UnifiedMessage` - 78 edges
-4. `Manager` - 55 edges
-5. `Event` - 51 edges
-6. `get_project_session()` - 49 edges
-7. `Project` - 44 edges
-8. `Entity` - 42 edges
-9. `request()` - 42 edges
-10. `Task` - 36 edges
+1. `GeminiClient` - 208 edges
+2. `TeamMember` - 98 edges
+3. `UnifiedMessage` - 97 edges
+4. `Employee` - 85 edges
+5. `Event` - 68 edges
+6. `get_project_session()` - 67 edges
+7. `get_employee_by_manager_id()` - 57 edges
+8. `FakeTransport` - 57 edges
+9. `Manager` - 55 edges
+10. `Project` - 45 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `Harry (Manager Assistant)` --references--> `AI Assistant Icon`  [INFERRED]
@@ -169,151 +192,151 @@
 - **Agent Harness & Reasoning Loop** — spec_feature_10_agent, spec_feature_11_autonomous_followups, spec_research_hermes_index [EXTRACTED 0.95]
 - **Simulation & Demo Infrastructure** — spec_feature_03_simulator, spec_feature_04_sim_time, spec_feature_14_demo_seed [EXTRACTED 0.90]
 
-## Communities (136 total, 42 thin omitted)
+## Communities (157 total, 44 thin omitted)
 
-### Community 0 - "Gemini Client and Extraction"
-Cohesion: 0.06
-Nodes (82): GeminiClient, get_client(), UnifiedMessage, extract_from_message(), Session, AttributedClaim, Conflict, Entity (+74 more)
-
-### Community 1 - "Morning Briefing Service"
+### Community 0 - "Entity"
 Cohesion: 0.05
-Nodes (68): Brief, get_brief_by_date(), get_briefs(), datetime, get, Session, Assembles project metrics, releases overnight pings, calls the LLM to write a…, run_morning_brief() (+60 more)
+Nodes (78): get_client(), extract_from_message(), AttributedClaim, Conflict, Entity, TimelineEntry, _is_assertive_claim(), _judge_and_create_conflicts() (+70 more)
 
-### Community 2 - "Team Management API"
-Cohesion: 0.09
-Nodes (53): create_or_update_team_member(), delete_team_member(), get_team_members(), delete, get, post, Session, append_timeline_entry() (+45 more)
-
-### Community 3 - "Candidate Selection Logic"
-Cohesion: 0.09
-Nodes (51): _already_logged(), build_candidates(), Candidate, owned_projects_for_manager(), Session, Deterministic candidate selection for the personal agent's heartbeat (step 28…, Projects this manager actually owns (write authority) -- manager-only project…, _select_conflicts() (+43 more)
-
-### Community 4 - "Contact Blocklist API"
+### Community 1 - "tenancy/db.py"
 Cohesion: 0.08
-Nodes (46): BlockedChannelCreate, BlockedContactCreate, BlockedContactUpdate, create_blocked_channel(), create_blocked_contact(), delete_blocked_channel(), delete_blocked_contact(), get_blocklist() (+38 more)
+Nodes (43): Brief, BriefResponse, Assembles project metrics, releases overnight pings, calls the LLM to write a…, run_morning_brief(), Base, DeclarativeBase, Followup, Compatibility shim. app/followups.py was deleted mid-refactor (see git history)… (+35 more)
 
-### Community 5 - "Event and Todo Management"
+### Community 2 - "kb/api.py"
+Cohesion: 0.07
+Nodes (41): create_or_update_team_member(), delete_team_member(), get_team_members(), BaseModel, delete, get, post, Session (+33 more)
+
+### Community 3 - "get_project_session"
+Cohesion: 0.07
+Nodes (75): Owned + member projects (read scope -- broader than…, visible_projects_for_manager(), add_concerns_handler(), add_suggestions_handler(), _append_lines(), append_manager_events_handler(), append_project_events_handler(), apply_task_transitions_handler() (+67 more)
+
+### Community 4 - "test_poll_completion.py"
+Cohesion: 0.07
+Nodes (50): BlockedChannelCreate, BlockedContactCreate, BlockedContactUpdate, create_blocked_channel(), create_blocked_contact(), delete_blocked_channel(), delete_blocked_contact(), get_blocklist() (+42 more)
+
+### Community 5 - "Session"
+Cohesion: 0.21
+Nodes (17): approve_event(), delete_todo(), dismiss_event(), _event_dict(), list_events(), list_todos(), promote_event(), delete (+9 more)
+
+### Community 6 - "test_outlook_auth.py"
 Cohesion: 0.09
-Nodes (37): add_manual_message(), approve_event(), create_todo(), delete_todo(), dismiss_event(), _event_dict(), list_events(), list_todos() (+29 more)
+Nodes (28): Returns (purpose, manager_id) or (None, None) if invalid/tampered., Returns (purpose, manager_id) or (None, None) if invalid/tampered., _sign_state(), _state_secret(), _verify_state(), _login_and_connect_mail(), _mock_successful_exchange(), outlook_env() (+20 more)
 
-### Community 6 - "Outlook Authentication"
-Cohesion: 0.09
-Nodes (37): _authority(), _confidential_app(), _handle_enable_send_callback(), _handle_login_callback(), outlook_callback(), outlook_disconnect(), outlook_enable_send(), outlook_login() (+29 more)
+### Community 7 - "get_employee_by_manager_id"
+Cohesion: 0.07
+Nodes (43): get_employee_by_manager_id(), One manager's own Slack user-token grant for message *tracking* -- deliberately…, Step 30: manager_id IS employees.id now -- this is a plain PK lookup, kept as a…, SlackReaderInstallation, Employee, get, post, Slack "Connect" for MESSAGE TRACKING -- a user-token-only OAuth flow,… (+35 more)
 
-### Community 7 - "Slack Authentication"
-Cohesion: 0.08
-Nodes (37): One manager's own Slack user-token grant for message *tracking* -- deliberately…, SlackReaderInstallation, get, Manager, post, Slack "Connect" for MESSAGE TRACKING -- a user-token-only OAuth flow,…, authed_user.id IS the manager's own Slack user id -- without writing it onto…, Revokes the user token via Slack's auth.revoke (best-effort) and forgets our… (+29 more)
-
-### Community 8 - "Shared Enums and Models"
+### Community 8 - "JobName"
 Cohesion: 0.11
-Nodes (36): ConflictSeverity, JobName, Heading text for timeline.md's three tiers. Both the template writer (paths.py)…, The four fixed projectkb background jobs. Used as the key in job_schedule.json…, TimelineSection, TodoStatus, Claim, Conflict (+28 more)
+Nodes (34): ConflictSeverity, JobName, Heading text for timeline.md's three tiers. Both the template writer (paths.py)…, The fixed projectkb background jobs. Used as the key in job_schedule.json so…, TimelineSection, TodoStatus, Claim, Conflict (+26 more)
 
-### Community 9 - "Database Schema Definitions"
-Cohesion: 0.18
-Nodes (37): PortfolioProjectResponse, BaseModel, BriefResponse, BaseModel, Base, Digest, Leave, Project (+29 more)
-
-### Community 10 - "Project Synthesis Engine"
-Cohesion: 0.12
-Nodes (33): Event, Condensed, judged output of the heartbeat agent (spec §2): typed, tagged,…, _append_lines(), _build_project_prompt(), _call_project_synthesis(), _call_user_synthesis(), _compute_base_health_score(), _days_since_last_progress() (+25 more)
-
-### Community 11 - "Project Database Plumbing"
+### Community 9 - "TeamMember"
 Cohesion: 0.13
-Nodes (33): _engine_for(), get_project_engine(), Per-project engine/session plumbing -- mirrors app/tenancy/db.py's engine-cache…, One SQLAlchemy engine per project db.sqlite path, cached so repeated calls for…, ensure_project_scaffold(), events_md_path(), _events_md_template(), notes_md_path() (+25 more)
+Nodes (36): Digest, Leave, Project, Table definitions shared by every manager's db.sqlite. There is no global…, ReassignmentSuggestion, Task, TeamMember, get_dm_channel_id() (+28 more)
 
-### Community 12 - "Simulated Time Service"
-Cohesion: 0.10
-Nodes (35): advance(), api_advance_time(), api_reset_time(), api_set_time(), fire_time_change(), _get_sim_clock_path(), get_state(), get_time() (+27 more)
+### Community 10 - "Event"
+Cohesion: 0.07
+Nodes (56): Event, Condensed, judged output of the heartbeat agent (spec §2): typed, tagged,…, Condensed, judged output of the heartbeat agent (spec §2): typed, tagged,…, _append_lines(), _build_project_prompt(), _call_project_synthesis(), _call_user_synthesis(), _compute_base_health_score() (+48 more)
+
+### Community 11 - "project_dir"
+Cohesion: 0.12
+Nodes (35): _engine_for(), get_project_engine(), init_project_db(), Per-project engine/session plumbing -- mirrors app/tenancy/db.py's engine-cache…, One SQLAlchemy engine per project db.sqlite path, cached so repeated calls for…, Schema create + column migrations for this project's db.sqlite --…, ensure_project_scaffold(), events_md_path() (+27 more)
+
+### Community 12 - "timeservice.py"
+Cohesion: 0.09
+Nodes (37): advance(), api_advance_time(), api_reset_time(), api_set_time(), fire_time_change(), _get_sim_clock_path(), get_state(), get_time() (+29 more)
 
 ### Community 13 - "Frontend Dependencies"
 Cohesion: 0.06
 Nodes (34): autoprefixer, dependencies, react, react-dom, react-markdown, react-router-dom, devDependencies, autoprefixer (+26 more)
 
-### Community 14 - "Meetings and Action Items"
+### Community 14 - "UnifiedMessage"
+Cohesion: 0.20
+Nodes (26): ActionItem, Meeting, UnifiedMessage, ActionItemResponse, Config, create_meeting(), get_meeting_detail(), get_meetings() (+18 more)
+
+### Community 15 - "OutlookConnector"
+Cohesion: 0.07
+Nodes (28): outlook_mock_ingest(), outlook_poll(), OutlookConnector, Any, Employee, post, Response, Session (+20 more)
+
+### Community 16 - "project_detail.py"
 Cohesion: 0.17
-Nodes (31): ActionItem, Meeting, Followup, ActionItemResponse, Config, create_meeting(), get_meeting_detail(), get_meetings() (+23 more)
+Nodes (32): create_task(), delete_project(), download_vault_file(), get_doc(), get_insights(), _get_visible_project(), list_tasks(), list_vault() (+24 more)
 
-### Community 15 - "Outlook Connector Implementation"
+### Community 17 - "run"
 Cohesion: 0.09
-Nodes (20): outlook_mock_ingest(), OutlookConnector, Any, datetime, Manager, post, Response, Session (+12 more)
+Nodes (51): ClaimSource, Citation join: which unified_messages row(s) a claim came from., Citation join: which unified_messages row(s) a claim came from., _batch_by_thread(), _chunk_thread(), _content_hash(), _extract_claims_for_batch(), _format_party() (+43 more)
 
-### Community 16 - "Project Detail API"
-Cohesion: 0.18
-Nodes (31): create_task(), delete_project(), download_vault_file(), get_doc(), get_insights(), _get_visible_project(), list_tasks(), list_vault() (+23 more)
+### Community 18 - "test_slack_channels.py"
+Cohesion: 0.15
+Nodes (16): Pure transform: one conversations.history result -> the same Events-API…, Pure transform: one conversations.history result -> the same Events-API…, Slack conversation handling: conversation_type on NormalizedMessage, the pure…, Two top-level (no thread_ts) channel messages close in time land in the SAME…, Threaded replies carry the parent's ts -- it must survive the reshaping so…, channel_join / message edits etc. carry a subtype -- not a real authored…, DM counterpart resolution's fast path now reads the manager's own…, test_channel_top_level_messages_within_gap_share_thread_key() (+8 more)
 
-### Community 17 - "Claim Ingestion Pipeline"
-Cohesion: 0.16
-Nodes (28): Claim, ClaimSource, Short structured statement extracted from message(s) by the ingest job…, Citation join: which unified_messages row(s) a claim came from., _batch_by_thread(), _content_hash(), _extract_claims_for_batch(), _mark_skipped() (+20 more)
+### Community 19 - "test_dream_job.py"
+Cohesion: 0.15
+Nodes (48): Agentic dream: un-dreamed Event rows -> one user-level agent run…, Dream job: un-dreamed Event rows -> per-user md synthesis + per-managed-project…, run(), manager_events_md_path(), manager_memory_md_path(), The dream job owns writing this -- durable per-user facts, Hermes-style long-…, Step 25 (dream job) owns writing this -- durable per-user facts, Hermes-style…, Dream-written: timestamped log of the user's own key events, append-only. (+40 more)
 
-### Community 18 - "Slack Connector Implementation"
-Cohesion: 0.10
-Nodes (27): ingest(), Shared policy step: normalize, dedup, insert. Stores EVERYTHING (step 20's…, datetime, Pure transform: one conversations.history result -> the same Events-API…, User-token polling (step 17 piece 1) for a manager's own DMs -- the read-path…, conversations.list object flags -> the Events-API channel_type string…, This manager's own Slack reading grant, if any (redesigned 2026-07-23 --…, SlackConnector (+19 more)
+### Community 20 - "projects_registry.py"
+Cohesion: 0.13
+Nodes (47): _dashboard_add_project_member(), create_portfolio(), create_project(), delete_portfolio(), _employee_dict(), get_portfolio(), get_project(), _is_visible() (+39 more)
 
-### Community 19 - "User Synthesis Job"
-Cohesion: 0.23
-Nodes (29): Dream job: un-dreamed Event rows -> per-user md synthesis + per-managed-project…, run(), _add_event(), _add_task(), FakeTransport, _gemini_response(), _project_response(), Step 25 (prompts/step_25_dream_job.md): per-user md synthesis… (+21 more)
+### Community 21 - "test_kb_pipeline_judge.py"
+Cohesion: 0.07
+Nodes (43): Project, Global projects registry (spec §3.1 -- "why projects are global"): teammates'…, Global projects registry (spec §3.1 -- "why projects are global"): teammates'…, Claim, Short structured statement extracted from message(s) by the ingest job.…, Short structured statement extracted from message(s) by the ingest job…, _dispose_claims(), _phase1_seed_message() (+35 more)
 
-### Community 20 - "Portfolio and Project Registry"
-Cohesion: 0.20
-Nodes (29): create_portfolio(), create_project(), delete_portfolio(), _employee_dict(), get_portfolio(), get_project(), _health_band(), _is_visible() (+21 more)
+### Community 22 - "outbound.py"
+Cohesion: 0.05
+Nodes (54): get_connector(), _dispatch(), is_quiet_hours(), list_outbound_queue(), next_work_morning(), datetime, get, post (+46 more)
 
-### Community 21 - "Control Plane Models"
-Cohesion: 0.19
-Nodes (27): DocPutIn, BaseModel, TaskCreateIn, TaskPatchIn, MemberInput, PortfolioCreateIn, PortfolioPatchIn, ProjectCreateIn (+19 more)
+### Community 23 - "Connectors.tsx"
+Cohesion: 0.09
+Nodes (17): Outlook Icon, Slack Logo, Teams Logo, Connections, disconnectOutlook(), disconnectSlack(), getConnections(), goToOutlookConnectMail() (+9 more)
 
-### Community 22 - "Work Hours and Scheduling"
+### Community 24 - "test_heartbeat_project_fanout.py"
+Cohesion: 0.17
+Nodes (30): _fanout_one_project(), Session, Applies task transitions/drafts + deterministic archive writes for one…, Runs the phase-2 agent for one owned project, then writes the deterministic…, Groups this tick's project-tagged events by project, restricts to projects this…, Groups this tick's project-tagged events by project, restricts to projects this…, _run_project_fanout(), _gemini_response_text() (+22 more)
+
+### Community 25 - "controlplane/models.py"
 Cohesion: 0.08
-Nodes (28): is_quiet_hours(), next_work_morning(), datetime, Returns True if dt is outside working hours [WORK_HOURS_START, WORK_HOURS_END)…, Returns the next datetime at 09:00 on a weekday strictly after quiet hours…, fixture, Outlook connector.send() validation error -> ok=False, error="invalidRequest"., 5. is_quiet_hours: 08:59 -> True, 09:00 -> False, 18:59 -> False, 19:00 ->… (+20 more)
+Nodes (45): Manual job triggers + message/claim/event chain visualization for local testing…, POST /api/kb/ask -- the manual, ad-hoc counterpart to the scheduled KB agents…, Agent pool claim flow. Wires up the pool's identity/isolation machinery: redeem…, connections(), _dev_auth_enabled(), dev_login(), DevLoginPayload, logout() (+37 more)
 
-### Community 23 - "Connection Management UI"
-Cohesion: 0.09
-Nodes (20): Slack Logo, Teams Logo, ApiError, Connections, createPortfolio(), disconnectOutlook(), disconnectSlack(), getConnections() (+12 more)
+### Community 26 - "api.ts"
+Cohesion: 0.10
+Nodes (31): addManualMessage(), ApiError, claimAgent(), createPortfolio(), createProject(), Employee, getAvailableAgents(), getEmployees() (+23 more)
 
-### Community 24 - "Project Heartbeat Fanout"
-Cohesion: 0.20
-Nodes (25): _fanout_one_project(), Session, Applies task transitions/drafts + deterministic archive writes for one…, Groups this tick's project-tagged events by project, restricts to projects this…, _run_project_fanout(), get_project_session(), DBSession, Open a new Session bound to this project's own database. Caller is responsible… (+17 more)
+### Community 27 - "GeminiClient"
+Cohesion: 0.17
+Nodes (40): GeminiClient, Heartbeat job, user-level half: unprocessed Claim rows -> typed/…, Agentic heartbeat: unprocessed Claim rows -> typed/tagged/severity- scored…, run(), _add_claim(), _emit_events_run(), FakeTransport, _gemini_response() (+32 more)
 
-### Community 25 - "Manager Authentication API"
-Cohesion: 0.14
-Nodes (25): connections(), _dev_auth_enabled(), dev_login(), DevLoginPayload, logout(), _manager_dict(), me(), BaseModel (+17 more)
-
-### Community 26 - "Project Creation UI"
-Cohesion: 0.12
-Nodes (23): CreateProjectModal(), addManualMessage(), claimAgent(), createProject(), Employee, getAvailableAgents(), getEmployees(), getMyAgent() (+15 more)
-
-### Community 27 - "User Heartbeat Job"
-Cohesion: 0.25
-Nodes (22): _manager_projects(), Heartbeat job, user-level half: unprocessed Claim rows -> typed/…, This manager's own + member-of projects (registry rows), just id/name/kind --…, run(), _add_claim(), FakeTransport, _gemini_response(), _make_owned_project() (+14 more)
-
-### Community 28 - "Dashboard Backend Tests"
-Cohesion: 0.12
-Nodes (18): _mk_event(), project(), fixture, Step 19 (prompts/step_19_home_backend.md): home-dashboard backend -- user-…, A failure while marking the linked task done (e.g. a locked project db) must…, A team project owned by the client's throwaway manager (step 24's approve-with-…, test_events_approve_reject_400_on_non_request_types(), test_events_approve_request_excludes_from_default_query() (+10 more)
-
-### Community 29 - "Navigation and Layout Components"
+### Community 28 - "test_home_backend.py"
 Cohesion: 0.11
-Nodes (13): ALL_CLEAR, HEALTH_COLORS, NAV_TABS, PRIORITY_META, SEVERITY_META, SIDEBAR_ITEMS, TASK_STATE_META, dismissEvent() (+5 more)
+Nodes (21): _mk_event(), project(), fixture, Home-dashboard backend -- user-maintained todos CRUD + the Updates panel's…, Step 34: ordering must use COALESCE(occurred_at, created_at) -- a heartbeat-…, A failure while marking the linked task done (e.g. a locked project db) must…, A team project owned by the client's throwaway manager (the fan-out's approve-…, A failure while marking the linked task done (e.g. a locked project db) must… (+13 more)
+
+### Community 29 - "constants.ts"
+Cohesion: 0.16
+Nodes (16): StatusFlower(), ALL_CLEAR, APP_NAME, HEALTH_COLORS, NO_DATA_COLOR, PANEL_PREVIEW_COUNT, PRIORITY_META, SEVERITY_META (+8 more)
 
 ### Community 30 - "TypeScript Configuration"
 Cohesion: 0.08
 Nodes (23): compilerOptions, allowImportingTsExtensions, baseUrl, isolatedModules, jsx, lib, module, moduleResolution (+15 more)
 
-### Community 31 - "Base Connector Interface"
-Cohesion: 0.25
-Nodes (18): ABC, OutlookInstallation, One manager's connected Outlook mailbox. token_cache_json is a serialized MSAL…, ChannelConnector, manager_identifier(), NormalizedMessage, Shared connector interface + ingestion policy for all channels. Split of…, Do we have real credentials for this channel right now? Lets the app boot and… (+10 more)
+### Community 31 - "config.py"
+Cohesion: 0.09
+Nodes (40): ABC, OutlookInstallation, One manager's connected Outlook mailbox. token_cache_json is a serialized MSAL…, ChannelConnector, get_manager(), ingest(), manager_identifier(), NormalizedMessage (+32 more)
 
-### Community 32 - "Agent Chat API"
-Cohesion: 0.16
-Nodes (21): ChatMessageResponse, ChatRequest, ChatResponse, clear_chat_history(), Config, force_heartbeat(), get_agent_notes(), get_chat_history() (+13 more)
+### Community 32 - "Employee"
+Cohesion: 0.07
+Nodes (48): ChatMessageResponse, ChatRequest, ChatResponse, clear_chat_history(), Config, force_heartbeat(), get_agent_notes(), get_chat_history() (+40 more)
 
-### Community 33 - "Agent Assignment Flow"
+### Community 33 - "_write_assignment_mirror"
 Cohesion: 0.15
-Nodes (21): claim_agent(), ClaimRequest, list_available_agents(), my_agent(), BaseModel, get, Manager, post (+13 more)
+Nodes (17): claim_agent(), list_available_agents(), my_agent(), Employee, get, post, Unclaim this manager's agent (Agents tab "Remove"). Clears…, Unclaim this manager's agent (Agents tab "Remove" -- 2026-07-23). Clears… (+9 more)
 
-### Community 34 - "HTML Processing Utilities"
-Cohesion: 0.11
-Nodes (11): clean_html(), HTMLToMarkdown, HTMLParser, Step 20 inversion proof: a DM from someone with no TeamMember row and (in v1…, Step 20: channel/group messages are stored too (v1 dropped them unless the…, An installed Agent is required for webhook routing (step 17 piece 2b) to…, _seed_slack_installation(), test_html_cleaner() (+3 more)
+### Community 34 - "test_connectors.py"
+Cohesion: 0.15
+Nodes (15): Step 20 inversion proof: a DM from someone with no TeamMember row and (in v1…, A DM from someone with no Employee row and no blocklist entry IS stored --…, Step 20: channel/group messages are stored too (v1 dropped them unless the…, Channel/group messages are stored too (an allowlist design dropped them unless…, DM-counterpart resolution's fast path compares the sender against the calling…, An installed Agent is required for webhook routing to resolve which manager's…, Connector resolution (SlackConnector/OutlookConnector._resolve_member) now…, _seed_employee() (+7 more)
 
-### Community 35 - "Meeting Brief Handlers"
-Cohesion: 0.14
-Nodes (19): pre_meeting_brief_handler(), Scheduler cron execution handler for 'pre_meeting_brief:<id>'. Compiles…, get_or_create_entity(), Session, slugify(), lazy_pre_meeting_brief(), init_manager_db(), Schema create + column migrations + Harry seed + entity backfill + default job… (+11 more)
+### Community 35 - "build_kb_context"
+Cohesion: 0.12
+Nodes (31): Employees who are members of any project this manager touches -- not the whole…, Employees who are members of any project this manager touches -- not the whole…, team_roster_for_manager(), _blocker_counts_by_project(), build_kb_context(), ContextBudget, _memory_section(), _now_section() (+23 more)
 
 ### Community 36 - "Project Task UI"
 Cohesion: 0.12
@@ -321,115 +344,115 @@ Nodes (16): approveEvent(), createProjectTask(), deleteProject(), EventItem, get
 
 ### Community 37 - "Agent Management Tests"
 Cohesion: 0.20
-Nodes (18): access_code_env(), _claim(), _login(), fixture, Shivam 2026-07-23: users see the available agents WITHOUT the code; the code…, _seed_agent(), test_available_lists_only_unassigned_agents_no_code_needed(), test_claim_already_claimed_by_someone_else_is_409() (+10 more)
+Nodes (18): access_code_env(), _claim(), _login(), fixture, Users see the available agents WITHOUT the code; the code gates the claim, not…, _seed_agent(), test_available_lists_only_unassigned_agents_no_code_needed(), test_claim_already_claimed_by_someone_else_is_409() (+10 more)
 
-### Community 38 - "Developer Debug Tools"
-Cohesion: 0.14
-Nodes (18): list_claims(), list_jobs(), _message_preview(), get, Manager, post, Session, Manual job triggers + message/claim/event chain visualization for local testing… (+10 more)
+### Community 38 - "list_claims"
+Cohesion: 0.24
+Nodes (11): list_claims(), list_jobs(), _message_preview(), Employee, get, post, Session, Claims + which messages they cite + processed flag -- the middle link in the… (+3 more)
 
-### Community 39 - "Project Knowledge Models"
-Cohesion: 0.19
-Nodes (18): ArchiveEntry, Concern, Conflict, HealthLog, ProjectBase, DeclarativeBase, Per-project db.sqlite tables (spec/architecture_v2_kb.md §3, step 18 --…, Auditable health history (spec §4.4): a deterministic rubric produces… (+10 more)
+### Community 39 - "test_lint_job.py"
+Cohesion: 0.08
+Nodes (51): _check_claim_sources(), _check_event_claim_ids(), _check_poll_health(), _check_project_orphans(), _check_staleness(), _emit(), _epoch_of(), Any (+43 more)
 
-### Community 40 - "Agent Tool Registry"
-Cohesion: 0.15
-Nodes (13): Any, Session, Registers a tool with its name, schema, and handler function., Returns OpenAI-compatible tool/function declarations for all registered tools., Executes a registered tool handler with the parsed arguments, DB session, the…, ToolEntry, ToolRegistry, Session (+5 more)
+### Community 40 - "AgentSpec"
+Cohesion: 0.11
+Nodes (19): Any, Session, Registers a tool with its name, schema, and handler function., Returns OpenAI-compatible tool/function declarations for all registered tools., Registers a tool with its name, schema, handler function, and a per-tool…, Every registered tool name -- used by app.agent.runner.run_spec to validate an…, Returns OpenAI-compatible tool/function declarations. `names=None` (the…, Executes a registered tool handler with the parsed arguments, DB session, the… (+11 more)
 
-### Community 41 - "Project Detail Tests"
+### Community 41 - "test_project_detail.py"
 Cohesion: 0.12
-Nodes (11): _other_client(), project(), fixture, Step 21 (prompts/step_21_project_drilldown.md): per-project tasks, doc/notes,…, A team project owned by the client's throwaway manager, cleaned up from disk…, _seed_employee(), test_delete_project_manager_only(), test_delete_project_removes_rows_and_dir() (+3 more)
+Nodes (12): _other_client(), project(), fixture, Project drill-down: per-project tasks, doc/notes, vault, insights, deletion,…, A team project owned by the client's throwaway manager, cleaned up from disk…, Upsert by email -- login (dev-login/Outlook) now also creates an Employee row,…, _seed_employee(), test_delete_project_manager_only() (+4 more)
 
-### Community 42 - "Message Polling Jobs"
+### Community 42 - "test_projectkb_scheduler.py"
+Cohesion: 0.10
+Nodes (32): Outlook's arrival cadence -- distinct from the four KB extraction jobs. Graph…, run(), User-token DM/channel polling (reads the manager's own Slack grant from their…, run(), _cleanup(), _make_manager(), outlook_poll for a manager WITH an OutlookInstallation calls fetch_since scoped…, A job failing for one manager doesn't stop the loop from processing the next… (+24 more)
+
+### Community 43 - "Agent"
+Cohesion: 0.08
+Nodes (20): Agent, init_controlplane_db(), Schema create + idempotent ALTER-TABLE migration checks -- same PRAGMA-based…, Schema create + idempotent ALTER-TABLE migration checks -- same PRAGMA-based…, Pool slot. Each row is a distinctly-named, separately-registered Slack app,…, Pool slot (step 17 piece 2a -- prompts/step_17_agent_pool.md). Each row is a…, Admin, one-time (re-runnable): loads agents_pool.json (gitignored -- see…, seed() (+12 more)
+
+### Community 44 - "SlackConnector"
+Cohesion: 0.16
+Nodes (11): post, Resolves a Slack user id to a DM channel id via conversations.open (idempotent…, Resolves a Slack user id to a DM channel id via conversations.open (idempotent…, Which installed Agent's bot token to send as. Prefers the agent actually…, Which installed Agent's bot token to send as. Prefers the agent actually…, SlackConnector, test_ingest_channel_message_between_non_managers_stored(), test_ingest_threaded_reply_shares_thread_key_with_parent() (+3 more)
+
+### Community 45 - "get_manager_session"
 Cohesion: 0.14
-Nodes (22): User-token DM/channel polling (redesigned 2026-07-23 -- reads the manager's own…, run(), get_manager_session(), DBSession, Open a new Session bound to this manager's own database. Caller is responsible…, _get_manager_id(), main(), One-off: seeds unified_messages for the real manager (Shivam Kanojia) to… (+14 more)
+Nodes (26): get_manager_engine(), get_manager_session(), init_manager_db(), DBSession, Open a new Session bound to this manager's own database. Caller is responsible…, Open a new Session bound to this manager's own database. Caller is responsible…, Schema create + column migrations + Harry seed, scoped to one manager's…, Schema create + column migrations + Harry seed + entity backfill + default job… (+18 more)
 
-### Community 43 - "Database Initialization and Auth Tests"
-Cohesion: 0.13
-Nodes (7): init_controlplane_db(), Schema create + idempotent ALTER-TABLE migration checks -- same PRAGMA-based…, Path, Admin, one-time (re-runnable): loads agents_pool.json (gitignored -- see…, seed(), test_connections_reflects_outlook_installation(), test_init_controlplane_db_is_idempotent()
+### Community 46 - "dashboard.py"
+Cohesion: 0.16
+Nodes (22): create_task(), dashboard_message_ingest(), get_dashboard_portfolio(), get_tasks(), get_unified_message_by_id(), get_unified_messages(), PortfolioProjectResponse, BaseModel (+14 more)
 
-### Community 44 - "Slack API Utilities"
-Cohesion: 0.15
-Nodes (7): Any, post, Session, Resolves a Slack user id to a DM channel id via conversations.open (idempotent…, Given one known participant of a DM channel, find the other one. normalize()…, `raw` is a Slack Events API `event` object (or the equivalent shape built from…, Which installed Agent's bot token to send as. Prefers the agent actually…
+### Community 47 - "run_agent"
+Cohesion: 0.10
+Nodes (28): build_agent_context(), Session, Context assembly for the personal agent -- shared by both the agent heartbeat…, _read_if_exists(), _tail(), handle_agent_dm(), Any, Session (+20 more)
 
-### Community 45 - "Manager Data Tenancy"
-Cohesion: 0.26
-Nodes (15): ensure_manager_scaffold(), manager_db_path(), manager_dir(), manager_dump_md_path(), manager_events_md_path(), manager_memory_md_path(), manager_projects_dir(), Path (+7 more)
-
-### Community 46 - "Dashboard API"
-Cohesion: 0.28
-Nodes (14): create_task(), dashboard_message_ingest(), get_dashboard_portfolio(), get_tasks(), get_unified_message_by_id(), get_unified_messages(), get, patch (+6 more)
-
-### Community 47 - "Agent Context Assembly"
-Cohesion: 0.22
-Nodes (12): build_agent_context(), Session, Context assembly for the personal agent (step 28 §4) -- shared by both the…, Owned + member projects (read scope -- broader than…, Employees who are members of any project this manager touches -- not the whole…, _read_if_exists(), _tail(), team_roster_for_manager() (+4 more)
-
-### Community 48 - "Job Scheduling Logic"
-Cohesion: 0.31
-Nodes (12): get_last_run(), is_due(), _load_job_state(), datetime, Config + last-run bookkeeping for the four fixed projectkb jobs…, Last real wall-clock time this job ran for this manager, or None if it has…, A job with no recorded last-run is due immediately (first boot)., _save_job_state() (+4 more)
+### Community 48 - "job_schedule.py"
+Cohesion: 0.20
+Nodes (15): _deep_merge_overrides(), get_last_run(), is_due(), load_job_schedule(), _load_job_state(), Config + last-run bookkeeping for the four fixed projectkb jobs…, Last real wall-clock time this job ran for this manager, or None if it has…, A job with no recorded last-run is due immediately (first boot). (+7 more)
 
 ### Community 49 - "Workload Visualization"
 Cohesion: 0.19
 Nodes (5): approveReassignment(), fetchWorkloadData(), mounted(), rejectReassignment(), submitLeave()
 
-### Community 50 - "Portfolio Management UI"
-Cohesion: 0.22
-Nodes (11): ProjectCard(), deletePortfolio(), getPortfolio(), getProjects(), patchPortfolio(), ProjectSummary, Home(), PortfolioDetail() (+3 more)
+### Community 50 - "PortfolioDetail.tsx"
+Cohesion: 0.21
+Nodes (12): CreateProjectModal(), ProjectCard(), deletePortfolio(), getPortfolio(), getProjects(), patchPortfolio(), ProjectSummary, Home() (+4 more)
 
-### Community 51 - "Iteration Budgeting"
+### Community 51 - "IterationBudget"
 Cohesion: 0.17
 Nodes (6): IterationBudget, Consumes a given amount from the budget. Raises ValueError if the budget is…, Refunds a given amount to the budget., Returns the remaining budget., A thread-safe iteration budget counter to prevent infinite agentic loops., Returns the original budget limit.
 
-### Community 52 - "Gemini API Mapping"
-Cohesion: 0.22
-Nodes (10): json_parse_if_string(), map_tools_to_gemini(), messages_to_gemini_contents(), Any, Maps OpenAI tools format to Gemini functionDeclarations., Recursively strips $schema, additionalProperties, and title from a JSON Schema…, Translates OpenAI-shaped messages array to Gemini's contents +…, sanitize_gemini_schema() (+2 more)
+### Community 52 - "map_tools_to_gemini"
+Cohesion: 0.09
+Nodes (26): json_parse_if_string(), map_tools_to_gemini(), messages_to_gemini_contents(), Any, Maps OpenAI tools format to Gemini functionDeclarations., Maps OpenAI tools format to Gemini functionDeclarations., Recursively strips $schema, additionalProperties, and title from a JSON Schema…, Recursively strips $schema, additionalProperties, and title from a JSON Schema… (+18 more)
 
-### Community 53 - "Background Job Scheduler"
-Cohesion: 0.18
-Nodes (11): list_provisioned_managers(), Every manager who has ever logged in (a row created at first login) -- used by…, Outlook's arrival cadence -- distinct from the four KB extraction jobs. Unlike…, run(), background_loop(), check_and_run_due_jobs(), _check_and_run_jobs_for_manager(), Real wall-clock runner for the fixed projectkb jobs -- entirely independent of… (+3 more)
+### Community 53 - "projectkb/scheduler.py"
+Cohesion: 0.09
+Nodes (27): list_provisioned_managers(), Every employee who has ever logged in as a manager (is_manager=True) -- used by…, Every manager who has ever logged in (a row created at first login) -- used by…, background_loop(), check_and_run_due_jobs(), _interval_minutes(), _is_due(), _load_last_run_at() (+19 more)
 
 ### Community 54 - "Project Truth UI"
 Cohesion: 0.18
 Nodes (3): fetchProjectData(), handler(), resolveConflict()
 
-### Community 55 - "Todo List UI"
-Cohesion: 0.18
-Nodes (8): createTodo(), deleteTodo(), getTodos(), patchTodo(), TodoItem, fmtDue(), HEALTH_LABEL, TodosPanel()
+### Community 55 - "Home.tsx"
+Cohesion: 0.20
+Nodes (9): createTodo(), deleteTodo(), getTodos(), Manager, patchTodo(), TodoItem, fmtDue(), HEALTH_LABEL (+1 more)
 
 ### Community 56 - "Portfolio Management Tests"
 Cohesion: 0.18
-Nodes (6): _make_project(), Step 27 sub-item -- portfolios (wireframes 4.png, 8.png). A manager's personal,…, A second manager cannot see or mutate the first manager's portfolio., test_add_and_remove_project(), test_add_project_re_add_is_noop(), test_portfolio_scoped_to_owner()
+Nodes (6): _make_project(), Portfolios. A manager's personal, named grouping of their own visible projects…, A second manager cannot see or mutate the first manager's portfolio., test_add_and_remove_project(), test_add_project_re_add_is_noop(), test_portfolio_scoped_to_owner()
 
-### Community 57 - "Time Service Tests"
-Cohesion: 0.15
-Nodes (12): 6. Ingestion stamping tracks real wall-clock time now (sim time retired): POST…, 7. Wall-clock guard: walk app/**/*.py, assert no occurrence of datetime.now( /…, 1. now_ist() tracks real wall-clock IST time (2026-07-23: sim time retired --…, 2. set_time()/advance() still write the anchor file (the simulator UI's clock-…, 4. now_epoch() / now_utc_iso() agree with now_ist() (IST = UTC+5:30)., 5. API round-trip: GET/set/advance/reset via FastAPI TestClient still succeed…, test_01_initialization_defaults(), test_02_set_time_and_advance_are_inert_for_now_ist() (+4 more)
+### Community 57 - "test_timeservice.py"
+Cohesion: 0.10
+Nodes (18): now_ist() is real IST wall-clock time -- the one call site every other module…, Automatically redirect SIM_CLOCK_PATH to a temporary file for every test to…, 7. Wall-clock guard: walk app/**/*.py, assert no occurrence of datetime.now( /…, 1. now_ist() tracks real wall-clock IST time (2026-07-23: sim time retired --…, Ingestion stamping tracks real wall-clock time: POST a dashboard message…, 2. set_time()/advance() still write the anchor file (the simulator UI's clock-…, 4. now_epoch() / now_utc_iso() agree with now_ist() (IST = UTC+5:30)., 5. API round-trip: GET/set/advance/reset via FastAPI TestClient still succeed… (+10 more)
 
-### Community 58 - "Test Configuration and Fixtures"
-Cohesion: 0.23
-Nodes (11): clean_controlplane_db(), cleanup_projects(), client(), db_session(), manager_employee_id(), fixture, Tracks project ids created during a test and rmtree's their projects/<id>/ dir…, The control-plane DB (data/controlplane.sqlite) is its own engine, not swapped… (+3 more)
+### Community 58 - "outlook_auth.py"
+Cohesion: 0.11
+Nodes (31): _authority(), _confidential_app(), _handle_connect_mail_callback(), _handle_enable_send_callback(), _handle_login_callback(), outlook_callback(), outlook_connect_mail(), outlook_disconnect() (+23 more)
 
-### Community 59 - "Pollable Connector Protocol"
-Cohesion: 0.18
-Nodes (8): PollableConnector, Any, datetime, Session, Format (to, content, subject) into this channel's real wire payload and…, Only channels without push delivery implement this (Outlook)., raw channel payload -> common shape, or None if this payload isn't a real…, Protocol
+### Community 59 - "run_spec"
+Cohesion: 0.19
+Nodes (28): _echo_assistant_turn(), Any, Session, Gemini turn symmetry (harness.py:81-97, load-bearing, preserved verbatim here):…, Runs one agent to completion against `spec`'s budgets. System prompt is…, _repeat_key(), run_spec(), _empty_response() (+20 more)
 
 ### Community 60 - "Meeting Calendar UI"
 Cohesion: 0.24
 Nodes (5): fetchData(), formatDateLabel(), groupedMeetings(), mounted(), scheduleMeeting()
 
-### Community 61 - "Agent Direct Messaging"
-Cohesion: 0.22
-Nodes (9): handle_agent_dm(), Any, Session, Slack DM replies to Harry (step 28 §6B, confirmed in scope 2026-07-23). The…, Called by the Slack webhook right after a successful ingest(), only for…, Any, Session, Core Hermes-style converse-and-execute loop for Harry. Compiles the dynamic… (+1 more)
+### Community 61 - "test_result_compaction.py"
+Cohesion: 0.16
+Nodes (23): _compact_dict(), _compact_list(), compact_tool_result(), _dumps(), _fallback_raw(), Any, Structure-aware tool-result compaction, replacing the old blind str[:8000] +…, Serializes `result` (already a Python value -- dict/list/str/etc, never pre-… (+15 more)
 
-### Community 62 - "App Lifecycle and Exceptions"
-Cohesion: 0.24
-Nodes (9): global_exception_handler(), lifespan(), Request, init_project_db(), Schema create + column migrations for this project's db.sqlite --…, list_provisioned_manager_ids(), Every manager who has ever logged in -- used by background jobs…, Exception (+1 more)
+### Community 62 - "global_exception_handler"
+Cohesion: 0.50
+Nodes (4): global_exception_handler(), Exception, Request, exception_handler
 
-### Community 63 - "Manager Database Plumbing"
+### Community 63 - "_engine_for"
 Cohesion: 0.67
-Nodes (3): _engine_for(), get_manager_engine(), One SQLAlchemy engine per manager db.sqlite path, cached so repeated calls for…
+Nodes (3): _engine_for(), One SQLAlchemy engine per manager db.sqlite path, cached so repeated calls for…, One SQLAlchemy engine per manager db.sqlite path, cached so repeated calls for…
 
-### Community 64 - "Login and Auth UI"
-Cohesion: 0.27
-Nodes (7): App(), Outlook Icon, getMe(), goToOutlookLogin(), Manager, Login(), Outlook Sign-In — Authorization-Code Redirect Flow
+### Community 64 - "App.tsx"
+Cohesion: 0.23
+Nodes (7): App(), Sidebar(), TopNav(), NAV_TABS, SIDEBAR_ITEMS, getMe(), logout()
 
 ### Community 65 - "Chat Dock UI"
 Cohesion: 0.36
@@ -443,9 +466,9 @@ Nodes (7): ChatWidget(), clamp(), defaultPosition(), ChatMessage, getChatHistory
 Cohesion: 0.32
 Nodes (3): fetchData(), handler(), submitMom()
 
-### Community 69 - "Slack Webhook Handling"
-Cohesion: 0.29
-Nodes (5): Request, Slack's HMAC-SHA256 webhook signature scheme, checked against THIS agent's own…, Slack calls this with no session cookie -- unlike every other manager-scoped…, Webhook routing: which manager (via which agent) does this api_app_id belong…, slack_webhook()
+### Community 69 - "slack_webhook"
+Cohesion: 0.20
+Nodes (8): Request, Slack's HMAC-SHA256 webhook signature scheme, checked against THIS agent's own…, Slack's HMAC-SHA256 webhook signature scheme, checked against THIS agent's own…, conversations.list object flags -> the Events-API channel_type string…, Slack calls this with no session cookie -- unlike every other manager-scoped…, Webhook routing: which manager (via which agent) does this api_app_id belong…, Webhook routing: which manager (via which agent) does this api_app_id belong…, slack_webhook()
 
 ### Community 71 - "Conflict Resolution UI"
 Cohesion: 0.47
@@ -459,6 +482,10 @@ Nodes (6): Pulse.ai Architecture v2 — Knowledge Base & Job Pipeline, Feature 0
 Cohesion: 0.70
 Nodes (4): AgentNote, Session, recent_notes(), record_note()
 
+### Community 74 - "home.py"
+Cohesion: 0.21
+Nodes (16): add_manual_message(), create_todo(), ManualMessageIn, patch_todo(), BaseModel, Employee, patch, Home-dashboard backend: user-maintained todos CRUD + the Updates panel's query… (+8 more)
+
 ### Community 75 - "Feature Roadmap"
 Cohesion: 0.50
 Nodes (4): Feature 04: Backend Simulated-Time Service + LLM Model Config, Feature 09: Virtual Scheduler, Follow-up Engine, Project Health, and Morning Brief, Feature 11: Autonomous Follow-ups - Harry's Two-Tier Heartbeat, Feature 14: Demo Seed Scenario + End-to-End Pass
@@ -467,45 +494,121 @@ Nodes (4): Feature 04: Backend Simulated-Time Service + LLM Model Config, Featur
 Cohesion: 0.67
 Nodes (3): Feature 07: Gemini REST Client and Flash Claim Extraction, Feature 10: Agent Harness, Tools Registry, and Dashboard Chat Persistence, Hermes Agent Research Index
 
-### Community 77 - "Clock Mocking Fixtures"
-Cohesion: 0.67
-Nodes (3): fixture, Automatically redirect SIM_CLOCK_PATH to a temporary file for every test to…, setup_tmp_clock()
+### Community 77 - "test_agent_select.py"
+Cohesion: 0.20
+Nodes (15): build_candidates(), AgentActionLog, Idempotency ledger for the personal agent's autonomous heartbeat heartbeat. The…, Idempotency ledger for the personal agent's autonomous heartbeat (step 28 --…, fixture, Deterministic candidate selection. Follows tests/test_projects_registry.py's…, pending_approval tasks are agent-drafted, awaiting the manager's own approval…, team_project() (+7 more)
 
-### Community 78 - "Clock Mocking Fixtures"
-Cohesion: 0.67
-Nodes (3): fixture, Automatically redirect SIM_CLOCK_PATH to a temporary file for every test to…, setup_tmp_clock()
+### Community 78 - "CLAUDE.md — Manager Assistant ("Harry" / Pulse.ai)"
+Cohesion: 0.12
+Nodes (15): Agents, CLAUDE.md — Manager Assistant ("Harry" / Pulse.ai), Connectors, Critical bugs (prevent regressions), Data layout, Essential facts, Frontend (`frontend/`), Known gotchas (+7 more)
 
-### Community 79 - "Clock Mocking Fixtures"
-Cohesion: 0.67
-Nodes (3): fixture, Automatically redirect SIM_CLOCK_PATH to a temporary file for every test to…, setup_tmp_clock()
+### Community 79 - "test_agent_tools.py"
+Cohesion: 0.18
+Nodes (7): _make_employee(), fixture, send_message, dashboard_action, and the AgentActionLog dedup they write., team_project(), test_send_message_slack_no_slack_id_errors(), test_send_message_slack_quiet_hours_holds_and_logs_candidate(), test_send_message_unlisted_candidate_ref_is_ignored()
 
-### Community 80 - "Clock Mocking Fixtures"
-Cohesion: 0.67
-Nodes (3): fixture, Automatically redirect SIM_CLOCK_PATH to a temporary file for every test to…, setup_tmp_clock()
+### Community 80 - "test_projects_registry.py"
+Cohesion: 0.22
+Nodes (12): extra_login(), _make_employee(), fixture, Global projects registry, employees directory, project scaffold. Follows the…, Upsert by email -- since login (dev-login/Outlook) now also creates an Employee…, Yields a factory for logging in additional throwaway managers beyond the…, Yields a factory for logging in additional throwaway managers beyond the…, test_get_employees_returns_seeded_directory() (+4 more)
 
-### Community 81 - "Clock Mocking Fixtures"
+### Community 81 - "Part 2: Agents (the bot pool)"
+Cohesion: 0.15
+Nodes (12): 1. Create each pool app (one-time per agent, by the admin), 1. Create the app (one-time), 2. Environment variables, 2. Install each app to the workspace (one-time, admin, no OAuth code), 3. Connecting, 3. Seed the pool, 4. Claiming, 5. The manager's own team_members row (+4 more)
+
+### Community 94 - ".normalize"
+Cohesion: 0.21
+Nodes (8): Any, Session, Resolves a Slack user id straight against the control-plane Employee directory…, Given one known participant of a DM channel, find the other one. normalize()…, Given one known participant of a DM channel, find the other one. normalize()…, `raw` is a Slack Events API `event` object (or the equivalent shape built from…, A channel/group top-level message (no thread_ts -- Slack gives no conversation…, `raw` is a Slack Events API `event` object (or the equivalent shape built from…
+
+### Community 129 - "test_gemini_client_retry.py"
+Cohesion: 0.20
+Nodes (9): _FakeHTTPError, _FakeResponse, _ok_response(), Exception, GeminiClient.chat retry/backoff behavior (step 33): Retry-After header honored…, test_backoff_without_retry_after_has_jitter_and_only_two_sleeps(), test_chat_acquires_rate_limiter_slot(), test_json_mode_with_tools_raises_before_any_request() (+1 more)
+
+### Community 137 - "select.py"
+Cohesion: 0.36
+Nodes (10): _already_logged(), Candidate, owned_projects_for_manager(), Session, Deterministic candidate selection for the personal agent's heartbeat. Same…, Projects this manager actually owns (write authority) -- manager-only project…, Projects this manager actually owns (write authority) -- manager-only project…, _select_conflicts() (+2 more)
+
+### Community 138 - "Step 33 — Agentic runner foundation (Phase A)"
+Cohesion: 0.18
+Nodes (10): 1. `app/agent/rate_limit.py` (new), 2. `app/agent/kb_context.py` (new) — context engineering, 3. Tool-result size limits + compaction (`app/agent/registry.py`), 4. `app/agent/runner.py` (new) — the generic loop, 5. Rewire `harness.run_agent` as a wrapper, 6. Config (`app/config.py`), 7. Regression test: the Gemini schema bug (CLAUDE.md critical bug #1), Definition of done (+2 more)
+
+### Community 139 - "Connecting Outlook"
+Cohesion: 0.22
+Nodes (8): 1. Register an Azure AD app (both modes), 2a. App-only mode setup, 2b. Delegated mode setup, 3. Real arrival is polling, not a webhook, 4. The manager's own team_members row, 5. Tracked contacts, Connecting Outlook, Which mode to use
+
+### Community 140 - ".fetch_since"
+Cohesion: 0.22
+Nodes (6): User-token polling (step 17 piece 1) for a manager's own DMs -- the read-path…, conversations.list object flags -> the Events-API channel_type string…, User-token polling for a manager's own DMs -- the read-path analogue of…, This manager's own Slack reading grant, if any -- NOT the Agent pool; a manager…, This manager's own Slack reading grant, if any (redesigned 2026-07-23 --…, test_conversation_object_type_mapping()
+
+### Community 141 - "test_registry_allowlist.py"
+Cohesion: 0.39
+Nodes (8): _make_registry(), ToolRegistry allowlist filtering (get_tool_definitions(names=...)) and…, test_execute_allows_call_within_allowlist(), test_execute_rejects_call_outside_allowlist_with_correctable_message(), test_execute_unrestricted_when_allowed_names_none(), test_get_tool_definitions_filtered_by_names(), test_get_tool_definitions_filtered_ignores_unknown_names_silently(), test_get_tool_definitions_unfiltered_returns_all()
+
+### Community 142 - "ask_kb"
+Cohesion: 0.29
+Nodes (8): ask_kb(), KBAskRequest, KBAskResponse, BaseModel, Employee, post, Session, Runs the Knowledge Synthesis agent (app.agent.synthesis.run_synthesis) against…
+
+### Community 143 - "agent_heartbeat.py"
+Cohesion: 0.32
+Nodes (6): Session, Personal agent heartbeat. A 5th tick, not a re-detection pass:…, run(), End-to-end agent heartbeat job with a fake LLM client: seeded meeting -> a…, test_no_candidates_skips_llm_call(), test_pre_meeting_brief_tick_sends_and_logs()
+
+### Community 144 - "Part 1 — `Event.occurred_at`"
+Cohesion: 0.25
+Nodes (7): Definition of done, Migration + read sites (this is the part that's easy to half-do), Part 1 — `Event.occurred_at`, Part 2 — Scheduler hardening, Step 34 — `Event.occurred_at` + scheduler hardening (Phase B), The change, The problem
+
+### Community 145 - "get_job_lock"
+Cohesion: 0.29
+Nodes (7): get_job_lock(), The process-wide lock for this job name, shared by the scheduler's own pass and…, Lock, Defect 4: a per-job-name lock, held for the job's global pass -- the scheduler…, Same lock guard applies to POST /api/heartbeat/run -- agent_heartbeat is…, test_agent_heartbeat_manual_endpoint_409_when_locked(), test_held_lock_makes_scheduler_skip_and_manual_endpoint_409()
+
+### Community 146 - "Step 35 — KB probe tools + agentic heartbeat (Phases C & D)"
+Cohesion: 0.29
+Nodes (6): Definition of done, Part 1 — `app/agent/kb_tools.py` (read-only probes), Part 2 — Heartbeat write tools (in `app/agent/kb_tools.py` or a sibling), Part 3 — The agentic heartbeat job, Step 35 — KB probe tools + agentic heartbeat (Phases C & D), Why
+
+### Community 147 - "Step 36 — Agentic dream job (Phase E)"
+Cohesion: 0.29
+Nodes (6): Definition of done, Part 1 — Dream write tools, Part 2 — The agentic dream job, Part 3 — Remove `dump.md`, Step 36 — Agentic dream job (Phase E), Why
+
+### Community 148 - "Step 38 — Consolidated test pass for the agentic KB refactor"
+Cohesion: 0.33
+Nodes (5): Rules, Starting state, Step 38 — Consolidated test pass for the agentic KB refactor, The one thing you must get right: faking a tool-calling agent, What to cover (main paths only)
+
+### Community 149 - "Pulse.ai — Manager Assistant ("Harry")"
+Cohesion: 0.33
+Nodes (5): Codebase structure, Pulse.ai — Manager Assistant ("Harry"), Run, Setup docs, Test
+
+### Community 150 - "Step 30 — remove `Manager` table; `Employee.id` is the identity key"
+Cohesion: 0.40
+Nodes (4): Changes, Step 30 — remove `Manager` table; `Employee.id` is the identity key, Verification, Why
+
+### Community 151 - "Step 37 — Lint job + Knowledge Synthesis agent (Phases F & G)"
+Cohesion: 0.40
+Nodes (4): Definition of done, Part 1 — The lint job (`app/projectkb/jobs/lint.py`), Part 2 — Knowledge Synthesis agent, Step 37 — Lint job + Knowledge Synthesis agent (Phases F & G)
+
+### Community 152 - "_health_band"
 Cohesion: 0.67
-Nodes (3): fixture, Automatically redirect SIM_CLOCK_PATH to a temporary file for every test to…, setup_tmp_clock()
+Nodes (3): _health_band(), Bands a HealthLog.final_score into the frontend's green/yellow/red glyph --…, Bands a HealthLog.final_score into the frontend's green/yellow/red glyph --…
+
+### Community 153 - "test_ingest_channel_message_stored_without_any_list"
+Cohesion: 0.67
+Nodes (3): v1 required the channel on an allowlist; step 20 stores everything., No allowlist -- every channel message is stored., test_ingest_channel_message_stored_without_any_list()
 
 ## Knowledge Gaps
-- **99 isolated node(s):** `name`, `private`, `version`, `type`, `dev` (+94 more)
+- **170 isolated node(s):** `name`, `private`, `version`, `type`, `dev` (+165 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **42 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **44 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `GeminiClient` connect `Gemini Client and Extraction` to `Morning Briefing Service`, `Candidate Selection Logic`, `Meeting Brief Handlers`, `Agent Tool Registry`, `Database Schema Definitions`, `Project Synthesis Engine`, `Meetings and Action Items`, `Claim Ingestion Pipeline`, `Iteration Budgeting`, `Gemini API Mapping`, `User Synthesis Job`, `Project Heartbeat Fanout`, `User Heartbeat Job`, `Agent Direct Messaging`?**
-  _High betweenness centrality (0.083) - this node is a cross-community bridge._
-- **Why does `TeamMember` connect `Database Schema Definitions` to `Gemini Client and Extraction`, `Morning Briefing Service`, `Team Management API`, `HTML Processing Utilities`, `Meeting Brief Handlers`, `Contact Blocklist API`, `Slack Authentication`, `Slack API Utilities`, `Manager Data Tenancy`, `Dashboard API`, `Outlook Connector Implementation`, `Meetings and Action Items`, `Slack Connector Implementation`, `Work Hours and Scheduling`, `Time Service Tests`, `Pollable Connector Protocol`, `Base Connector Interface`?**
-  _High betweenness centrality (0.070) - this node is a cross-community bridge._
-- **Why does `UnifiedMessage` connect `Gemini Client and Extraction` to `Morning Briefing Service`, `Team Management API`, `Contact Blocklist API`, `Event and Todo Management`, `Database Schema Definitions`, `Meetings and Action Items`, `Outlook Connector Implementation`, `Claim Ingestion Pipeline`, `Slack Connector Implementation`, `Work Hours and Scheduling`, `Base Connector Interface`, `HTML Processing Utilities`, `Meeting Brief Handlers`, `Developer Debug Tools`, `Project Detail Tests`, `Message Polling Jobs`, `Slack API Utilities`, `Dashboard API`, `Time Service Tests`, `Pollable Connector Protocol`?**
-  _High betweenness centrality (0.065) - this node is a cross-community bridge._
-- **Are the 17 inferred relationships involving `GeminiClient` (e.g. with `Brief` and `BriefResponse`) actually correct?**
-  _`GeminiClient` has 17 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 31 inferred relationships involving `TeamMember` (e.g. with `PortfolioProjectResponse` and `Brief`) actually correct?**
-  _`TeamMember` has 31 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 29 inferred relationships involving `UnifiedMessage` (e.g. with `PortfolioProjectResponse` and `ManualMessageIn`) actually correct?**
-  _`UnifiedMessage` has 29 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 28 inferred relationships involving `Manager` (e.g. with `ChatMessageResponse` and `ChatRequest`) actually correct?**
-  _`Manager` has 28 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `GeminiClient` connect `GeminiClient` to `Entity`, `tenancy/db.py`, `test_gemini_client_retry.py`, `test_lint_job.py`, `AgentSpec`, `TeamMember`, `Event`, `UnifiedMessage`, `run_agent`, `agent_heartbeat.py`, `run`, `test_dream_job.py`, `map_tools_to_gemini`, `test_kb_pipeline_judge.py`, `test_heartbeat_project_fanout.py`, `run_spec`?**
+  _High betweenness centrality (0.069) - this node is a cross-community bridge._
+- **Why does `UnifiedMessage` connect `UnifiedMessage` to `Entity`, `tenancy/db.py`, `kb/api.py`, `get_project_session`, `test_poll_completion.py`, `TeamMember`, `OutlookConnector`, `run`, `test_kb_pipeline_judge.py`, `outbound.py`, `controlplane/models.py`, `GeminiClient`, `config.py`, `test_lint_job.py`, `test_project_detail.py`, `SlackConnector`, `get_manager_session`, `dashboard.py`, `test_timeservice.py`, `home.py`?**
+  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `Employee` connect `Employee` to `tenancy/db.py`, `get_project_session`, `test_poll_completion.py`, `test_outlook_auth.py`, `get_employee_by_manager_id`, `Event`, `project_dir`, `ask_kb`, `OutlookConnector`, `project_detail.py`, `test_dream_job.py`, `projects_registry.py`, `test_kb_pipeline_judge.py`, `outbound.py`, `controlplane/models.py`, `config.py`, `test_connectors.py`, `build_kb_context`, `test_project_detail.py`, `test_projectkb_scheduler.py`, `Agent`, `get_manager_session`, `run_agent`, `test_timeservice.py`, `outlook_auth.py`, `home.py`, `test_agent_tools.py`, `test_projects_registry.py`?**
+  _High betweenness centrality (0.051) - this node is a cross-community bridge._
+- **Are the 24 inferred relationships involving `GeminiClient` (e.g. with `AgentRunResult` and `AgentSpec`) actually correct?**
+  _`GeminiClient` has 24 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 36 inferred relationships involving `TeamMember` (e.g. with `PortfolioProjectResponse` and `UnifiedMessageResponse`) actually correct?**
+  _`TeamMember` has 36 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 32 inferred relationships involving `UnifiedMessage` (e.g. with `PortfolioProjectResponse` and `UnifiedMessageResponse`) actually correct?**
+  _`UnifiedMessage` has 32 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 34 inferred relationships involving `Employee` (e.g. with `ChatMessageResponse` and `ChatRequest`) actually correct?**
+  _`Employee` has 34 INFERRED edges - model-reasoned connections that need verification._
